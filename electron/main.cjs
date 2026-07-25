@@ -9,7 +9,7 @@
 // would be ESM, and Electron's main process is most predictable as CJS. The
 // server is ESM and is pulled in with a dynamic import().
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -27,25 +27,6 @@ const ASSETS_DIR = path.join(USER_ROOT, "public", "assets");
 // changes to the fetcher, and one place that decides the layout.
 process.env.OH_DATA_DIR = DATA_DIR;
 process.env.OH_ASSETS_DIR = ASSETS_DIR;
-
-// A packaged GUI app has nowhere to print: console output goes to a console that
-// does not exist, so a failed launch leaves the player with a process and no
-// explanation, and nothing for anyone to look at afterwards. Everything startup
-// does is written here instead, overwritten each run so it is always THIS launch.
-const LOG_FILE = path.join(USER_ROOT, "logs", "startup.log");
-const log = (...parts) => {
-  const line = `${new Date().toISOString()} ${parts.join(" ")}`;
-  try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    fs.appendFileSync(LOG_FILE, line + String.fromCharCode(10));
-  } catch { /* logging must never be the thing that breaks startup */ }
-  console.log(line);
-};
-try { fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true }); fs.writeFileSync(LOG_FILE, ""); } catch { /* ignore */ }
-
-// Anything that escapes entirely still ends up in the log rather than vanishing.
-process.on("uncaughtException", (error) => log("FATAL uncaughtException:", error?.stack || error));
-process.on("unhandledRejection", (error) => log("FATAL unhandledRejection:", error?.stack || error));
 
 const APP_ROOT = path.join(__dirname, "..");
 // asarUnpack keeps scripts/ outside the archive so a child process can run it.
@@ -131,10 +112,6 @@ const createMainWindow = () => {
     backgroundColor: "#0d1122",
     show: false,
     title: "Open Historia",
-    // The game is a localhost page: it cannot tell it is inside the desktop app,
-    // and cannot fetch a release asset itself (GitHub sends no CORS headers).
-    // gamePreload gives it exactly those two things and nothing more.
-    webPreferences: { preload: path.join(__dirname, "gamePreload.cjs") },
   });
   // Links to GitHub/Discord open in the real browser rather than replacing the
   // game with a page the player cannot navigate back from.
@@ -143,120 +120,7 @@ const createMainWindow = () => {
     return { action: "deny" };
   });
   win.once("ready-to-show", () => win.show());
-  // If the page fails to load, ready-to-show never fires - and a live process with
-  // no window on screen is exactly what "it opens but nothing appears" looks like.
-  setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show(); }, 8000);
   return win;
-};
-
-// --- desktop updates ------------------------------------------------------
-
-// This build's id, written by the release workflow. A dev run has no such file and
-// therefore never reports an update, which is what we want.
-const readBuildId = () => {
-  try {
-    return String(JSON.parse(fs.readFileSync(path.join(__dirname, "build-id.json"), "utf8")).build || "");
-  } catch {
-    return "";
-  }
-};
-const BUILD_ID = readBuildId();
-// A small latest.json sits beside the installers on the release. Reading that rather
-// than the GitHub API matters: the API is rate limited PER IP, and players behind one
-// carrier NAT share an IP, so at any scale the check starts 403ing for all of them at
-// once. A release asset is a plain CDN download with no such limit.
-const LATEST_URL =
-  "https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/latest.json";
-const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
-// Which installer this machine should be offered.
-const ASSET_FOR_PLATFORM = { win32: "windows", darwin: "mac", linux: "linux" };
-
-let updateState = null;
-
-const checkForUpdate = async () => {
-  if (!BUILD_ID) return; // unstamped (dev) build - nothing to compare against
-  try {
-    const res = await fetch(LATEST_URL, { cache: "no-store", signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return;
-    const latest = await res.json();
-    const build = String(latest?.build || "");
-    // Any DIFFERENCE counts, not just "newer": the ids are opaque, and a rollback is
-    // just as much "not what you are running".
-    if (!build || build === BUILD_ID) return;
-    const url = latest?.[ASSET_FOR_PLATFORM[process.platform]] || latest?.url;
-    if (!url) return;
-    updateState = { build, notes: String(latest?.notes || ""), url };
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("desktop:update", updateState);
-    }
-  } catch {
-    /* fail open: a failed check simply shows no banner */
-  }
-};
-
-// --- carrying an older install across ------------------------------------
-
-// Offered once, on a profile that has never held a library. The old zip release
-// kept saves next to itself; the installed app has its own data directory, so
-// without this an upgrade looks like every game was lost.
-const offerLegacyImport = async (parent) => {
-  if (!legacy.isFreshProfile(DATA_DIR)) return false;
-  let found = null;
-  try { found = legacy.findLegacyInstall(app.getPath("home")); } catch { /* keep going */ }
-
-  const games = found ? legacy.countGames(found) : 0;
-  const { response } = await dialog.showMessageBox(parent, {
-    type: "question",
-    title: "Bring your games across?",
-    message: found
-      ? "Found an earlier Open Historia install"
-      : "Bring games across from an earlier install?",
-    detail: found
-      ? `${found}
-
-${games ? `${games} game${games === 1 ? "" : "s"}` : "Its games"}, scenarios, basemaps and map-editor documents can be copied into this app. The old folder is left untouched.`
-      : "If you used the older download (the one you extracted and launched with a script), its games can be copied across. Choose the folder you extracted it to.",
-    buttons: found
-      ? ["Bring them across", "Choose another folder…", "Skip"]
-      : ["Choose folder…", "Skip"],
-    defaultId: 0,
-    cancelId: found ? 2 : 1,
-  });
-
-  let source = null;
-  if (found && response === 0) source = found;
-  else if ((found && response === 1) || (!found && response === 0)) {
-    const picked = await dialog.showOpenDialog(parent, {
-      title: "Select your old Open Historia folder",
-      properties: ["openDirectory"],
-    });
-    source = picked.canceled ? null : picked.filePaths[0];
-    if (source && !legacy.looksLikeInstall(source)) {
-      dialog.showErrorBox(
-        "That folder has no Open Historia data",
-        `${source}
-
-Pick the folder you extracted the old download into — the one containing a "server" folder.`,
-      );
-      source = null;
-    }
-  }
-  if (!source) return false;
-
-  try {
-    const copied = legacy.importFrom(source, DATA_DIR);
-    if (copied) { console.log(`[open-historia] imported ${copied} item(s) from ${source}`); return true; }
-    console.log(`[open-historia] imported ${copied} item(s) from ${source}`);
-  } catch (error) {
-    console.error("[open-historia] import failed:", error);
-    dialog.showErrorBox(
-      "Could not bring the games across",
-      `${error?.message || error}
-
-Your old folder has not been changed. You can copy its server\data folder into:
-${DATA_DIR}`,
-    );
-  }
 };
 
 // --- boot -------------------------------------------------------------------
@@ -270,11 +134,8 @@ const startServer = async () => {
 };
 
 const boot = async () => {
-  log("boot: start", `platform=${process.platform}`, `data=${DATA_DIR}`);
   const pending = missingAssets();
   if (pending.length) {
-   try {
-    log("boot: map data missing, showing setup");
     setupWindow = createSetupWindow();
     await setupWindow.loadFile(path.join(__dirname, "setup.html"));
     setupWindow.show();
@@ -294,39 +155,14 @@ const boot = async () => {
       });
     });
     setupWindow?.webContents.send("setup:done");
-   } catch (error) {
-    // The setup screen is a convenience. It must never be the reason the game
-    // does not open - this failing before createMainWindow left a running
-    // process with no window at all.
-    log("boot: setup screen failed, continuing without it:", error?.stack || error);
-    try { setupWindow?.destroy(); } catch { /* already gone */ }
-    setupWindow = null;
-    await downloadMapData(() => {});
-   }
   }
 
-  log("boot: starting server");
   await startServer();
-  log("boot: server up, creating window");
   mainWindow = createMainWindow();
   const port = process.env.PORT || 3000;
   await mainWindow.loadURL(`http://localhost:${port}`);
-  log("boot: window loaded");
   setupWindow?.close();
   setupWindow = null;
-
-  // Offered only once the game is actually on screen. It used to run before the
-  // server and before any window existed, so the prompt was a parentless modal that
-  // could open behind other windows while `await` held the rest of startup - which
-  // looks exactly like the app launching into nothing. Anything it throws is logged
-  // and dropped: an import prompt must never be what stops the game opening.
-  try {
-    if (await offerLegacyImport(mainWindow)) mainWindow.reload();
-  } catch (error) {
-    console.error("[open-historia] legacy import skipped:", error);
-  }
-  checkForUpdate();
-  setInterval(checkForUpdate, UPDATE_CHECK_MS);
 };
 
 // One instance only: a second launch would hit EADDRINUSE on the server port and
@@ -340,24 +176,7 @@ if (!app.requestSingleInstanceLock()) {
       mainWindow.focus();
     }
   });
-  // Without this a rejection was an unhandled promise: the process stayed alive with
-  // no window and nothing printed, so a broken launch was indistinguishable from the
-  // app doing nothing at all. Always say what went wrong.
-  app.whenReady().then(boot).catch((error) => {
-    log("boot: FAILED", error?.stack || error);
-    dialog.showErrorBox(
-      "Open Historia could not start",
-      `${error?.stack || error?.message || String(error)}
-
-Data folder: ${USER_ROOT}`,
-    );
-    app.quit();
-  });
+  app.whenReady().then(boot);
   app.on("window-all-closed", () => app.quit());
   ipcMain.handle("setup:cancel", () => app.quit());
-  ipcMain.handle("desktop:update-state", () => updateState);
-  ipcMain.handle("desktop:download", (_event, url) => {
-    // Only ever the installer from our own release - never a URL the page invented.
-    if (typeof url === "string" && url === updateState?.url) shell.openExternal(url);
-  });
 }
