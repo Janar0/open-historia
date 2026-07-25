@@ -11,6 +11,12 @@ self.addEventListener("activate", (event) => {
     event.waitUntil(self.clients.claim());
 });
 
-self.addEventListener("fetch", (event) => {
-    event.respondWith(fetch(event.request));
-});
+// Deliberately does NOT call respondWith. This worker caches nothing, so taking
+// over a request could only ever re-issue it — and re-issuing a cross-origin one
+// through fetch() loses the mode/credentials the browser chose for it. Map tiles
+// are exactly that case: terrain from s3.amazonaws.com and basemaps from
+// arcgisonline came back as "A ServiceWorker intercepted the request and
+// encountered an unexpected error", and the tiles simply failed to load.
+// Leaving the handler in place (but passive) keeps the install criteria that
+// wanted a fetch listener, while the browser handles every request itself.
+self.addEventListener("fetch", () => {});
