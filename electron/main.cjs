@@ -28,6 +28,25 @@ const ASSETS_DIR = path.join(USER_ROOT, "public", "assets");
 process.env.OH_DATA_DIR = DATA_DIR;
 process.env.OH_ASSETS_DIR = ASSETS_DIR;
 
+// A packaged GUI app has nowhere to print: console output goes to a console that
+// does not exist, so a failed launch leaves the player with a process and no
+// explanation, and nothing for anyone to look at afterwards. Everything startup
+// does is written here instead, overwritten each run so it is always THIS launch.
+const LOG_FILE = path.join(USER_ROOT, "logs", "startup.log");
+const log = (...parts) => {
+  const line = `${new Date().toISOString()} ${parts.join(" ")}`;
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    fs.appendFileSync(LOG_FILE, line + String.fromCharCode(10));
+  } catch { /* logging must never be the thing that breaks startup */ }
+  console.log(line);
+};
+try { fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true }); fs.writeFileSync(LOG_FILE, ""); } catch { /* ignore */ }
+
+// Anything that escapes entirely still ends up in the log rather than vanishing.
+process.on("uncaughtException", (error) => log("FATAL uncaughtException:", error?.stack || error));
+process.on("unhandledRejection", (error) => log("FATAL unhandledRejection:", error?.stack || error));
+
 const APP_ROOT = path.join(__dirname, "..");
 // asarUnpack keeps scripts/ outside the archive so a child process can run it.
 const unpacked = (p) => p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
@@ -251,8 +270,11 @@ const startServer = async () => {
 };
 
 const boot = async () => {
+  log("boot: start", `platform=${process.platform}`, `data=${DATA_DIR}`);
   const pending = missingAssets();
   if (pending.length) {
+   try {
+    log("boot: map data missing, showing setup");
     setupWindow = createSetupWindow();
     await setupWindow.loadFile(path.join(__dirname, "setup.html"));
     setupWindow.show();
@@ -272,12 +294,24 @@ const boot = async () => {
       });
     });
     setupWindow?.webContents.send("setup:done");
+   } catch (error) {
+    // The setup screen is a convenience. It must never be the reason the game
+    // does not open - this failing before createMainWindow left a running
+    // process with no window at all.
+    log("boot: setup screen failed, continuing without it:", error?.stack || error);
+    try { setupWindow?.destroy(); } catch { /* already gone */ }
+    setupWindow = null;
+    await downloadMapData(() => {});
+   }
   }
 
+  log("boot: starting server");
   await startServer();
+  log("boot: server up, creating window");
   mainWindow = createMainWindow();
   const port = process.env.PORT || 3000;
   await mainWindow.loadURL(`http://localhost:${port}`);
+  log("boot: window loaded");
   setupWindow?.close();
   setupWindow = null;
 
@@ -310,7 +344,7 @@ if (!app.requestSingleInstanceLock()) {
   // no window and nothing printed, so a broken launch was indistinguishable from the
   // app doing nothing at all. Always say what went wrong.
   app.whenReady().then(boot).catch((error) => {
-    console.error("[open-historia] startup failed:", error);
+    log("boot: FAILED", error?.stack || error);
     dialog.showErrorBox(
       "Open Historia could not start",
       `${error?.stack || error?.message || String(error)}
