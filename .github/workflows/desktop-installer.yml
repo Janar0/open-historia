@@ -73,7 +73,7 @@ jobs:
           # Only the finished installers; release/ also holds the unpacked app tree.
           path: |
             release/*.exe
-            release/*.dmg
+            release/*-mac-*.zip
             release/*.AppImage
           if-no-files-found: error
 
@@ -92,5 +92,5 @@ jobs:
               --notes "Windows, macOS and Linux downloads. The world map downloads on first launch." \
             || true
           shopt -s nullglob
-          files=(release/*.exe release/*.dmg release/*.AppImage)
+          files=(release/*.exe release/*-mac-*.zip release/*.AppImage)
           gh release upload "$TAG" "${files[@]}" --clobber
