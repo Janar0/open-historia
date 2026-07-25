@@ -73,9 +73,44 @@ const UNIT_TYPE_SET = new Set(UNIT_TYPES);
 const UNIT_STATUS_SET = new Set(["idle", "moving", "engaged", "defeated", "pending"]);
 const UNIT_SOURCE_SET = new Set(["player", "ai", "scenario"]);
 
+// Every caller of this parses a COORDINATE (lng/lat/toLng/toLat), which is why it
+// can afford to be lenient in ways a general number parser could not.
+//
+// It used to be a bare Number(), and a model writing in a language that uses the
+// decimal COMMA answers "37,06" — Number() returns NaN, the unit is discarded, and
+// the player sees an event describing a deployment with no troops on the map. The
+// same went for a coordinate carrying its unit ("37.06°N"). Recover both instead of
+// throwing the deployment away.
+//
+// A comma is only read as a decimal point when it is the ONLY separator: "1,234.5"
+// keeps its usual meaning, so a thousands separator can never silently divide a
+// value by a thousand.
 const finiteOrNull = (value) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string") {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  let text = value.trim();
+  if (!text) return null;
+
+  // A trailing or leading hemisphere letter carries the sign: 37.06 S is -37.06.
+  let sign = 1;
+  const hemisphere = /^([NSEW])\s*|\s*([NSEW])$/i.exec(text);
+  if (hemisphere) {
+    const letter = (hemisphere[1] || hemisphere[2]).toUpperCase();
+    if (letter === "S" || letter === "W") sign = -1;
+    text = text.replace(/^[NSEW]\s*/i, "").replace(/\s*[NSEW]$/i, "");
+  }
+
+  if (text.includes(",") && !text.includes(".")) text = text.replace(",", ".");
+  // Degree signs, stray spaces, anything else that is not part of a number.
+  text = text.replace(/[^\d+\-.eE]/g, "");
+  if (!text || !/\d/.test(text)) return null;
+
+  const num = Number(text);
+  return Number.isFinite(num) ? sign * num : null;
 };
 
 export const clampUnitStrength = (value) => {
