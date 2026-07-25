@@ -42,6 +42,15 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Building a .dmg mounts a volume and then detaches it. On the macOS runners
+      # Spotlight starts indexing that volume the moment it appears and still holds
+      # it when dmg-builder tries to unmount, so `hdiutil detach` fails with exit 16
+      # (resource busy) and takes the whole build with it. Nothing here needs an
+      # index.
+      - name: Stop Spotlight indexing the build volume
+        if: runner.os == 'macOS'
+        run: sudo mdutil -a -i off || true
+
       - name: Install dependencies
         run: npm ci
 
