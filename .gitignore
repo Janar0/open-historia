@@ -51,3 +51,5 @@ CLAUDE.md
 
 # Offline root signing PRIVATE key — never commit
 /trust/*.key.pem
+# generated per release build by the desktop workflow
+electron/build-id.json

@@ -112,6 +112,10 @@ const createMainWindow = () => {
     backgroundColor: "#0d1122",
     show: false,
     title: "Open Historia",
+    // The game is a localhost page: it cannot tell it is inside the desktop app,
+    // and cannot fetch a release asset itself (GitHub sends no CORS headers).
+    // gamePreload gives it exactly those two things and nothing more.
+    webPreferences: { preload: path.join(__dirname, "gamePreload.cjs") },
   });
   // Links to GitHub/Discord open in the real browser rather than replacing the
   // game with a page the player cannot navigate back from.
@@ -121,6 +125,51 @@ const createMainWindow = () => {
   });
   win.once("ready-to-show", () => win.show());
   return win;
+};
+
+// --- desktop updates ------------------------------------------------------
+
+// This build's id, written by the release workflow. A dev run has no such file and
+// therefore never reports an update, which is what we want.
+const readBuildId = () => {
+  try {
+    return String(JSON.parse(fs.readFileSync(path.join(__dirname, "build-id.json"), "utf8")).build || "");
+  } catch {
+    return "";
+  }
+};
+const BUILD_ID = readBuildId();
+// A small latest.json sits beside the installers on the release. Reading that rather
+// than the GitHub API matters: the API is rate limited PER IP, and players behind one
+// carrier NAT share an IP, so at any scale the check starts 403ing for all of them at
+// once. A release asset is a plain CDN download with no such limit.
+const LATEST_URL =
+  "https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/latest.json";
+const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+// Which installer this machine should be offered.
+const ASSET_FOR_PLATFORM = { win32: "windows", darwin: "mac", linux: "linux" };
+
+let updateState = null;
+
+const checkForUpdate = async () => {
+  if (!BUILD_ID) return; // unstamped (dev) build - nothing to compare against
+  try {
+    const res = await fetch(LATEST_URL, { cache: "no-store", signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return;
+    const latest = await res.json();
+    const build = String(latest?.build || "");
+    // Any DIFFERENCE counts, not just "newer": the ids are opaque, and a rollback is
+    // just as much "not what you are running".
+    if (!build || build === BUILD_ID) return;
+    const url = latest?.[ASSET_FOR_PLATFORM[process.platform]] || latest?.url;
+    if (!url) return;
+    updateState = { build, notes: String(latest?.notes || ""), url };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("desktop:update", updateState);
+    }
+  } catch {
+    /* fail open: a failed check simply shows no banner */
+  }
 };
 
 // --- boot -------------------------------------------------------------------
@@ -161,6 +210,8 @@ const boot = async () => {
   mainWindow = createMainWindow();
   const port = process.env.PORT || 3000;
   await mainWindow.loadURL(`http://localhost:${port}`);
+  checkForUpdate();
+  setInterval(checkForUpdate, UPDATE_CHECK_MS);
   setupWindow?.close();
   setupWindow = null;
 };
@@ -179,4 +230,9 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(boot);
   app.on("window-all-closed", () => app.quit());
   ipcMain.handle("setup:cancel", () => app.quit());
+  ipcMain.handle("desktop:update-state", () => updateState);
+  ipcMain.handle("desktop:download", (_event, url) => {
+    // Only ever the installer from our own release - never a URL the page invented.
+    if (typeof url === "string" && url === updateState?.url) shell.openExternal(url);
+  });
 }
