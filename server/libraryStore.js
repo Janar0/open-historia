@@ -18,13 +18,19 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.join(__dirname, "..");
 const DIST_DIR = path.join(PROJECT_ROOT, "dist");
 const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
-const SERVER_DATA_DIR = path.join(__dirname, "data");
+import { DATA_DIR as SERVER_DATA_DIR } from "./dataDir.js";
 const SCENARIOS_DIR = path.join(SERVER_DATA_DIR, "scenarios");
 const GAMES_DIR = path.join(SERVER_DATA_DIR, "games");
 const SCENARIO_MANIFEST_PATH = path.join(SERVER_DATA_DIR, "scenario-manifest.json");
 const GAME_MANIFEST_PATH = path.join(SERVER_DATA_DIR, "game-manifest.json");
 
-const PMTILES_ASSETS_DIR = path.join(PUBLIC_DIR, "assets");
+// Stock map archives normally sit in the checkout's public/assets. A PACKAGED
+// desktop build ships them nowhere — they are ~200MB and are downloaded after
+// install into a writable folder — so OH_ASSETS_DIR points here instead. Same
+// reasoning as OH_DATA_DIR in dataDir.js: the app bundle itself is read-only.
+const PMTILES_ASSETS_DIR = process.env.OH_ASSETS_DIR
+  ? path.resolve(process.env.OH_ASSETS_DIR)
+  : path.join(PUBLIC_DIR, "assets");
 
 const DEFAULT_SCENARIO_ID = "default";
 const DEFAULT_GAME_ID = "default";
