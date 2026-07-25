@@ -56,6 +56,14 @@ jobs:
 
       # The map archives are NOT packaged - they are ~200MB and the app downloads
       # them on first launch - so nothing here fetches them.
+      # One id for all three platforms in this run, baked into the app and written
+      # into latest.json below. The app compares the two to know an update exists.
+      - name: Stamp the build id
+        shell: bash
+        run: |
+          echo "{\"build\":\"${{ github.run_id }}\"}" > electron/build-id.json
+          cat electron/build-id.json
+
       - name: Build the client
         run: npm run build
 
@@ -93,4 +101,18 @@ jobs:
             || true
           shopt -s nullglob
           files=(release/*.exe release/*-mac-*.zip release/*.AppImage)
+          # Only the Windows job writes latest.json, so three racing jobs cannot
+          # each publish a different view of the same release.
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            B="https://github.com/${{ github.repository }}/releases/download/$TAG"
+            cat > latest.json <<JSON
+          {
+            "build": "${{ github.run_id }}",
+            "windows": "$B/Open-Historia-Setup.exe",
+            "mac": "$B/Open-Historia-mac-arm64.zip",
+            "linux": "$B/Open-Historia-x86_64.AppImage"
+          }
+          JSON
+            files+=(latest.json)
+          fi
           gh release upload "$TAG" "${files[@]}" --clobber

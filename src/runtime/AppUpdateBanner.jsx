@@ -64,18 +64,23 @@ export default function AppUpdateBanner() {
   // server for the release manifest and updates by downloading an APK; the website
   // compares its baked build id against the deployed version.json and updates by
   // reloading onto the new bundle. Desktop/dev carry neither stamp and no-op.
-  const isApp = Number.isFinite(APP_BUILD) && APP_BUILD > 0;
-  const isWeb = !isApp && WEB_BUILD !== "";
-  const supported = isApp || isWeb;
+  // The desktop app announces itself through its preload bridge (electron/
+  // gamePreload.cjs) — the page is served from localhost either way, so there is
+  // nothing else to detect it by. Its main process does the release check, because
+  // a page cannot fetch a GitHub asset (no CORS).
+  const isDesktop = typeof window !== "undefined" && window.ohDesktop?.isDesktop === true;
+  const isApp = !isDesktop && Number.isFinite(APP_BUILD) && APP_BUILD > 0;
+  const isWeb = !isDesktop && !isApp && WEB_BUILD !== "";
+  const supported = isDesktop || isApp || isWeb;
   const [latest, setLatest] = useState(null);
   const [dismissed, setDismissed] = useState(() => {
     try {
       const stored = localStorage.getItem(DISMISS_KEY);
       // App builds compare numerically ("is this newer than what I dismissed"); web
       // ids are opaque and compare by equality, so keep the raw string for them.
-      return isWeb ? String(stored ?? "") : Number(stored) || 0;
+      return isWeb || isDesktop ? String(stored ?? "") : Number(stored) || 0;
     } catch {
-      return isWeb ? "" : 0;
+      return isWeb || isDesktop ? "" : 0;
     }
   });
   const [updating, setUpdating] = useState(false);
@@ -83,6 +88,14 @@ export default function AppUpdateBanner() {
 
   useEffect(() => {
     if (!supported) return undefined;
+    if (isDesktop) {
+      // Main already polls; just listen. It replays the last result on subscribe,
+      // so a banner that mounts after the check still hears about it.
+      window.ohDesktop.onUpdate((payload) => {
+        if (payload?.build && payload?.url) setLatest({ ...payload, desktop: true });
+      });
+      return undefined;
+    }
     let cancelled = false;
     const check = async () => {
       try {
@@ -122,14 +135,21 @@ export default function AppUpdateBanner() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [supported, isWeb]);
+  }, [supported, isWeb, isDesktop]);
 
   if (!supported) return null;
-  if (isWeb ? !latest : !isUpdateAvailable(APP_BUILD, latest)) return null;
+  if (isWeb || isDesktop ? !latest : !isUpdateAvailable(APP_BUILD, latest)) return null;
   // Web ids are opaque strings, so dismissal is an equality check rather than "<=".
-  if (isWeb ? String(dismissed) === String(latest.build) : latest.build <= dismissed) return null;
+  if (isWeb || isDesktop ? String(dismissed) === String(latest.build) : latest.build <= dismissed) return null;
 
   const onUpdate = async () => {
+    if (isDesktop) {
+      // Hands the installer to the player's browser. Downloading it inside the app
+      // would leave them with a file and no idea where it went.
+      setUpdating(true);
+      window.ohDesktop.download(latest.url);
+      return;
+    }
     if (isWeb) {
       setUpdating(true);
       // Bundle filenames are content-hashed, so re-fetching the shell is all it takes
@@ -178,7 +198,7 @@ export default function AppUpdateBanner() {
               : latest.notes || `Build ${latest.build} · tap Update to download and install.`}
         </span>
       </div>
-      {isWeb || latest.apk ? (
+      {isWeb || isDesktop || latest.apk ? (
         <button type="button" style={btn} onClick={onUpdate} disabled={updating}>
           {updating ? (isWeb ? "Reloading…" : "Downloading…") : "Update now"}
         </button>
