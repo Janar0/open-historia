@@ -33,7 +33,7 @@ const chatCountrySchema = {
   type: "object",
   description: "A polity participating in a generated diplomatic chat.",
   properties: {
-    code: textSchema("Polity code, when known."),
+    code: textSchema("Polity's FULL country name (\"Spain\"), never a country code."),
     name: nonEmptyTextSchema("Exact polity name."),
   },
   required: ["name"],
@@ -44,7 +44,7 @@ const chatMessageSchema = {
   type: "object",
   description: "An opening or follow-up message in a generated diplomatic chat.",
   properties: {
-    code: textSchema("Speaker polity code, when known."),
+    code: textSchema("Speaker polity's FULL country name (\"Spain\"), never a country code."),
     role: textSchema("Message role, such as leader or system."),
     speaker: textSchema("Exact name of the speaker."),
     text: textSchema("Message body."),
@@ -96,9 +96,18 @@ const regionTransferSchema = {
       + "(the engine resolves names to ids).",
     ),
     regionName: textSchema("Human-readable region name, when known."),
-    fromCode: textSchema("Previous owner polity code, when known."),
-    toCode: textSchema("New owner polity code."),
+    fromCode: textSchema("Previous owner's FULL country name (\"Spain\"), never a country code."),
+    toCode: textSchema("New owner's FULL country name (\"Spain\"), never a country code such as \"ESP\"."),
     note: textSchema("Brief reason for the transfer."),
+    wholeCountry: {
+      type: "boolean",
+      description:
+        "Set true ONLY for a total conquest, annexation, unification or partition in "
+        + "which one polity takes EVERY region another still holds. Then put the losing "
+        + "polity's name in regionId instead of a region name, and this single entry "
+        + "transfers all of its territory. Leave unset (the normal case) to transfer "
+        + "one named region.",
+    },
   },
   required: ["regionId", "toCode"],
   additionalProperties: false,
@@ -165,7 +174,7 @@ const polityChangeSchema = {
   type: "object",
   description: "A creation, rename, recolor, or metadata change for a polity.",
   properties: {
-    code: textSchema("Exact polity code."),
+    code: textSchema("Polity's exact FULL country name (\"Spain\"), never a country code."),
     name: textSchema("New polity name, only when it changes."),
     color: textSchema("New six-digit hexadecimal color, only when it changes."),
     aliases: stringArraySchema("Alternative polity names."),
@@ -202,7 +211,7 @@ const unitSchema = {
       description: "Unit type.",
       enum: ["infantry", "armor", "air", "naval", "artillery", "garrison"],
     },
-    ownerCode: nonEmptyTextSchema("Owning polity code."),
+    ownerCode: nonEmptyTextSchema("Owning polity's FULL country name (\"Spain\"), never a country code."),
     strength: {
       type: "integer",
       description: "Unit strength from 1 to 1000.",
@@ -291,7 +300,7 @@ const markerSchema = {
     id: textSchema("Stable marker identifier."),
     name: nonEmptyTextSchema("Display name of the structure."),
     kind: nonEmptyTextSchema("What the structure is, as a short lowercase noun phrase."),
-    ownerCode: textSchema("Owning polity code, when owned."),
+    ownerCode: textSchema("Owning polity's FULL country name (\"Spain\") when owned, never a country code."),
     lng: {
       type: "number",
       description: "Longitude of the structure.",

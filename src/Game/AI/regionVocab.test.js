@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildRegionOwnershipText,
-  regionOwnerCode,
+  regionOwnerName,
   FOCUS_INTRO,
   ROSTER_INTRO,
 } from "./regionVocab.js";
@@ -27,97 +27,101 @@ const sections = (text) => {
   };
 };
 
-// ---- Group A: regionOwnerCode ----------------------------------------------
+// ---- Group A: regionOwnerName (owners are FULL COUNTRY NAMES) ----------------------------------------------
 
 test("A1 override wins over base country", () => {
-  assert.equal(regionOwnerCode(CATALOG[2], { "DEU.1_1": "FRA" }), "FRA");
+  assert.equal(regionOwnerName(CATALOG[2], { "DEU.1_1": "FRA" }), "France");
 });
-test("A2 falls back to base countryCode with no override", () => {
-  assert.equal(regionOwnerCode(CATALOG[0], {}), "FRA");
+test("A2 falls back to the base country NAME with no override", () => {
+  assert.equal(regionOwnerName(CATALOG[0], {}), "France");
 });
 test("A3 falls back to country NAME when countryCode is absent", () => {
-  assert.equal(regionOwnerCode({ id: "X", name: "X", country: "Freedonia" }, {}), "Freedonia");
+  assert.equal(regionOwnerName({ id: "X", name: "X", country: "Freedonia" }, {}), "Freedonia");
 });
 test("A4 empty overrides object → base owner", () => {
-  assert.equal(regionOwnerCode(CATALOG[1], {}), "FRA");
+  assert.equal(regionOwnerName(CATALOG[1], {}), "France");
 });
 test("A5 null overrides → base owner, no throw", () => {
-  assert.equal(regionOwnerCode(CATALOG[1], null), "FRA");
+  assert.equal(regionOwnerName(CATALOG[1], null), "France");
 });
 test("A6 undefined region → empty string, no throw", () => {
-  assert.equal(regionOwnerCode(undefined, {}), "");
+  assert.equal(regionOwnerName(undefined, {}), "");
 });
 test("A7 whitespace override is trimmed", () => {
-  assert.equal(regionOwnerCode(CATALOG[0], { "FRA.1_1": "  SOV  " }), "SOV");
+  assert.equal(regionOwnerName(CATALOG[0], { "FRA.1_1": "  SOV  " }), "SOV");
 });
 test("A8 empty-string override falls through to base", () => {
-  assert.equal(regionOwnerCode(CATALOG[0], { "FRA.1_1": "   " }), "FRA");
+  assert.equal(regionOwnerName(CATALOG[0], { "FRA.1_1": "   " }), "France");
+});
+
+test("A9 a legacy CODE override is canonicalised to the full country name", () => {
+  assert.equal(regionOwnerName(CATALOG[2], { "DEU.1_1": "ESP" }), "Spain");
 });
 
 // ---- Group B: grouping / stock map -----------------------------------------
 
 test("B1 stock map (no overrides) groups every owner — the core gap", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA", "DEU"] });
-  assert.match(text, /- FRA \[2 regions\]:/);
-  assert.match(text, /- DEU \[3 regions\]:/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France", "Germany"] });
+  assert.match(text, /- France \[2 regions\]:/);
+  assert.match(text, /- Germany \[3 regions\]:/);
 });
 test("B2 counts are correct per owner", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["DEU"] });
-  assert.match(text, /- DEU \[3 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["Germany"] });
+  assert.match(text, /- Germany \[3 regions\]/);
 });
 test("B3 regions render as `name (id)`", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] });
   assert.match(text, /Bourgogne \(FRA\.1_1\)/);
   assert.match(text, /Bretagne \(FRA\.2_1\)/);
 });
 test("B4 a region appears exactly once", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA", "DEU"] });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France", "Germany"] });
   assert.equal(text.split("Bayern (DEU.1_1)").length - 1, 1);
 });
 test("B5 an override moves a region into the new owner's group and updates counts", () => {
-  const text = buildRegionOwnershipText(CATALOG, { "DEU.1_1": "FRA" }, { focusCodes: ["FRA", "DEU"] });
-  assert.match(sections(text).focus, /- FRA \[3 regions\]:[\s\S]*Bayern \(DEU\.1_1\)/);
-  assert.match(sections(text).focus, /- DEU \[2 regions\]:/);
+  const text = buildRegionOwnershipText(CATALOG, { "DEU.1_1": "FRA" }, { focusCodes: ["France", "Germany"] });
+  assert.match(sections(text).focus, /- France \[3 regions\]:[\s\S]*Bayern \(DEU\.1_1\)/);
+  assert.match(sections(text).focus, /- Germany \[2 regions\]:/);
 });
 test("B6 multiple overrides all apply", () => {
-  const text = buildRegionOwnershipText(CATALOG, { "DEU.1_1": "FRA", "DEU.2_1": "FRA" }, { focusCodes: ["FRA"] });
-  assert.match(text, /- FRA \[4 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, { "DEU.1_1": "FRA", "DEU.2_1": "FRA" }, { focusCodes: ["France"] });
+  assert.match(text, /- France \[4 regions\]/);
 });
 test("B7 all-unowned catalog → safe line", () => {
   const text = buildRegionOwnershipText([{ id: "z", name: "Z" }], {});
   assert.match(text, /No region ownership could be determined/);
 });
 test("B8 deterministic — same input twice yields identical output", () => {
-  const a = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] });
-  const b = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] });
+  const a = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] });
+  const b = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] });
   assert.equal(a, b);
 });
 
 // ---- Group C: focus section ------------------------------------------------
 
 test("C1 focus codes get full region lists", () => {
-  const { focus } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] }));
+  const { focus } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] }));
   assert.match(focus, /Bourgogne \(FRA\.1_1\)/);
 });
 test("C2 focus order is preserved", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["DEU", "FRA"] });
-  assert.ok(text.indexOf("- DEU") < text.indexOf("- FRA"));
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["Germany", "France"] });
+  assert.ok(text.indexOf("- Germany") < text.indexOf("- France"));
 });
 test("C3 focus matching is case-insensitive", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["fra"] });
-  assert.match(sections(text).focus, /- FRA \[2 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["france"] });
+  assert.match(sections(text).focus, /- France \[2 regions\]/);
 });
 test("C4 a focus code absent from the map is skipped gracefully", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["ZZZ", "FRA"] });
-  assert.match(sections(text).focus, /- FRA \[2 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["ZZZ", "France"] });
+  assert.match(sections(text).focus, /- France \[2 regions\]/);
   assert.doesNotMatch(text, /ZZZ/);
 });
 test("C5 focus powers are excluded from the roster (no duplication)", () => {
-  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] }));
-  assert.doesNotMatch(roster, /- FRA /);
+  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] }));
+  assert.doesNotMatch(roster, /- France /);
 });
 test("C6 FOCUS_INTRO is present when there is a focus set", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] });
   assert.ok(text.includes(FOCUS_INTRO));
 });
 test("C7 no focus set → no FOCUS_INTRO, roster only", () => {
@@ -126,39 +130,39 @@ test("C7 no focus set → no FOCUS_INTRO, roster only", () => {
   assert.ok(text.includes(ROSTER_INTRO));
 });
 test("C8 ownerCap truncates a focus group with a visible (+N more)", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["DEU"], ownerCap: 1 });
-  assert.match(text, /- DEU \[3 regions\]: Bayern \(DEU\.1_1\), \(\+2 more\)/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["Germany"], ownerCap: 1 });
+  assert.match(text, /- Germany \[3 regions\]: Bayern \(DEU\.1_1\), \(\+2 more\)/);
 });
 test("C9 focusTotalCap drops an unfittable focus power down into the roster", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA", "DEU"], focusTotalCap: 2, ownerCap: 40 });
-  assert.match(sections(text).focus, /- FRA \[2 regions\]/);
-  assert.match(sections(text).roster, /- DEU — 3 regions/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France", "Germany"], focusTotalCap: 2, ownerCap: 40 });
+  assert.match(sections(text).focus, /- France \[2 regions\]/);
+  assert.match(sections(text).roster, /- Germany — 3 regions/);
   assert.doesNotMatch(sections(text).roster, /Bayern/); // roster carries no province names
 });
 test("C10 focus header shows the polity display name", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"], polityNames: { fra: "French Republic" } });
-  assert.match(text, /- FRA \(French Republic\) \[2 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"], polityNames: { france: "French Republic" } });
+  assert.match(text, /- France \(French Republic\) \[2 regions\]/);
 });
 test("C11 focus region list preserves catalog order within a group", () => {
-  const { focus } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["DEU"] }));
+  const { focus } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["Germany"] }));
   assert.ok(focus.indexOf("Bayern") < focus.indexOf("Ostpreußen"));
   assert.ok(focus.indexOf("Ostpreußen") < focus.indexOf("Sachsen"));
 });
 test("C12 focus region with an empty id renders name-only", () => {
   const cat = [{ id: "", name: "Nowhere", countryCode: "FRA" }];
-  const text = buildRegionOwnershipText(cat, {}, { focusCodes: ["FRA"] });
-  assert.match(text, /- FRA \[1 region\]: Nowhere\b/);
+  const text = buildRegionOwnershipText(cat, {}, { focusCodes: ["France"] });
+  assert.match(text, /- France \[1 region\]: Nowhere\b/);
   assert.doesNotMatch(text, /Nowhere \(/);
 });
 
 // ---- Group D: roster section -----------------------------------------------
 
 test("D1 roster lists a non-focus owner as `CODE — N regions`", () => {
-  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] }));
-  assert.match(roster, /- DEU — 3 regions/);
+  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] }));
+  assert.match(roster, /- Germany — 3 regions/);
 });
 test("D2 roster carries NO province names", () => {
-  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] }));
+  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] }));
   assert.doesNotMatch(roster, /Bayern|Sachsen|Ostpreußen/);
 });
 test("D3 roster is sorted by region count descending", () => {
@@ -188,16 +192,16 @@ test("D5 rosterCap truncates with a (+K more) marker", () => {
   assert.match(text, /\(\+3 more powers not listed for brevity\.\)/);
 });
 test("D6 ROSTER_INTRO present when the roster is non-empty", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"] });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"] });
   assert.ok(text.includes(ROSTER_INTRO));
 });
 test("D7 every owner in focus → no roster section", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA", "DEU"] });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France", "Germany"] });
   assert.ok(!text.includes(ROSTER_INTRO));
 });
-test("D8 roster header shows the polity display name", () => {
-  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"], polityNames: { deu: "Germany" } }));
-  assert.match(roster, /- DEU \(Germany\) — 3 regions/);
+test("D8 roster header shows a display name that differs from the owner", () => {
+  const { roster } = sections(buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"], polityNames: { germany: "German Empire" } }));
+  assert.match(roster, /- Germany \(German Empire\) — 3 regions/);
 });
 test("D9 singular '1 region' in the roster", () => {
   const cat = [
@@ -215,18 +219,18 @@ test("D10 rosterOmitted count is exact", () => {
 
 // ---- Group E: polityNames / formatting -------------------------------------
 
-test("E1 polityNames keyed by lowercase code", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"], polityNames: { fra: "France" } });
-  assert.match(text, /- FRA \(France\)/);
+test("E1 polityNames keyed by lowercase owner name", () => {
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"], polityNames: { france: "Kingdom of France" } });
+  assert.match(text, /- France \(Kingdom of France\)/);
 });
 test("E2 polityNames keyed by original-case label", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"], polityNames: { FRA: "France" } });
-  assert.match(text, /- FRA \(France\)/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"], polityNames: { France: "Kingdom of France" } });
+  assert.match(text, /- France \(Kingdom of France\)/);
 });
 test("E3 display name equal to the code (any case) is not repeated", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["FRA"], polityNames: { fra: "fra" } });
-  assert.doesNotMatch(text, /- FRA \(fra\)/);
-  assert.match(text, /- FRA \[2 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["France"], polityNames: { fra: "fra" } });
+  assert.doesNotMatch(text, /- France \(fra\)/);
+  assert.match(text, /- France \[2 regions\]/);
 });
 test("E4 singular '1 region' vs plural in the focus section", () => {
   const cat = [{ id: "A.1", name: "solo", countryCode: "AAA" }];
@@ -234,12 +238,12 @@ test("E4 singular '1 region' vs plural in the focus section", () => {
   assert.match(text, /- AAA \[1 region\]:/);
 });
 test("E5 diacritics in region names are preserved verbatim", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["DEU"] });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: ["Germany"] });
   assert.match(text, /Ostpreußen \(DEU\.2_1\)/);
 });
 test("E6 a region with an empty name falls back to its id", () => {
   const cat = [{ id: "FRA.9_1", name: "", countryCode: "FRA" }];
-  const text = buildRegionOwnershipText(cat, {}, { focusCodes: ["FRA"] });
+  const text = buildRegionOwnershipText(cat, {}, { focusCodes: ["France"] });
   assert.match(text, /FRA\.9_1 \(FRA\.9_1\)/);
 });
 
@@ -253,7 +257,7 @@ test("F2 null catalog → safe line, never throws", () => {
 });
 test("F3 undefined options → does not throw and still groups", () => {
   const text = buildRegionOwnershipText(CATALOG, {});
-  assert.match(text, /- (FRA|DEU) —/); // no focus → all owners in the roster
+  assert.match(text, /- (France|Germany) —/); // no focus → all owners in the roster
 });
 test("F4 large catalog respects focusTotalCap and ownerCap", () => {
   const big = [];
@@ -275,11 +279,11 @@ test("F4 large catalog respects focusTotalCap and ownerCap", () => {
 test("F5 focusCodes empty array → roster only", () => {
   const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: [] });
   assert.ok(!text.includes(FOCUS_INTRO));
-  assert.match(text, /- FRA — 2 regions/);
+  assert.match(text, /- France — 2 regions/);
 });
 test("F6 null overrides still groups by base country", () => {
-  const text = buildRegionOwnershipText(CATALOG, null, { focusCodes: ["FRA"] });
-  assert.match(text, /- FRA \[2 regions\]/);
+  const text = buildRegionOwnershipText(CATALOG, null, { focusCodes: ["France"] });
+  assert.match(text, /- France \[2 regions\]/);
 });
 test("F7 whitespace-padded owner codes group together", () => {
   const cat = [
@@ -291,8 +295,8 @@ test("F7 whitespace-padded owner codes group together", () => {
 });
 test("F8 a fully-blank region row (no name, no id, no owner) is skipped", () => {
   const cat = [{ id: "", name: "", country: "", countryCode: "" }, ...CATALOG];
-  const text = buildRegionOwnershipText(cat, {}, { focusCodes: ["FRA", "DEU"] });
-  assert.match(text, /- FRA \[2 regions\]/); // unchanged; blank row contributed nothing
+  const text = buildRegionOwnershipText(cat, {}, { focusCodes: ["France", "Germany"] });
+  assert.match(text, /- France \[2 regions\]/); // unchanged; blank row contributed nothing
 });
 test("F9 duplicate region ids under different owners are each grouped", () => {
   const cat = [
@@ -300,21 +304,21 @@ test("F9 duplicate region ids under different owners are each grouped", () => {
     { id: "DUP", name: "Georgia", countryCode: "GEO" },
   ];
   const { roster } = sections(buildRegionOwnershipText(cat, {}, { focusCodes: [] }));
-  assert.match(roster, /- GEO — 1 region/);
-  assert.match(roster, /- USA — 1 region/);
+  assert.match(roster, /- Georgia — 1 region/);
+  assert.match(roster, /- United States — 1 region/);
 });
 test("F10 override to a brand-new owner code creates that group", () => {
   const text = buildRegionOwnershipText(CATALOG, { "FRA.1_1": "SOV" }, { focusCodes: ["SOV"] });
   assert.match(text, /- SOV \[1 region\]: Bourgogne \(FRA\.1_1\)/);
 });
 test("F11 same content, different call → structurally identical (no hidden state)", () => {
-  const opts = { focusCodes: ["FRA"], polityNames: { fra: "France" } };
+  const opts = { focusCodes: ["France"], polityNames: { fra: "France" } };
   assert.equal(
     buildRegionOwnershipText(CATALOG, {}, opts),
-    buildRegionOwnershipText(CATALOG.slice(), { ...{} }, { ...opts, focusCodes: ["FRA"] }),
+    buildRegionOwnershipText(CATALOG.slice(), { ...{} }, { ...opts, focusCodes: ["France"] }),
   );
 });
 test("F12 non-array focusCodes is treated as empty (no throw)", () => {
-  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: "FRA" });
+  const text = buildRegionOwnershipText(CATALOG, {}, { focusCodes: "France" });
   assert.ok(!text.includes(FOCUS_INTRO));
 });
