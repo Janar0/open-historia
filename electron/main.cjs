@@ -172,6 +172,70 @@ const checkForUpdate = async () => {
   }
 };
 
+// --- carrying an older install across ------------------------------------
+
+// Offered once, on a profile that has never held a library. The old zip release
+// kept saves next to itself; the installed app has its own data directory, so
+// without this an upgrade looks like every game was lost.
+const offerLegacyImport = async () => {
+  if (!legacy.isFreshProfile(DATA_DIR)) return;
+  let found = null;
+  try { found = legacy.findLegacyInstall(app.getPath("home")); } catch { /* keep going */ }
+
+  const games = found ? legacy.countGames(found) : 0;
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    title: "Bring your games across?",
+    message: found
+      ? "Found an earlier Open Historia install"
+      : "Bring games across from an earlier install?",
+    detail: found
+      ? `${found}
+
+${games ? `${games} game${games === 1 ? "" : "s"}` : "Its games"}, scenarios, basemaps and map-editor documents can be copied into this app. The old folder is left untouched.`
+      : "If you used the older download (the one you extracted and launched with a script), its games can be copied across. Choose the folder you extracted it to.",
+    buttons: found
+      ? ["Bring them across", "Choose another folder…", "Skip"]
+      : ["Choose folder…", "Skip"],
+    defaultId: 0,
+    cancelId: found ? 2 : 1,
+  });
+
+  let source = null;
+  if (found && response === 0) source = found;
+  else if ((found && response === 1) || (!found && response === 0)) {
+    const picked = await dialog.showOpenDialog({
+      title: "Select your old Open Historia folder",
+      properties: ["openDirectory"],
+    });
+    source = picked.canceled ? null : picked.filePaths[0];
+    if (source && !legacy.looksLikeInstall(source)) {
+      dialog.showErrorBox(
+        "That folder has no Open Historia data",
+        `${source}
+
+Pick the folder you extracted the old download into — the one containing a "server" folder.`,
+      );
+      source = null;
+    }
+  }
+  if (!source) return;
+
+  try {
+    const copied = legacy.importFrom(source, DATA_DIR);
+    console.log(`[open-historia] imported ${copied} item(s) from ${source}`);
+  } catch (error) {
+    console.error("[open-historia] import failed:", error);
+    dialog.showErrorBox(
+      "Could not bring the games across",
+      `${error?.message || error}
+
+Your old folder has not been changed. You can copy its server\data folder into:
+${DATA_DIR}`,
+    );
+  }
+};
+
 // --- boot -------------------------------------------------------------------
 
 // Starting the server is importing it: server.js calls app.listen() at module
@@ -206,6 +270,7 @@ const boot = async () => {
     setupWindow?.webContents.send("setup:done");
   }
 
+  await offerLegacyImport();
   await startServer();
   mainWindow = createMainWindow();
   const port = process.env.PORT || 3000;
