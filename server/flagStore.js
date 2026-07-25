@@ -14,7 +14,7 @@ import url from "url";
 import crypto from "crypto";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, "data");
+import { DATA_DIR } from "./dataDir.js";
 const FLAGS_PATH = path.join(DATA_DIR, "flags-library.json");
 
 const readAll = () => {
