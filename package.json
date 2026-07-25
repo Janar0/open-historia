@@ -129,7 +129,7 @@
       "artifactName": "Open-Historia-${arch}.${ext}"
     },
     "dmg": {
-      "title": "Open Historia"
+      "title": "Open-Historia"
     },
     "linux": {
       "target": [
