@@ -17,39 +17,53 @@
 //     player, anyone already re-owned via an override, scenario-defined actors, and
 //     the player's active chat partners. These are the likely belligerents, so the
 //     model can emit a resolvable transfer on the FIRST attempt.
-//   Section 2 (CODES ONLY, no province names): every other owner, as
-//     `CODE (Name) — N regions`. This gives the model the fromCode/toCode vocabulary
+//   Section 2 (NAMES ONLY, no province names): every other owner, as
+//     `Name — N regions`. This gives the model the fromCode/toCode vocabulary
 //     for the long tail WITHOUT listing thousands of province names. When it targets
 //     one of these, it names the region as best it can and resolveRegionTransfers'
 //     retry (buildTransferFeedback, made reliable by the ownerKeyOf base-owner
 //     fallback) hands back that power's exact names — on demand, within the same jump.
 //
-// A region's owner is `regionOwnershipOverrides[id] ?? region.countryCode` (the base
+// Every owner in both sections is the FULL COUNTRY NAME. GADM's codes are provenance
+// on the region row, never an identity: the model is only ever shown, and only ever
+// asked for, "Spain".
+//
+// A region's owner is `regionOwnershipOverrides[id] ?? region.country` (the base
 // country from the catalog), so ownership is non-empty on stock maps, not just on
 // re-ownership scenarios. The catalog `name` is the exact in-game name the resolver
 // keys on (a GADM NAME_1 endonym like "Bayern"/"Ostpreussen"), so listing it — rather
 // than relying on the model's exonym guess ("Bavaria") — is what makes the transfer
 // resolvable.
 //
-// Pure and dependency-free so it is unit-tested directly (regionVocab.test.js)
-// without pulling in the browser-only asset layer that promptContext.js imports.
+// Unit-tested directly (regionVocab.test.js) without pulling in the browser-only asset
+// layer that promptContext.js imports — its only import is the owner-name
+// canonicaliser, which is plain data and safe to load anywhere.
+
+import { toCountryName } from "../../runtime/ownerNames.js";
 
 const norm = (value) => String(value ?? "").trim();
 const lower = (value) => norm(value).toLowerCase();
 
-// The in-game owner code for a region: an explicit override wins, else the base
-// country code from the catalog (so stock maps report real ownership, not "").
-export const regionOwnerCode = (region, overrides) => {
+// The in-game owner of a region, ALWAYS as the full country name ("Spain"): an
+// explicit override wins, else the base country from the catalog (so stock maps
+// report real ownership, not ""). It used to answer with the GADM CODE, which is
+// where the model learned to write "ESP" — and since a transfer's owner is stored
+// verbatim, that minted a phantom "ESP" country beside the real Spain. A legacy
+// override still holding a code is canonicalised here rather than handed on.
+// It also has to be the name for the FOCUS matching to work at all: the focus set is
+// built from the player's country and chat partners, which are names, so a code here
+// never matched and the player's own regions were left out of the enumerated list.
+export const regionOwnerName = (region, overrides) => {
   const override = norm(overrides?.[region?.id]);
-  if (override) return override;
-  return norm(region?.countryCode) || norm(region?.country);
+  if (override) return toCountryName(override);
+  return norm(region?.country) || toCountryName(norm(region?.countryCode));
 };
 
 // Group the catalog by current owner. Returns Map(lowerKey -> {label, regions}).
 const groupByOwner = (catalog, overrides) => {
   const groups = new Map();
   for (const region of catalog) {
-    const owner = regionOwnerCode(region, overrides);
+    const owner = regionOwnerName(region, overrides);
     if (!owner) continue; // unowned / ocean / malformed row
     const key = lower(owner);
     let group = groups.get(key);
@@ -67,7 +81,9 @@ export const FOCUS_INTRO =
   + "of these territories in a regionTransfer, copy a region's name or id EXACTLY "
   + "(never invent or translate a region name):";
 export const ROSTER_INTRO =
-  "All other powers and their owner codes (use the code for fromCode/toCode). A power "
+  "All other powers, by full country name. Every owner field (fromCode, toCode, "
+  + "ownerCode) takes the power's FULL NAME exactly as written here - \"Spain\", never "
+  + "a country code like \"ESP\" and never an abbreviation. A power "
   + "here is NOT region-listed above: when you narrate a transfer involving it, name "
   + "the region as precisely as you can and the engine will resolve it to the exact "
   + "in-game name, correcting you on retry if needed:";
