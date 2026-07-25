@@ -9,7 +9,7 @@
 // would be ESM, and Electron's main process is most predictable as CJS. The
 // server is ESM and is pulled in with a dynamic import().
 
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -124,6 +124,9 @@ const createMainWindow = () => {
     return { action: "deny" };
   });
   win.once("ready-to-show", () => win.show());
+  // If the page fails to load, ready-to-show never fires - and a live process with
+  // no window on screen is exactly what "it opens but nothing appears" looks like.
+  setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show(); }, 8000);
   return win;
 };
 
@@ -177,13 +180,13 @@ const checkForUpdate = async () => {
 // Offered once, on a profile that has never held a library. The old zip release
 // kept saves next to itself; the installed app has its own data directory, so
 // without this an upgrade looks like every game was lost.
-const offerLegacyImport = async () => {
-  if (!legacy.isFreshProfile(DATA_DIR)) return;
+const offerLegacyImport = async (parent) => {
+  if (!legacy.isFreshProfile(DATA_DIR)) return false;
   let found = null;
   try { found = legacy.findLegacyInstall(app.getPath("home")); } catch { /* keep going */ }
 
   const games = found ? legacy.countGames(found) : 0;
-  const { response } = await dialog.showMessageBox({
+  const { response } = await dialog.showMessageBox(parent, {
     type: "question",
     title: "Bring your games across?",
     message: found
@@ -204,7 +207,7 @@ ${games ? `${games} game${games === 1 ? "" : "s"}` : "Its games"}, scenarios, ba
   let source = null;
   if (found && response === 0) source = found;
   else if ((found && response === 1) || (!found && response === 0)) {
-    const picked = await dialog.showOpenDialog({
+    const picked = await dialog.showOpenDialog(parent, {
       title: "Select your old Open Historia folder",
       properties: ["openDirectory"],
     });
@@ -219,10 +222,11 @@ Pick the folder you extracted the old download into — the one containing a "se
       source = null;
     }
   }
-  if (!source) return;
+  if (!source) return false;
 
   try {
     const copied = legacy.importFrom(source, DATA_DIR);
+    if (copied) { console.log(`[open-historia] imported ${copied} item(s) from ${source}`); return true; }
     console.log(`[open-historia] imported ${copied} item(s) from ${source}`);
   } catch (error) {
     console.error("[open-historia] import failed:", error);
@@ -270,15 +274,25 @@ const boot = async () => {
     setupWindow?.webContents.send("setup:done");
   }
 
-  await offerLegacyImport();
   await startServer();
   mainWindow = createMainWindow();
   const port = process.env.PORT || 3000;
   await mainWindow.loadURL(`http://localhost:${port}`);
-  checkForUpdate();
-  setInterval(checkForUpdate, UPDATE_CHECK_MS);
   setupWindow?.close();
   setupWindow = null;
+
+  // Offered only once the game is actually on screen. It used to run before the
+  // server and before any window existed, so the prompt was a parentless modal that
+  // could open behind other windows while `await` held the rest of startup - which
+  // looks exactly like the app launching into nothing. Anything it throws is logged
+  // and dropped: an import prompt must never be what stops the game opening.
+  try {
+    if (await offerLegacyImport(mainWindow)) mainWindow.reload();
+  } catch (error) {
+    console.error("[open-historia] legacy import skipped:", error);
+  }
+  checkForUpdate();
+  setInterval(checkForUpdate, UPDATE_CHECK_MS);
 };
 
 // One instance only: a second launch would hit EADDRINUSE on the server port and
@@ -292,7 +306,19 @@ if (!app.requestSingleInstanceLock()) {
       mainWindow.focus();
     }
   });
-  app.whenReady().then(boot);
+  // Without this a rejection was an unhandled promise: the process stayed alive with
+  // no window and nothing printed, so a broken launch was indistinguishable from the
+  // app doing nothing at all. Always say what went wrong.
+  app.whenReady().then(boot).catch((error) => {
+    console.error("[open-historia] startup failed:", error);
+    dialog.showErrorBox(
+      "Open Historia could not start",
+      `${error?.stack || error?.message || String(error)}
+
+Data folder: ${USER_ROOT}`,
+    );
+    app.quit();
+  });
   app.on("window-all-closed", () => app.quit());
   ipcMain.handle("setup:cancel", () => app.quit());
   ipcMain.handle("desktop:update-state", () => updateState);
