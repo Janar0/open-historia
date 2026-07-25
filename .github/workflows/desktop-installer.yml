@@ -1,0 +1,118 @@
+# Builds the desktop app for Windows, macOS and Linux and attaches the installers
+# to a release. The player-facing point of this file is that NOTHING is built on
+# the player's machine any more: the client is compiled here, packaged with the
+# server into an Electron app, and shipped as one download per platform.
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish the installers to
+        required: false
+        default: desktop-stable
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false # one platform failing must not throw away the other two
+      matrix:
+        include:
+          # Each installer must be built on its own OS: electron-builder shells out
+          # to platform tooling (NSIS on Windows, hdiutil for the .dmg), and a macOS
+          # build simply cannot be produced anywhere but macOS.
+          - os: windows-latest
+            args: --win
+          - os: macos-latest
+            args: --mac
+          - os: ubuntu-latest
+            args: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Building a .dmg mounts a volume and then detaches it. On the macOS runners
+      # Spotlight starts indexing that volume the moment it appears and still holds
+      # it when dmg-builder tries to unmount, so `hdiutil detach` fails with exit 16
+      # (resource busy) and takes the whole build with it. Nothing here needs an
+      # index.
+      - name: Stop Spotlight indexing the build volume
+        if: runner.os == 'macOS'
+        run: sudo mdutil -a -i off || true
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The map archives are NOT packaged - they are ~200MB and the app downloads
+      # them on first launch - so nothing here fetches them.
+      # One id for all three platforms in this run, baked into the app and written
+      # into latest.json below. The app compares the two to know an update exists.
+      - name: Stamp the build id
+        shell: bash
+        run: |
+          echo "{\"build\":\"${{ github.run_id }}\"}" > electron/build-id.json
+          cat electron/build-id.json
+
+      - name: Build the client
+        run: npm run build
+
+      - name: Build the installer
+        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          # No code-signing certificate yet. Without this electron-builder tries to
+          # discover one and fails the build rather than skipping signing.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-historia-${{ matrix.os }}
+          # Only the finished installers; release/ also holds the unpacked app tree.
+          path: |
+            release/*.exe
+            release/*-mac-*.zip
+            release/*.AppImage
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'push' || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        shell: bash
+        run: |
+          # --clobber so re-running replaces the asset instead of erroring, and the
+          # release is created on first use rather than having to exist already.
+          # Three jobs race here, so creating it tolerates "already exists".
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Open Historia for Desktop" \
+              --notes "Windows, macOS and Linux downloads. The world map downloads on first launch." \
+            || true
+          shopt -s nullglob
+          files=(release/*.exe release/*-mac-*.zip release/*.AppImage)
+          # Only the Windows job writes latest.json, so three racing jobs cannot
+          # each publish a different view of the same release.
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            B="https://github.com/${{ github.repository }}/releases/download/$TAG"
+            cat > latest.json <<JSON
+          {
+            "build": "${{ github.run_id }}",
+            "windows": "$B/Open-Historia-Setup.exe",
+            "mac": "$B/Open-Historia-mac-arm64.zip",
+            "linux": "$B/Open-Historia-x86_64.AppImage"
+          }
+          JSON
+            files+=(latest.json)
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
