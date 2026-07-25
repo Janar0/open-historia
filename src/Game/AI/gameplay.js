@@ -445,7 +445,7 @@ const runJsonTask = async (taskKey, {
   // moves though the event narrates a capture. Force region names, and teach the
   // take-the-whole-region (default) vs capture-only-the-city (markerOps) distinction.
   if (["jumpForward", "autoJumpForward"].includes(taskKey)) {
-    systemPrompt = `${systemPrompt}\n\n[Region and City Capture]\nOn this map, territory is owned by REGIONS, and impacts.regionTransfers MUST name a region exactly as it appears in the [Game Map Description] above — never a city, town, port, or landmark. Cities such as Toulouse or Narbonne are only markers that sit INSIDE a region; a regionTransfer whose regionId is a city name matches no region and is silently discarded, so the border never moves even though the event says it did. To capture a place and the ground around it, transfer the REGION that contains it, and set fromCode to that region\u2019s current owner.\nTaking a region takes everything inside it, cities included — that is the normal case, so a city changing hands usually means transferring its whole region. To capture ONLY a city while its region stays with its current owner (a besieged holdout, an occupied port, an enclave), do NOT name it in regionTransfers; instead emit an impacts.markerOps build for it — {\"op\":\"build\",\"marker\":{\"name\":\"<city>\",\"kind\":\"city\",\"ownerCode\":\"<new holder>\",\"lng\":<lng>,\"lat\":<lat>}} — using that city\u2019s coordinates from [City Coordinates]. That places the city under the new owner without moving the region border.`;
+    systemPrompt = `${systemPrompt}\n\n[Region and City Capture]\nOn this map, territory is owned by REGIONS, and impacts.regionTransfers MUST name a region exactly as it appears in the [Game Map Description] above — never a city, town, port, or landmark. Cities such as Toulouse or Narbonne are only markers that sit INSIDE a region; a regionTransfer whose regionId is a city name matches no region and is silently discarded, so the border never moves even though the event says it did. To capture a place and the ground around it, transfer the REGION that contains it, and set fromCode to that region\u2019s current owner.\nTaking a region takes everything inside it, cities included — that is the normal case, so a city changing hands usually means transferring its whole region. To capture ONLY a city while its region stays with its current owner (a besieged holdout, an occupied port, an enclave), do NOT name it in regionTransfers; instead emit an impacts.markerOps build for it — {\"op\":\"build\",\"marker\":{\"name\":\"<city>\",\"kind\":\"city\",\"ownerCode\":\"<new holder>\",\"lng\":<lng>,\"lat\":<lat>}} — using that city\u2019s coordinates from [City Coordinates]. That places the city under the new owner without moving the region border.\nWhen a polity is conquered, annexed, partitioned, or unified OUTRIGHT — every region it still holds changing hands at once — you do not need one entry per region. Emit a SINGLE regionTransfer with "wholeCountry": true, put the losing polity's name in regionId instead of a region name, and set toCode to whoever takes it; the engine expands that into every region that polity currently owns. Use this ONLY for a total takeover of everything it holds. Any partial gain — a province, a border strip, a few regions — stays as ordinary per-region transfers, which remain the normal case.`;
   }
 
   // Units kept landing at 0,0 (null island) because the model copied the lng:0,lat:0
@@ -928,6 +928,43 @@ const resolveRegionTransfers = async (containers, world) => {
     if (!key) return [];
     return catalog.filter((region) => ownerKeyOf(region.id) === key);
   };
+  // Ownership is keyed by CODE ("ESP"), but a model naming a whole country writes the
+  // NAME ("Spain"). The catalog pairs the two on every region, so derive the mapping
+  // from it rather than importing another table.
+  const ownerNameByCodeKey = new Map();
+  for (const region of catalog) {
+    const codeKey = canonicalOwnerKey(region.countryCode);
+    const nameKey = canonicalOwnerKey(region.country);
+    if (codeKey && nameKey && !ownerNameByCodeKey.has(codeKey)) ownerNameByCodeKey.set(codeKey, nameKey);
+  }
+  // Every token a region's CURRENT owner can legitimately be called.
+  const ownerKeysOf = (regionId) => {
+    const primary = ownerKeyOf(regionId);
+    const keys = new Set(primary ? [primary] : []);
+    const alias = ownerNameByCodeKey.get(primary);
+    if (alias) keys.add(alias);
+    return keys;
+  };
+  // Whole-country transfer: one entry that hands over EVERY region a polity still
+  // holds (total conquest, annexation, unification, partition). Regions the winner
+  // already owns are skipped so a self-transfer can't blank an owner.
+  const expandWholeCountry = (transfer) => {
+    const target = normalizeString(transfer?.regionId) || normalizeString(transfer?.regionName);
+    const key = canonicalOwnerKey(target);
+    if (!key) return [];
+    const toKey = canonicalOwnerKey(transfer?.toCode);
+    const owned = catalog.filter((region) => {
+      const keys = ownerKeysOf(region.id);
+      return keys.has(key) && !keys.has(toKey);
+    });
+    return owned.map((region) => ({
+      ...transfer,
+      fromCode: normalizeString(transfer?.fromCode) || target,
+      regionId: region.id,
+      regionName: region.name,
+      wholeCountry: undefined,
+    }));
+  };
 
   const resolve = (transfer) => {
     // A model that did emit a real id keeps working.
@@ -966,10 +1003,35 @@ const resolveRegionTransfers = async (containers, world) => {
     if (transfers.length === 0) continue;
     const resolved = [];
     for (const transfer of transfers) {
+      // An explicit whole-country transfer expands FIRST: "annex Belgium" must move
+      // every Belgian region even though a region may share the country's name.
+      if (transfer?.wholeCountry === true) {
+        const expanded = expandWholeCountry(transfer);
+        if (expanded.length) {
+          console.info(
+            `[ai] ${path}.regionTransfers expanded whole country ` +
+              `"${normalizeString(transfer?.regionId)}" -> ${normalizeString(transfer?.toCode)}: ` +
+              `${expanded.length} region(s).`,
+          );
+          resolved.push(...expanded);
+          continue;
+        }
+      }
       const regionId = resolve(transfer);
       if (regionId) {
         transfer.regionId = regionId;
         resolved.push(transfer);
+        continue;
+      }
+      // Not a region the map knows — but it may be a POLITY the model meant wholesale
+      // ("Austria-Hungary is partitioned"). Expanding beats dropping the change.
+      const expanded = expandWholeCountry(transfer);
+      if (expanded.length) {
+        console.info(
+          `[ai] ${path}.regionTransfers treated "${normalizeString(transfer?.regionId)}" as a whole ` +
+            `country -> ${normalizeString(transfer?.toCode)}: ${expanded.length} region(s).`,
+        );
+        resolved.push(...expanded);
         continue;
       }
       unresolved.push({
