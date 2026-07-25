@@ -117,7 +117,7 @@
     "mac": {
       "target": [
         {
-          "target": "dmg",
+          "target": "zip",
           "arch": [
             "x64",
             "arm64"
@@ -126,10 +126,7 @@
       ],
       "icon": "public/icon-512.png",
       "category": "public.app-category.strategy-games",
-      "artifactName": "Open-Historia-${arch}.${ext}"
-    },
-    "dmg": {
-      "title": "Open-Historia"
+      "artifactName": "Open-Historia-mac-${arch}.${ext}"
     },
     "linux": {
       "target": [
