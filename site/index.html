@@ -276,7 +276,7 @@
     <p class="sub">Open Historia is an AI-driven turn-based strategy game. Lead any nation on a living world map, act in plain language, and watch an AI simulate the consequences — wars, diplomacy, and borders that actually shift.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="/play/"><span>▶</span> Play in your browser</a>
-      <a id="primaryDownload" class="btn btn-ghost" href="#download">
+      <a id="primaryDownload" class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/app-stable/Open-Historia.zip">
         <span>⬇</span> <span id="primaryLabel">Download for Desktop</span>
       </a>
     </div>
@@ -290,22 +290,22 @@
     <p class="eyebrow">Up and running in minutes</p>
     <h2>Three steps to play</h2>
     <div class="rule"></div>
-    <p class="lead">No accounts, no store, no build tools to wrangle. Download the app for your system, open it, and play.</p>
+    <p class="lead">No accounts, no store, no build tools to wrangle. Download the bundle, run the launcher, play in your browser.</p>
     <div class="steps">
       <div class="step">
         <div class="n">I</div>
-        <h3>Download</h3>
-        <p>Pick the download for your system: an installer on Windows, a zip on macOS, a single AppImage on Linux.</p>
+        <h3>Download &amp; unzip</h3>
+        <p>Grab <code>Open-Historia.zip</code> for your computer and extract it anywhere. Everything — the game and all its map data — is inside.</p>
       </div>
       <div class="step">
         <div class="n">II</div>
-        <h3>Open it</h3>
-        <p>Run the installer on Windows, or drag the app to Applications on macOS. Nothing else to set up — the app brings everything it needs with it.</p>
+        <h3>Run the launcher</h3>
+        <p>Open the <b>Launch Open Historia</b> file for your OS. It checks Node.js (and offers to install it), sets everything up, and starts the game.</p>
       </div>
       <div class="step">
         <div class="n">III</div>
-        <h3>Play</h3>
-        <p>Open Historia opens in its own window. The world map downloads once, with a progress bar, then you pick a scenario and start reshaping history.</p>
+        <h3>Play in your browser</h3>
+        <p>Your browser opens to <code>localhost:3000</code>. Pick a scenario or build your own world, and start reshaping history.</p>
       </div>
     </div>
 
@@ -315,9 +315,9 @@
         <button class="tab" role="tab" data-os="mac" aria-selected="false">🍎 macOS</button>
         <button class="tab" role="tab" data-os="linux" aria-selected="false">🐧 Linux</button>
       </div>
-      <div class="tab-body on" data-os="windows">Run <b>Open-Historia-Setup.exe</b> and follow the installer, then open <b>Open Historia</b> from the Start Menu. If Windows SmartScreen warns, choose <span class="kbd">More info → Run anyway</span> — the installer isn't code-signed yet.</div>
-      <div class="tab-body" data-os="mac">Unzip the download and drag <b>Open Historia</b> into your Applications folder. The first time, right-click it and choose <span class="kbd">Open</span> — the app isn't code-signed yet, so macOS asks for confirmation once.</div>
-      <div class="tab-body" data-os="linux">Make the AppImage executable (<span class="kbd">chmod +x Open-Historia-x86_64.AppImage</span>) and run it. Nothing is installed system-wide and no packages are needed.</div>
+      <div class="tab-body on" data-os="windows">Double-click <b>Launch Open Historia.bat</b>. If Windows SmartScreen warns, choose <span class="kbd">More info → Run anyway</span> — it's just an unsigned script. The window installs everything the first time (a couple of minutes), then launches the game.</div>
+      <div class="tab-body" data-os="mac">Double-click <b>Launch Open Historia.command</b>. The first time, right-click it and choose <span class="kbd">Open</span> so macOS lets it run. It sets up and launches the game for you.</div>
+      <div class="tab-body" data-os="linux">Run <span class="kbd">./"Launch Open Historia.sh"</span> in a terminal (or make it executable and double-click). It installs dependencies, builds, and starts the server.</div>
     </div>
   </section>
 
@@ -329,32 +329,17 @@
     <div class="dl">
       <div class="card feature">
         <span class="tag">Recommended</span>
-        <div class="ic">🪟</div>
-        <h3>Windows</h3>
-        <div class="meta">Windows 10 &amp; 11 · 124 MB</div>
-        <p>An ordinary installer. Run it and Open Historia lands in your Start Menu like any other app — no Node.js, no setup script, no terminal window. The world map downloads itself the first time you open it.</p>
-        <a class="btn btn-primary" href="https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/Open-Historia-Setup.exe">⬇ Download Installer</a>
-      </div>
-      <div class="card">
-        <div class="ic">🍎</div>
-        <h3>macOS</h3>
-        <div class="meta">Apple Silicon or Intel · ~150 MB</div>
-        <p>Unzip and drag Open Historia to your Applications folder. First launch: right-click it and choose <b>Open</b> — the app isn't code-signed yet, so macOS asks once.</p>
-        <a class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/Open-Historia-mac-arm64.zip">⬇ Apple Silicon</a>
-        <a class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/Open-Historia-mac-x64.zip">⬇ Intel</a>
-      </div>
-      <div class="card">
-        <div class="ic">🐧</div>
-        <h3>Linux</h3>
-        <div class="meta">AppImage · x86_64 · 159 MB</div>
-        <p>One portable file that runs on essentially any distribution. Make it executable and launch it — nothing to install, no packages to add.</p>
-        <a class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/Open-Historia-x86_64.AppImage">⬇ Download AppImage</a>
+        <div class="ic">💻</div>
+        <h3>Desktop — Stable</h3>
+        <div class="meta">Windows · macOS · Linux · ~186 MB</div>
+        <p>The complete, tested game in one self-contained download. Code and all world-map data included — no Git, no extra steps.</p>
+        <a class="btn btn-primary" href="https://github.com/Open-Historia/open-historia/releases/download/app-stable/Open-Historia.zip">⬇ Download Stable</a>
       </div>
       <div class="card">
         <div class="ic">🧪</div>
         <h3>Desktop — Beta</h3>
         <div class="meta">Newest features · ~186 MB</div>
-        <p>The older one-download bundle, built from the beta channel — latest features, a little less tested. Unzip it and run the launcher; this one still needs Node.js.</p>
+        <p>The same one-download install, built from the beta channel — latest features, a little less tested.</p>
         <a class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/app-beta/Open-Historia.zip">⬇ Download Beta</a>
       </div>
       <div class="card">
@@ -365,7 +350,7 @@
         <a class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/android/pax-historia.apk">⬇ Download APK</a>
       </div>
     </div>
-    <p class="hero-note" style="text-align:center;margin-top:22px">Already installed? Download the newest build and run it over the top — your saves and scenarios are kept. · <a href="https://github.com/Open-Historia/open-historia/releases" target="_blank" rel="noopener">All releases</a></p>
+    <p class="hero-note" style="text-align:center;margin-top:22px">Already installed? Run the <b>Update Open Historia</b> script to grab the latest — your saves and scenarios are kept. · <a href="https://github.com/Open-Historia/open-historia/releases" target="_blank" rel="noopener">All releases</a></p>
   </section>
 
   <section id="features">
@@ -434,7 +419,7 @@
       <p class="lead" style="margin-top:12px">Download once, run the launcher, and you're playing.</p>
       <div class="cta-row" style="margin-bottom:0">
         <a class="btn btn-primary" href="/play/"><span>▶</span> Play now</a>
-        <a id="bandDownload" class="btn btn-ghost" href="#download"><span>⬇</span> <span id="bandLabel">Download Open Historia</span></a>
+        <a id="bandDownload" class="btn btn-ghost" href="https://github.com/Open-Historia/open-historia/releases/download/app-stable/Open-Historia.zip"><span>⬇</span> <span id="bandLabel">Download Open Historia</span></a>
       </div>
     </div>
   </section>
@@ -464,20 +449,12 @@
   else if (/Mac OS X|Macintosh/i.test(ua)) os = "mac";
   else if (/Linux/i.test(ua)) os = "linux";
 
+  var STABLE = "https://github.com/Open-Historia/open-historia/releases/download/app-stable/Open-Historia.zip";
   var APK = "https://github.com/Open-Historia/open-historia/releases/download/android/pax-historia.apk";
 
   var label = { windows:"Download for Windows", mac:"Download for macOS", linux:"Download for Linux",
                 android:"Download the Android app", ios:"Download the Desktop app", desktop:"Download for Desktop" }[os];
-  // The desktop app is a real installed application on all three platforms now, so
-  // the button points at a per-OS build instead of one universal zip. Mac is the
-  // exception: Apple Silicon and Intel need different builds and the user agent
-  // can't tell them apart, so it goes to the downloads section to pick.
-  var WIN = "https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/Open-Historia-Setup.exe";
-  var LINUX = "https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/Open-Historia-x86_64.AppImage";
-  var href = (os === "android") ? APK
-           : (os === "windows") ? WIN
-           : (os === "linux") ? LINUX
-           : "#download";
+  var href = (os === "android") ? APK : STABLE;
 
   var pl = document.getElementById("primaryLabel"); if (pl) pl.textContent = label;
   var pd = document.getElementById("primaryDownload"); if (pd) pd.href = href;

@@ -624,36 +624,6 @@ export const applyMarkerOps = (markers, ops) => {
 };
 
 // One AI-authored mutation to the unit list: spawn | move | strength | remove.
-// Why normalizeUnitOp refused an entry, in words a player can paste into a bug
-// report. Mirrors the checks below — keep the two in step.
-const describeUnitOpRejection = (entry) => {
-  if (!entry || typeof entry !== "object") return "not an object";
-  const op = normalizeOptionalString(entry.op).toLowerCase();
-  if (!op) return "no op (expected spawn, move, strength or remove)";
-  if (op === "spawn") {
-    const unit = entry.unit ?? entry;
-    if (!unit || typeof unit !== "object") return "spawn without a unit";
-    const lng = finiteOrNull(unit.lng ?? unit.lon ?? unit.longitude);
-    const lat = finiteOrNull(unit.lat ?? unit.latitude);
-    if (lng === null || lat === null) {
-      // The usual cause: a non-numeric coordinate ("37,06", "37.06°N") that JSON
-      // carried through as a string and Number() turned into NaN.
-      return `spawn has unusable coordinates (lng=${JSON.stringify(unit.lng)}, lat=${JSON.stringify(unit.lat)})`;
-    }
-    if (lng === 0 && lat === 0) return "spawn at 0,0 — the output template's placeholder, not a real position";
-    if (!normalizeOptionalString(unit.ownerCode || unit.owner || unit.code)) return "spawn has no owner";
-    return "spawn rejected";
-  }
-  if (!normalizeOptionalString(entry.unitId || entry.id)) return `${op} without a unitId`;
-  if (op === "move") {
-    const toLng = finiteOrNull(entry.toLng ?? entry.lng);
-    const toLat = finiteOrNull(entry.toLat ?? entry.lat);
-    if (toLng === null || toLat === null) return `move has unusable destination (toLng=${JSON.stringify(entry.toLng)}, toLat=${JSON.stringify(entry.toLat)})`;
-    if (toLng === 0 && toLat === 0) return "move to 0,0 — the output template's placeholder, not a real position";
-  }
-  return `unknown op "${op}"`;
-};
-
 const normalizeUnitOp = (entry) => {
   if (!entry || typeof entry !== "object") {
     return null;
@@ -752,23 +722,7 @@ const normalizeEventImpacts = (value) => {
     markerOps: normalizeArray(value.markerOps).map(normalizeMarkerOp).filter(Boolean),
     polityChanges: normalizeArray(value.polityChanges).map(normalizePolityChange).filter(Boolean),
     regionTransfers: normalizeArray(value.regionTransfers).map(normalizeRegionTransfer).filter(Boolean),
-    // Say WHY a unit op was thrown away. A dropped op is the difference between an
-    // event that narrates a deployment and troops that actually appear on the map,
-    // and it used to vanish into .filter(Boolean) without a word — leaving no way
-    // to tell "the model never emitted one" from "it emitted one we rejected".
-    // Region transfers have logged their drops for a while; units now match.
-    unitOps: normalizeArray(value.unitOps)
-      .map((entry, index) => {
-        const normalized = normalizeUnitOp(entry);
-        if (!normalized) {
-          console.warn(
-            `[ai] unitOps[${index}] dropped — ${describeUnitOpRejection(entry)}:`,
-            entry,
-          );
-        }
-        return normalized;
-      })
-      .filter(Boolean),
+    unitOps: normalizeArray(value.unitOps).map(normalizeUnitOp).filter(Boolean),
   };
 };
 

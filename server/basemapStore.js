@@ -18,7 +18,7 @@ import url from "url";
 import { resolveChildPath } from "./security.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-import { DATA_DIR } from "./dataDir.js";
+const DATA_DIR = path.join(__dirname, "data");
 const BASEMAPS_DIR = path.join(DATA_DIR, "basemaps");
 const MANIFEST_PATH = path.join(DATA_DIR, "basemaps-manifest.json");
 
