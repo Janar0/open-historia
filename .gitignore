@@ -11,6 +11,8 @@ node_modules
 dist
 dist-web
 dist-ssr
+# electron-builder output (the packaged app + installer)
+release
 *.local
 
 # Web-mode seed (generated from server/data/scenarios/default by
