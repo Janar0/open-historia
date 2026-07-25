@@ -99,6 +99,15 @@ const regionTransferSchema = {
     fromCode: textSchema("Previous owner polity code, when known."),
     toCode: textSchema("New owner polity code."),
     note: textSchema("Brief reason for the transfer."),
+    wholeCountry: {
+      type: "boolean",
+      description:
+        "Set true ONLY for a total conquest, annexation, unification or partition in "
+        + "which one polity takes EVERY region another still holds. Then put the losing "
+        + "polity's name in regionId instead of a region name, and this single entry "
+        + "transfers all of its territory. Leave unset (the normal case) to transfer "
+        + "one named region.",
+    },
   },
   required: ["regionId", "toCode"],
   additionalProperties: false,

@@ -1,6 +1,7 @@
 /*! Open Historia — portions (custom regions.geojson runtime endpoint) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import mapLibreGl from "maplibre-gl";
 import { PMTiles, Protocol, SharedPromiseCache } from "pmtiles";
+import { resolveRegionName } from "./regionNameFixes.js";
 
 const { addProtocol, setMaxParallelImageRequests, setWorkerCount } = mapLibreGl;
 
@@ -1057,7 +1058,11 @@ export const loadRegionCatalog = async ({ force = false } = {}) => {
       for (let index = 0; index < layer.length; index += 1) {
         const props = layer.feature(index).properties;
         const id = props?.GID_1 || props?.gid_1 || props?.HASC_1 || props?.fid;
-        const name = props?.NAME_1 || props?.name_1 || props?.NAME || props?.name;
+        // A few GADM regions carry the literal placeholder "NA" as their name (England
+        // among them). Correct the known ones and treat the rest as nameless, so the
+        // `!name` skip below drops them instead of teaching the model a region called
+        // "NA" that it can never meaningfully transfer.
+        const name = resolveRegionName(id, props?.NAME_1 || props?.name_1 || props?.NAME || props?.name);
         const countryCode = props?.GID_0 || props?.gid_0 || "";
         const country = resolveCountryDisplayName(
           props?.COUNTRY || props?.Country || props?.country,
@@ -1103,7 +1108,11 @@ export const loadRegionCatalog = async ({ force = false } = {}) => {
           const props = feature?.properties ?? {};
           const id = props.id != null ? String(props.id) : "";
           if (!id) continue;
-          const name = props.name ? String(props.name) : "";
+          // Same placeholder correction as the stock pass above — and it must happen
+          // HERE too: a scenario's geometry is seeded from the same GADM export, so
+          // without this the scenario's own "NA" wins on the next line and puts the
+          // placeholder back over the corrected stock name.
+          const name = resolveRegionName(id, props.name);
           const existing = seen.get(id);
           if (existing) {
             // The scenario's own name for a stock region WINS. A world that
