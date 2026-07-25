@@ -495,6 +495,15 @@ const runJsonTask = async (taskKey, {
       });
       const rawText = typeof response === "string" ? response : normalizeString(response?.rawText);
       const parsed = response?.toolInput ?? extractJsonPayload(rawText);
+      // A single mistyped optional field must not discard the whole turn to the
+      // canned fallback: the model sometimes returns `catalyst` as a prose string
+      // instead of the object|null the jump schema requires. Coerce any non-object
+      // catalyst to null (= no catalyst offered this turn) so the turn's real
+      // content (events, transfers, chats) still validates and applies.
+      if (parsed && typeof parsed === "object" && parsed.catalyst != null
+          && (typeof parsed.catalyst !== "object" || Array.isArray(parsed.catalyst))) {
+        parsed.catalyst = null;
+      }
       let validation = parsed
         ? validateGameplayPayload(taskKey, parsed)
         : { valid: false, error: "Response did not contain parseable JSON or tool arguments." };
@@ -1456,6 +1465,13 @@ const applySimulationResult = async ({
     writeJson(JSON_URLS.colors, nextColors, { pretty: true }),
     writeWorldState(nextWorld),
   ]);
+
+  // The turn's new state is now persisted. Web-mode encrypted sync listens for this
+  // to back up the turn (replacing a fixed 20s poll); it is a no-op in desktop mode
+  // where nothing listens. Firing here — the single choke point every turn type runs
+  // through (jump, auto-jump, catalyst, game-master) — means the sync's full scan
+  // sees the committed round.
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("oh:turn-complete"));
 
   // Snapshot the state we just replaced so it can be rolled back to (best-effort).
   await captureRollbackSnapshot({
