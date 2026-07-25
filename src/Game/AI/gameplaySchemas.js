@@ -332,6 +332,27 @@ const markerOpSchema = {
       required: ["op", "marker"],
       additionalProperties: false,
     },
+    // The same build, written flat. Models routinely put the structure's fields
+    // beside `op` instead of nesting them under `marker`, and the engine has always
+    // read that shape (normalizeMarkerOp falls back to the entry itself). Only this
+    // schema refused it — and because a rejected op fails the WHOLE payload, one
+    // flattened building threw away the entire turn and left the player with
+    // fallback events. Accept what we already understand.
+    {
+      type: "object",
+      properties: {
+        op: { type: "string", enum: ["build"] },
+        id: textSchema("Stable marker identifier."),
+        name: nonEmptyTextSchema("Name of the structure or place."),
+        kind: textSchema("What it is: city, base, bunker, silo, embassy, port."),
+        ownerCode: textSchema("Owning polity's FULL country name (\"Spain\"), never a country code."),
+        lng: { type: "number", description: "Longitude.", minimum: -180, maximum: 180 },
+        lat: { type: "number", description: "Latitude.", minimum: -90, maximum: 90 },
+        note: textSchema("Brief explanation."),
+      },
+      required: ["op", "name", "lng", "lat"],
+      additionalProperties: false,
+    },
     {
       type: "object",
       properties: {

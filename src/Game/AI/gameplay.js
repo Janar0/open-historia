@@ -513,6 +513,24 @@ const runJsonTask = async (taskKey, {
           && (typeof parsed.catalyst !== "object" || Array.isArray(parsed.catalyst))) {
         parsed.catalyst = null;
       }
+      // Same idea for markerOps. The engine has always accepted `found`/`destroy`
+      // as aliases and a build written flat, but the schema only ever allowed the
+      // canonical spelling — and a single rejected op fails the WHOLE payload, so
+      // one flattened building cost the player the entire turn. Rewrite to the
+      // canonical shape here, before validation, so the turn survives.
+      for (const event of Array.isArray(parsed?.events) ? parsed.events : []) {
+        const ops = event?.impacts?.markerOps;
+        if (!Array.isArray(ops)) continue;
+        event.impacts.markerOps = ops.map((op) => {
+          if (!op || typeof op !== "object") return op;
+          const kind = String(op.op ?? "").trim().toLowerCase();
+          const canonical = kind === "found" ? "build" : kind === "destroy" ? "remove" : kind;
+          if (canonical !== "build" || op.marker) return { ...op, op: canonical };
+          // Flat build: lift the structure's own fields under `marker`.
+          const { op: _op, note, ...marker } = op;
+          return { op: "build", marker, ...(note == null ? {} : { note }) };
+        });
+      }
       let validation = parsed
         ? validateGameplayPayload(taskKey, parsed)
         : { valid: false, error: "Response did not contain parseable JSON or tool arguments." };
