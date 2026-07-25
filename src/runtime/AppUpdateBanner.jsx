@@ -65,8 +65,14 @@ export default function AppUpdateBanner() {
   // compares its baked build id against the deployed version.json and updates by
   // reloading onto the new bundle. Desktop/dev carry neither stamp and no-op.
   const isApp = Number.isFinite(APP_BUILD) && APP_BUILD > 0;
+  // The desktop app is an ordinary localhost page, so it cannot tell it is inside
+  // the app on its own. Its server answers /api/app-update with a `current` build,
+  // and only that server does — so the reply itself is the signal. Nothing is added
+  // to the window for this: a preload on the game window is what broke the app
+  // before.
+  const [desktop, setDesktop] = useState(null);
   const isWeb = !isApp && WEB_BUILD !== "";
-  const supported = isApp || isWeb;
+  const supported = isApp || isWeb || Boolean(desktop);
   const [latest, setLatest] = useState(null);
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -80,6 +86,28 @@ export default function AppUpdateBanner() {
   });
   const [updating, setUpdating] = useState(false);
   const lastRefocusRef = useRef(0);
+
+  useEffect(() => {
+    if (isApp || isWeb) return undefined;
+    let dropped = false;
+    const probe = async () => {
+      try {
+        const res = await fetch("/api/app-update?track=desktop", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        // `current` present = this is the desktop app. Any DIFFERENCE is an update:
+        // the ids are opaque, so a rollback counts just as much as a newer build.
+        if (dropped || !data?.current || !data?.buildId || !data?.download) return;
+        if (data.buildId === data.current) return;
+        setDesktop({ build: data.buildId, notes: data.notes || "", url: data.download });
+      } catch {
+        /* fail open: no banner */
+      }
+    };
+    probe();
+    const timer = setInterval(probe, APP_UPDATE_CHECK_INTERVAL_MS);
+    return () => { dropped = true; clearInterval(timer); };
+  }, [isApp, isWeb]);
 
   useEffect(() => {
     if (!supported) return undefined;
@@ -125,11 +153,21 @@ export default function AppUpdateBanner() {
   }, [supported, isWeb]);
 
   if (!supported) return null;
-  if (isWeb ? !latest : !isUpdateAvailable(APP_BUILD, latest)) return null;
+  const info = desktop ?? latest;
+  if (desktop ? false : isWeb ? !latest : !isUpdateAvailable(APP_BUILD, latest)) return null;
+  if (desktop && String(dismissed) === String(desktop.build)) return null;
   // Web ids are opaque strings, so dismissal is an equality check rather than "<=".
-  if (isWeb ? String(dismissed) === String(latest.build) : latest.build <= dismissed) return null;
+  if (!desktop && (isWeb ? String(dismissed) === String(latest.build) : latest.build <= dismissed)) return null;
 
   const onUpdate = async () => {
+    if (desktop) {
+      // window.open goes through the main process's window-open handler, which sends
+      // it to the real browser — so the installer downloads where the player can see
+      // it, and no extra bridge is needed to do it.
+      setUpdating(true);
+      window.open(desktop.url, "_blank", "noopener");
+      return;
+    }
     if (isWeb) {
       setUpdating(true);
       // Bundle filenames are content-hashed, so re-fetching the shell is all it takes
@@ -158,9 +196,9 @@ export default function AppUpdateBanner() {
     window.location.href = latest.apk;
   };
   const onDismiss = () => {
-    setDismissed(latest.build);
+    setDismissed(info.build);
     try {
-      localStorage.setItem(DISMISS_KEY, String(latest.build));
+      localStorage.setItem(DISMISS_KEY, String(info.build));
     } catch {
       /* ignore: dismissal just won't persist across launches */
     }
@@ -171,16 +209,18 @@ export default function AppUpdateBanner() {
       <div style={text}>
         A new version of Open Historia is ready.
         <span style={sub}>
-          {isWeb
+          {desktop
+            ? (updating ? "Opening the download…" : "Download the new version and run it — your games are kept.")
+            : isWeb
             ? (updating ? "Reloading…" : "Reload to get the latest fixes. Your games are saved.")
             : updating
               ? "Downloading… open the finished download to install and reopen."
               : latest.notes || `Build ${latest.build} · tap Update to download and install.`}
         </span>
       </div>
-      {isWeb || latest.apk ? (
+      {isWeb || desktop || latest.apk ? (
         <button type="button" style={btn} onClick={onUpdate} disabled={updating}>
-          {updating ? (isWeb ? "Reloading…" : "Downloading…") : "Update now"}
+          {updating ? (isWeb ? "Reloading…" : desktop ? "Opening…" : "Downloading…") : "Update now"}
         </button>
       ) : null}
       <button type="button" style={dismissBtn} onClick={onDismiss} aria-label="Dismiss update notice">
