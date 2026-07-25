@@ -71,13 +71,13 @@ desktop app below needs no such setup.
 Download **[`Open-Historia.zip`](https://github.com/Open-Historia/open-historia/releases/tag/app-stable)**
 (~186 MB — code *and* all map data), unzip it anywhere, then:
 
-- **Windows:** double-click **`Launch Open Historia.bat`**
-- **macOS:** double-click **`Launch Open Historia.command`** (first run: right-click → *Open*)
-- **Linux:** run `./"Launch Open Historia.sh"` in a terminal
+- **Windows:** run **`Open-Historia-Setup.exe`**, then open Open Historia from the Start Menu
+- **macOS:** unzip and drag **Open Historia** to Applications (first run: right-click -> *Open*)
+- **Linux:** `chmod +x Open-Historia-x86_64.AppImage` and run it
 
 The launcher checks Node.js, downloads the map data, installs dependencies, builds,
 and opens the game. To update an existing install later, run the matching
-**`Update Open Historia`** script for your platform — it fetches the latest version
+newest installer from the downloads page and run it over the top - your saves
 while preserving your saves, scenarios, and map data.
 
 > [!TIP]
@@ -85,33 +85,6 @@ while preserving your saves, scenarios, and map data.
 > administrator rights: an elevated window gets the admin account's environment,
 > which can hide a Node.js that was installed for your own account.
 
-<details>
-<summary><b>Windows says "Windows cannot find …Launch Open Historia.bat"?</b></summary>
-
-The file exists — this is Windows' misleading message for a **blocked or broken
-double-click action** on batch files, usually one of:
-
-1. **A broken `ComSpec` system variable** (the launcher also warns about this
-   when started from a terminal). In a Command Prompt run `echo %ComSpec%` —
-   it must print `C:\WINDOWS\system32\cmd.exe`. If it doesn't: System
-   Properties → *Environment Variables* → *System variables* → `ComSpec` → set
-   it to `%SystemRoot%\system32\cmd.exe`, then sign out and back in. Windows
-   needs `ComSpec` to launch any double-clicked batch file, so a broken value
-   produces exactly this error.
-2. **Antivirus / SmartScreen blocking a downloaded .bat.** Before extracting,
-   right-click the downloaded ZIP → *Properties* → check **Unblock** → *OK*, then
-   extract to a simple folder like `C:\Games\Open-Historia` (not Downloads). If
-   you already extracted, do the same on `Launch Open Historia.bat` itself, and
-   check your antivirus' protection log / quarantine.
-3. **A broken .bat file association.** Open a *normal* Command Prompt, `cd` into
-   the folder and run `"Launch Open Historia.bat"` — if that works while
-   double-clicking doesn't, restore the association from an **administrator**
-   Command Prompt: `assoc .bat=batfile` and ensure the registry value
-   `HKEY_CLASSES_ROOT\batfile\shell\open\command` is exactly `"%1" %*`.
-
-Running "as administrator" sidesteps the block, but don't make that the routine —
-see the tip above.
-</details>
 
 #### Android app (thin APK)
 
