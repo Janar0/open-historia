@@ -22,7 +22,6 @@ import {
 } from "../../runtime/assets.js";
 import { resolveRegionName } from "../../runtime/regionNameFixes.js";
 import { toCountryName } from "../../runtime/ownerNames.js";
-import { buildCoarseGeometryById } from "./coarseGeometry.js";
 import { loadCountryLabelCollections } from "../../runtime/countryLabels.js";
 import { translateLabel } from "../../runtime/translator.js";
 import { MAP_SETTING_KEYS, useMapSetting } from "../../runtime/mapSettings.js";
@@ -216,8 +215,7 @@ const STOCK_GEOMETRY_FILTER = ["all", GADM_GEOMETRY_FILTER, ["!=", ["get", "edit
 // world view, the seed geometry takes over through the middle, and the stock vector
 // tiles take the close range. Seed geometry was extracted at tile-zoom 5, so it hands
 // off to the tiles just past that.
-const ULTRA_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 3, 0.72, 4, 0];
-const FAR_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 3, 0, 4, 0.72, 5.5, 0.72, 6.5, 0];
+const FAR_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 5.5, 0.72, 6.5, 0];
 const TILE_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 5.5, 0, 6.5, 0.72];
 
 // ---- Owner labels for custom maps -----------------------------------------
@@ -922,23 +920,6 @@ const WorldMap = ({ isGlobe = false }) => {
     };
   }, [customRegionData, colorMap, regionOwnershipOverrides, regionClaimants, ownerColorCss, resolveOwnerRgb]);
 
-  // Lowest-detail tier, drawn only at world-ish zooms. The coordinate work is keyed to
-  // the RAW geometry so it runs when the scenario's regions load and not on the far
-  // more frequent recolours; re-attaching the enriched properties below is a plain
-  // object spread with no geometry maths in it.
-  const coarseGeometryById = useMemo(() => buildCoarseGeometryById(customRegionData), [customRegionData]);
-
-  const ultraCoarseRegionData = useMemo(() => {
-    const features = [];
-    for (const feature of enrichedCustomRegionData?.features ?? []) {
-      const geometry = coarseGeometryById.get(String(feature?.properties?.id));
-      // No entry means the shape collapsed at this grid (a speck or a tiny island) —
-      // leaving it out is the intended loss of detail, not a dropped region.
-      if (geometry) features.push({ ...feature, geometry });
-    }
-    return { type: "FeatureCollection", features };
-  }, [enrichedCustomRegionData, coarseGeometryById]);
-
   // GADM disputed regions also paint the stock tiles (the crisp z>6.5 layer):
   // GID_1 -> stripe-tile id stops for the tile twin of the disputed layer.
   const disputedTileStops = useMemo(() => {
@@ -1158,32 +1139,7 @@ const WorldMap = ({ isGlobe = false }) => {
           and each region simplifies independently — shared borders drift
           apart at low zoom. Full resolution keeps them connected everywhere;
           the seed geometry is coarse enough that this stays cheap. */}
-      {/* Lowest-detail tier, world view only. Same tolerance 0 for the same reason:
-          its geometry is already reduced, and the reduction was a grid SNAP precisely
-          so shared borders survive it — letting the source simplify on top would undo
-          that. It fades out by z4, where the seed tier has faded in. */}
-      <Source id="custom-regions-ultra-source" type="geojson" data={ultraCoarseRegionData} tolerance={0}>
-        <Layer
-          id="custom-regions-fill-ultra"
-          type="fill"
-          maxzoom={4}
-          filter={STOCK_GEOMETRY_FILTER}
-          paint={{ "fill-color": CUSTOM_FILL_COLOR, "fill-opacity": customActive ? ULTRA_FILL_FADE : 0 }}
-        />
-        <Layer
-          id="custom-regions-hairline-ultra"
-          type="line"
-          maxzoom={4}
-          filter={STOCK_GEOMETRY_FILTER}
-          paint={{
-            "line-color": "#000",
-            "line-width": 0.3,
-            "line-opacity": customActive ? ["interpolate", ["linear"], ["zoom"], 3, 0.35, 4, 0] : 0,
-          }}
-        />
-      </Source>
-
-      <Source id="custom-regions-source" type="geojson" data={enrichedCustomRegionData} tolerance={0}>
+      <Source id="custom-regions-source" type="geojson" data={enrichedCustomRegionData} tolerance={0.6}>
         {/* Zoomed-out fill for GADM regions from the seed geometry — the stock
             tiles are too simplified at low zoom and show sliver gaps there. */}
         <Layer
@@ -1207,7 +1163,7 @@ const WorldMap = ({ isGlobe = false }) => {
             // Fades in over the same 3->4 band as the fill above, handing off from the
             // ultra tier's hairlines so borders never double up or blink.
             "line-opacity": customActive
-              ? ["interpolate", ["linear"], ["zoom"], 3, 0, 4, 0.35, 5.5, 0.55, 6.5, 0]
+              ? ["interpolate", ["linear"], ["zoom"], 3, 0.35, 5.5, 0.55, 6.5, 0]
               : 0,
           }}
         />
