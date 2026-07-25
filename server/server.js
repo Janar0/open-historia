@@ -271,6 +271,10 @@ app.get("/api/library", (_req, res) => {
 const APP_UPDATE_MANIFESTS = {
   stable: "https://github.com/Open-Historia/open-historia/releases/download/android/latest.json",
   beta: "https://github.com/Open-Historia/open-historia/releases/download/android-beta/latest.json",
+  // The desktop app checks through here rather than from the page: a release asset
+  // sends no CORS headers, and the GitHub API is rate limited per IP. Exactly the
+  // reason the Android tracks are served this way.
+  desktop: "https://github.com/Open-Historia/open-historia/releases/download/desktop-stable/latest.json",
 };
 const APP_UPDATE_TTL_MS = 3 * 60 * 1000;
 const appUpdateCache = new Map(); // track -> { at, data }
@@ -294,10 +298,19 @@ app.get("/api/app-update", async (req, res) => {
       return;
     }
     const raw = await response.json();
+    const str = (value) => (typeof value === "string" ? value : "");
     const data = {
       build: Number(raw && raw.build) || 0,
-      apk: typeof (raw && raw.apk) === "string" ? raw.apk : "",
-      notes: typeof (raw && raw.notes) === "string" ? raw.notes : "",
+      apk: str(raw && raw.apk),
+      notes: str(raw && raw.notes),
+      // Desktop ids are opaque strings (a CI run id), not the ascending integer the
+      // Android tracks use, so they are kept as text and compared for INEQUALITY.
+      buildId: String((raw && raw.build) ?? ""),
+      // Set only when this server is the one running inside the desktop app. That is
+      // how the page can tell it is there at all — it is otherwise an ordinary
+      // localhost page — and it is absent everywhere else, so no banner appears.
+      current: String(process.env.OH_DESKTOP_BUILD || ""),
+      download: str(raw && raw[{ win32: "windows", darwin: "mac", linux: "linux" }[process.platform]]),
     };
     appUpdateCache.set(track, { at: Date.now(), data });
     res.json(data);

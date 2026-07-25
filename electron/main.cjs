@@ -28,6 +28,18 @@ const ASSETS_DIR = path.join(USER_ROOT, "public", "assets");
 process.env.OH_DATA_DIR = DATA_DIR;
 process.env.OH_ASSETS_DIR = ASSETS_DIR;
 
+// The build id the release workflow stamped in. The server passes it to the page so
+// the update banner can compare it against the published one. Deliberately routed
+// this way rather than through a preload: attaching a preload to the game window is
+// what broke the app last time, and this adds nothing to how the window is created.
+try {
+  process.env.OH_DESKTOP_BUILD = String(
+    JSON.parse(fs.readFileSync(path.join(__dirname, "build-id.json"), "utf8")).build || "",
+  );
+} catch {
+  /* dev build: unstamped, so no update is ever offered */
+}
+
 const APP_ROOT = path.join(__dirname, "..");
 // asarUnpack keeps scripts/ outside the archive so a child process can run it.
 const unpacked = (p) => p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
