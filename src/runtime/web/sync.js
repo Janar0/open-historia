@@ -154,40 +154,61 @@ const push = async (versions, onWork) => {
 };
 
 let running = false;
+let rerunRequested = false;
 export const syncNow = async () => {
-  if (running || !accountConfigured() || !(await isSignedIn()) || !(await getDek())) return;
+  // A trigger that arrives mid-sync (e.g. a turn completes while a pull is in flight)
+  // sets a rerun flag instead of being dropped, so its change isn't stranded until
+  // the next trigger — with the poll gone, a dropped trigger would mean a lost backup.
+  if (running) { rerunRequested = true; return; }
+  if (!accountConfigured() || !(await isSignedIn()) || !(await getDek())) return;
   running = true;
-  // Show "Syncing…" only once a real transfer starts. The engine polls every 20s
-  // (and on tab hide) to reconcile — an empty pass with nothing to move must not
-  // flash the widget as if it were uploading, which reads as "why is it syncing
-  // when I did nothing".
-  let announcedWork = false;
-  const onWork = () => {
-    if (announcedWork) return;
-    announcedWork = true;
-    window.dispatchEvent(new CustomEvent("oh:sync", { detail: { state: "syncing" } }));
-  };
   try {
-    const versions = await kvGet(VERSIONS_KEY, {});
-    await pull(versions, onWork);
-    await push(versions, onWork);
-    await kvPut(VERSIONS_KEY, versions);
-    window.dispatchEvent(new CustomEvent("oh:sync", { detail: { state: "ok", at: Date.now() } }));
-  } catch (error) {
-    console.warn("[sync]", error.message);
-    window.dispatchEvent(new CustomEvent("oh:sync", { detail: { state: "error", error: error.message } }));
+    do {
+      rerunRequested = false;
+      // Show "Syncing…" only once a real transfer starts. Sync runs on sign-in, after
+      // each turn, and on tab hide — an empty pass with nothing to move must not flash
+      // the widget as if it were uploading ("why is it syncing when I did nothing").
+      let announcedWork = false;
+      const onWork = () => {
+        if (announcedWork) return;
+        announcedWork = true;
+        window.dispatchEvent(new CustomEvent("oh:sync", { detail: { state: "syncing" } }));
+      };
+      try {
+        const versions = await kvGet(VERSIONS_KEY, {});
+        await pull(versions, onWork);
+        await push(versions, onWork);
+        await kvPut(VERSIONS_KEY, versions);
+        window.dispatchEvent(new CustomEvent("oh:sync", { detail: { state: "ok", at: Date.now() } }));
+      } catch (error) {
+        console.warn("[sync]", error.message);
+        window.dispatchEvent(new CustomEvent("oh:sync", { detail: { state: "error", error: error.message } }));
+      }
+    } while (rerunRequested);
   } finally {
     running = false;
   }
 };
 
-let timer = null;
+// Sync is event-driven, not polled: once at sign-in/load, after every turn completes
+// (the game dispatches "oh:turn-complete" once its new state is persisted), and when
+// the tab is hidden. This replaced a fixed 20s poll that was ~80-90% of this Worker's
+// request load; the full-scan model means one pass still catches every change.
+const onTurnComplete = () => { syncNow(); };
+const onVisibility = () => { if (document.visibilityState === "hidden") syncNow(); };
+let wired = false;
 export const startSync = async () => {
   if (!accountConfigured()) return;
   await syncNow();
-  clearInterval(timer);
-  timer = setInterval(syncNow, 20000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") syncNow(); });
+  if (wired) return; // startSync can fire again on re-auth — don't stack listeners
+  wired = true;
+  window.addEventListener("oh:turn-complete", onTurnComplete);
+  document.addEventListener("visibilitychange", onVisibility);
 };
 
-export const stopSync = () => { clearInterval(timer); timer = null; };
+export const stopSync = () => {
+  if (!wired) return;
+  wired = false;
+  window.removeEventListener("oh:turn-complete", onTurnComplete);
+  document.removeEventListener("visibilitychange", onVisibility);
+};
