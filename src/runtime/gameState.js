@@ -3,6 +3,7 @@ import { JSON_URLS, readJson, writeJson } from "./assets.js";
 import { enqueueContentStrings } from "./translator.js";
 import { normalizeTagList } from "./countryTags.js";
 import { dedupeEventLog } from "./eventDedup.js";
+import { toCountryName } from "./ownerNames.js";
 
 export const GAME_DEFAULTS = {
   country: "",
@@ -432,8 +433,12 @@ const normalizeRegionTransfer = (entry) => {
   }
 
   const regionId = normalizeOptionalString(entry.regionId || entry.id || entry.gid || entry.GID_1);
-  const toCode = normalizeOptionalString(entry.toCode || entry.toPolity || entry.ownerCode || entry.owner);
-  const fromCode = normalizeOptionalString(entry.fromCode || entry.fromPolity);
+  // Owners are stored as the FULL COUNTRY NAME. This value is written straight into
+  // world.regionOwnershipOverrides, so a model that answered "ESP" out of habit would
+  // otherwise mint a phantom country that paints and labels itself beside the real
+  // Spain. Canonicalise on the way in, once, rather than papering over it at render.
+  const toCode = toCountryName(normalizeOptionalString(entry.toCode || entry.toPolity || entry.ownerCode || entry.owner));
+  const fromCode = toCountryName(normalizeOptionalString(entry.fromCode || entry.fromPolity));
 
   if (!regionId || !toCode) {
     return null;
@@ -453,7 +458,7 @@ const normalizePolityChange = (entry) => {
     return null;
   }
 
-  const code = normalizeOptionalString(entry.code || entry.id || entry.polityCode);
+  const code = toCountryName(normalizeOptionalString(entry.code || entry.id || entry.polityCode));
   if (!code) {
     return null;
   }
@@ -495,7 +500,8 @@ export const normalizeUnitEntry = (entry, index = 0) => {
 
   const lng = finiteOrNull(entry.lng ?? entry.lon ?? entry.longitude);
   const lat = finiteOrNull(entry.lat ?? entry.latitude);
-  const ownerCode = normalizeOptionalString(entry.ownerCode || entry.owner || entry.code);
+  // Full country name, never a code — same identity everywhere (see ownerNames.js).
+  const ownerCode = toCountryName(normalizeOptionalString(entry.ownerCode || entry.owner || entry.code));
   if (lng === null || lat === null || (lng === 0 && lat === 0) || !ownerCode) {
     return null;
   }
@@ -547,7 +553,7 @@ export const normalizeMarkerEntry = (entry, index = 0) => {
     id: normalizeOptionalString(entry.id) || generateId(`marker-${index}`),
     name,
     kind: (normalizeOptionalString(entry.kind || entry.type) || "landmark").toLowerCase(),
-    ownerCode: normalizeOptionalString(entry.ownerCode || entry.owner || entry.code),
+    ownerCode: toCountryName(normalizeOptionalString(entry.ownerCode || entry.owner || entry.code)),
     lng,
     lat,
     note: normalizeOptionalString(entry.note || entry.description),
@@ -854,7 +860,9 @@ export const normalizeWorldState = (world) => {
 
   const regionOwnershipOverrides = Object.fromEntries(
     Object.entries(nextWorld.regionOwnershipOverrides ?? {})
-      .map(([regionId, ownerCode]) => [normalizeOptionalString(regionId), normalizeOptionalString(ownerCode)])
+      // Canonicalise on READ too, so a save written before this migrated still
+      // resolves to the same owner identity as everything computed now.
+      .map(([regionId, ownerCode]) => [normalizeOptionalString(regionId), toCountryName(normalizeOptionalString(ownerCode))])
       .filter(([regionId, ownerCode]) => regionId && ownerCode),
   );
 

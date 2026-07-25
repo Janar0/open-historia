@@ -361,23 +361,27 @@ export const buildWorldSummary = async (bundle, regionCatalog = null) => {
   // everyone else (the model names their regions on demand and the retry resolves
   // them). Focus = the player, anyone already re-owned, scenario-defined actors, and
   // the player's active chat partners — the likely belligerents.
-  const playerCode = normalizeString(bundle.game.country);
-  const overrideOwnerCodes = [...new Set(
-    territoryEntries.map(([, ownerCode]) => normalizeString(ownerCode)).filter(Boolean),
+  // Every focus token is a FULL COUNTRY NAME, because that is what the vocabulary is
+  // keyed by (regionOwnerName). A legacy override still holding "ESP" is canonicalised
+  // so it matches "Spain" — otherwise that power silently drops out of the enumerated
+  // section and the model is left inventing its region names again.
+  const playerName = toCountryName(normalizeString(bundle.game.country));
+  const overrideOwnerNames = [...new Set(
+    territoryEntries.map(([, owner]) => toCountryName(normalizeString(owner))).filter(Boolean),
   )];
-  const actorCodes = polities.map((entry) => normalizeString(entry?.code)).filter(Boolean);
-  const chatCodes = normalizeArray(bundle.chats).flatMap((chat) =>
-    normalizeArray(chat?.countries).map((country) => normalizeString(country?.code)).filter(Boolean));
-  const focusCodes = [playerCode, ...overrideOwnerCodes, ...actorCodes, ...chatCodes].filter(Boolean);
-  // Owner code -> display name for both sections: base country names from the catalog,
+  const actorNames = polities.map((entry) => toCountryName(normalizeString(entry?.code))).filter(Boolean);
+  const chatNames = normalizeArray(bundle.chats).flatMap((chat) =>
+    normalizeArray(chat?.countries).map((country) => toCountryName(normalizeString(country?.code))).filter(Boolean));
+  const focusCodes = [playerName, ...overrideOwnerNames, ...actorNames, ...chatNames].filter(Boolean);
+  // Owner name -> display name for both sections: base country names from the catalog,
   // with dynamic polity overrides layered on top (a re-owned/renamed power wins).
   const polityNames = {};
   for (const region of regions) {
-    const code = String(region.countryCode || region.country || "").toLowerCase();
-    if (code && !polityNames[code]) polityNames[code] = region.country || region.countryCode;
+    const name = String(region.country || toCountryName(region.countryCode) || "").toLowerCase();
+    if (name && !polityNames[name]) polityNames[name] = region.country || toCountryName(region.countryCode);
   }
   for (const entry of polities) {
-    if (entry?.code) polityNames[String(entry.code).toLowerCase()] = entry.name || entry.code;
+    if (entry?.code) polityNames[toCountryName(String(entry.code)).toLowerCase()] = entry.name || toCountryName(entry.code);
   }
   const regionOwnershipCatalog = buildRegionOwnershipText(regions, world.regionOwnershipOverrides, {
     focusCodes,

@@ -20,7 +20,9 @@ import {
   readJson,
   resolveCountryDisplayName,
 } from "../../runtime/assets.js";
-import COUNTRY_NAMES from "../../runtime/generated/countryNames.js";
+import { resolveRegionName } from "../../runtime/regionNameFixes.js";
+import { toCountryName } from "../../runtime/ownerNames.js";
+import { buildCoarseGeometryById } from "./coarseGeometry.js";
 import { loadCountryLabelCollections } from "../../runtime/countryLabels.js";
 import { translateLabel } from "../../runtime/translator.js";
 import { MAP_SETTING_KEYS, useMapSetting } from "../../runtime/mapSettings.js";
@@ -209,9 +211,13 @@ const GADM_GEOMETRY_FILTER = [">=", ["index-of", ".", ["get", "id"]], 0];
 // dot test — stock and author-only maps render identically to before.
 const AUTHORED_GEOMETRY_FILTER = ["any", CUSTOM_GEOMETRY_FILTER, ["==", ["get", "edited"], true]];
 const STOCK_GEOMETRY_FILTER = ["all", GADM_GEOMETRY_FILTER, ["!=", ["get", "edited"], true]];
-// Crossfade band: seed geometry was extracted at tile-zoom 5, so hand off to
-// the tiles just past that.
-const FAR_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 5.5, 0.72, 6.5, 0];
+// Crossfade bands. Detail now steps UP twice on the way in, and each step is a
+// crossfade so no border ever pops: the grid-snapped tier (coarseGeometry.js) holds
+// world view, the seed geometry takes over through the middle, and the stock vector
+// tiles take the close range. Seed geometry was extracted at tile-zoom 5, so it hands
+// off to the tiles just past that.
+const ULTRA_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 3, 0.72, 4, 0];
+const FAR_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 3, 0, 4, 0.72, 5.5, 0.72, 6.5, 0];
 const TILE_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 5.5, 0, 6.5, 0.72];
 
 // ---- Owner labels for custom maps -----------------------------------------
@@ -355,7 +361,7 @@ const buildOwnerLabelCollection = (regionsFC, overrides, polityOverrides, nameRe
     // Captured-region override stores the AI's owner CODE ("ESP"); the seed stores the NAME
     // ("Spain"). Canonicalize so both share one cluster + label instead of the code splitting
     // off as a phantom new country.
-    const owner = COUNTRY_NAMES[rawOwner] ?? rawOwner;
+    const owner = toCountryName(rawOwner);
     if (!owner) continue;
     const best = largestRingOf(allFeatures[index].geometry);
     if (!best || best.area <= 0) continue;
@@ -672,12 +678,14 @@ const WorldMap = ({ isGlobe = false }) => {
       // when there was an owner and a raw GADM code when there wasn't, and the
       // difference only showed up as an occasional "RUS" where a country name
       // belonged. owner === "" means genuinely unclaimed and must stay empty.
-      GID_0: owner || (owner === "" ? "" : COUNTRY_NAMES[gid0] || gid0),
+      GID_0: owner || (owner === "" ? "" : toCountryName(gid0)),
       // A stock-tile hit carries GADM's own COUNTRY attribute; a custom region has
       // no such property (and no longer carries `country` at all), so name it from
       // the provenance rather than handing the panel a blank.
-      COUNTRY: props.COUNTRY ?? COUNTRY_NAMES[gid0] ?? "",
-      NAME_1: props.NAME_1 ?? props.name ?? "",
+      COUNTRY: props.COUNTRY ?? toCountryName(gid0),
+      // Corrects the GADM regions whose stored name is the placeholder "NA" (England
+      // is one), so the panel names the place instead of showing the marker verbatim.
+      NAME_1: resolveRegionName(regionId, props.NAME_1 ?? props.name ?? ""),
       GID_1: regionId,
       // Kept as the flag fallback when the owner is an invented polity: "Roman
       // Empire" has no flag, but the land underneath it is still Italy.
@@ -733,7 +741,7 @@ const WorldMap = ({ isGlobe = false }) => {
       if (!rawOwner) return null;
       // Canonicalize an owner CODE ("ESP" from a transfer override) to the NAME the palette
       // is keyed by ("Spain") so a captured region takes its true owner's colour.
-      const owner = COUNTRY_NAMES[rawOwner] ?? rawOwner;
+      const owner = toCountryName(rawOwner);
       const exact = colorMap[owner];
       if (exact) return exact;
       const registry = parseColorToRgb(polityOverrides?.[owner]?.color);
@@ -913,6 +921,23 @@ const WorldMap = ({ isGlobe = false }) => {
       }),
     };
   }, [customRegionData, colorMap, regionOwnershipOverrides, regionClaimants, ownerColorCss, resolveOwnerRgb]);
+
+  // Lowest-detail tier, drawn only at world-ish zooms. The coordinate work is keyed to
+  // the RAW geometry so it runs when the scenario's regions load and not on the far
+  // more frequent recolours; re-attaching the enriched properties below is a plain
+  // object spread with no geometry maths in it.
+  const coarseGeometryById = useMemo(() => buildCoarseGeometryById(customRegionData), [customRegionData]);
+
+  const ultraCoarseRegionData = useMemo(() => {
+    const features = [];
+    for (const feature of enrichedCustomRegionData?.features ?? []) {
+      const geometry = coarseGeometryById.get(String(feature?.properties?.id));
+      // No entry means the shape collapsed at this grid (a speck or a tiny island) —
+      // leaving it out is the intended loss of detail, not a dropped region.
+      if (geometry) features.push({ ...feature, geometry });
+    }
+    return { type: "FeatureCollection", features };
+  }, [enrichedCustomRegionData, coarseGeometryById]);
 
   // GADM disputed regions also paint the stock tiles (the crisp z>6.5 layer):
   // GID_1 -> stripe-tile id stops for the tile twin of the disputed layer.
@@ -1133,6 +1158,31 @@ const WorldMap = ({ isGlobe = false }) => {
           and each region simplifies independently — shared borders drift
           apart at low zoom. Full resolution keeps them connected everywhere;
           the seed geometry is coarse enough that this stays cheap. */}
+      {/* Lowest-detail tier, world view only. Same tolerance 0 for the same reason:
+          its geometry is already reduced, and the reduction was a grid SNAP precisely
+          so shared borders survive it — letting the source simplify on top would undo
+          that. It fades out by z4, where the seed tier has faded in. */}
+      <Source id="custom-regions-ultra-source" type="geojson" data={ultraCoarseRegionData} tolerance={0}>
+        <Layer
+          id="custom-regions-fill-ultra"
+          type="fill"
+          maxzoom={4}
+          filter={STOCK_GEOMETRY_FILTER}
+          paint={{ "fill-color": CUSTOM_FILL_COLOR, "fill-opacity": customActive ? ULTRA_FILL_FADE : 0 }}
+        />
+        <Layer
+          id="custom-regions-hairline-ultra"
+          type="line"
+          maxzoom={4}
+          filter={STOCK_GEOMETRY_FILTER}
+          paint={{
+            "line-color": "#000",
+            "line-width": 0.3,
+            "line-opacity": customActive ? ["interpolate", ["linear"], ["zoom"], 3, 0.35, 4, 0] : 0,
+          }}
+        />
+      </Source>
+
       <Source id="custom-regions-source" type="geojson" data={enrichedCustomRegionData} tolerance={0}>
         {/* Zoomed-out fill for GADM regions from the seed geometry — the stock
             tiles are too simplified at low zoom and show sliver gaps there. */}
@@ -1154,8 +1204,10 @@ const WorldMap = ({ isGlobe = false }) => {
           paint={{
             "line-color": "#000",
             "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.3, 6.5, 0.6],
+            // Fades in over the same 3->4 band as the fill above, handing off from the
+            // ultra tier's hairlines so borders never double up or blink.
             "line-opacity": customActive
-              ? ["interpolate", ["linear"], ["zoom"], 3, 0.35, 5.5, 0.55, 6.5, 0]
+              ? ["interpolate", ["linear"], ["zoom"], 3, 0, 4, 0.35, 5.5, 0.55, 6.5, 0]
               : 0,
           }}
         />
