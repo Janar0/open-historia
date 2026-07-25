@@ -1,6 +1,7 @@
 import dayjs from "dayjs";
 import { JSON_URLS, getNationTags, loadRegionCatalog, readJson } from "../../runtime/assets.js";
 import { resolveAllCountryTags, resolveCountryTags } from "../../runtime/countryTags.js";
+import { toCountryName } from "../../runtime/ownerNames.js";
 import {
   buildActionDisplayText,
   isPolityLandless,
