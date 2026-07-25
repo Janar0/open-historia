@@ -15,7 +15,11 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "preview:web": "vite preview --outDir dist-web",
-    "test": "node --test \"server/**/*.test.js\""
+    "test": "node --test \"server/**/*.test.js\"",
+    "electron": "electron .",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "@noble/ed25519": "^2.3.0",
@@ -64,6 +68,78 @@
     "react-map-gl": "^8.1.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^7.3.2"
+    "vite": "^7.3.2",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "io.github.arkniem.openhistoria",
+    "productName": "Open Historia",
+    "files": [
+      "dist/**",
+      "server/**",
+      "electron/**",
+      "scripts/fetch-map-assets.mjs",
+      "scripts/map-assets.json",
+      "public/lang/**",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "scripts/**"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon-512.png",
+      "artifactName": "Open-Historia-Setup-${os}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Open Historia",
+      "artifactName": "Open-Historia-Setup.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "public/icon-512.png",
+      "category": "public.app-category.strategy-games",
+      "artifactName": "Open-Historia-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon-512.png",
+      "category": "Game",
+      "artifactName": "Open-Historia-${arch}.${ext}"
+    }
   }
 }
