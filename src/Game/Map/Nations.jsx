@@ -1162,14 +1162,7 @@ const WorldMap = ({ isGlobe = false }) => {
           its geometry is already reduced, and the reduction was a grid SNAP precisely
           so shared borders survive it — letting the source simplify on top would undo
           that. It fades out by z4, where the seed tier has faded in. */}
-      {/* maxzoom 4 is load-bearing, not a detail. A GeoJSON source defaults to
-          building its tile pyramid all the way to zoom 18, and it does that
-          regardless of the zooms its LAYERS are visible at — so without this the
-          ultra tier held a second, complete, street-level tiling of every region
-          in memory purely to draw a world-view fill that is hidden by z4. Capping
-          the source means it builds the handful of tiles it actually uses and
-          overzooms them; the layers stop drawing at 4 anyway. */}
-      <Source id="custom-regions-ultra-source" type="geojson" data={ultraCoarseRegionData} tolerance={0} maxzoom={4}>
+      <Source id="custom-regions-ultra-source" type="geojson" data={ultraCoarseRegionData} tolerance={0}>
         <Layer
           id="custom-regions-fill-ultra"
           type="fill"
