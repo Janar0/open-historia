@@ -9,9 +9,14 @@ import {
 } from "./appUpdate.js";
 
 // Stamped into the native app build by the APK workflow (VITE_APP_BUILD / _TRACK).
-// Web, desktop and dev builds have no stamp, so the banner is a no-op there.
+// Desktop and dev builds have no stamp, so the banner is a no-op there.
 const APP_BUILD = Number(import.meta.env.VITE_APP_BUILD);
 const APP_TRACK = String(import.meta.env.VITE_APP_TRACK || "stable");
+// Stamped into the WEB build by vite.config (WEB_BUILD_ID), which writes the same id
+// to version.json beside the bundle. The website has no on-device server and so no
+// /api/app-update; it compares its own baked id against that file instead.
+const WEB_BUILD = String(import.meta.env.VITE_WEB_BUILD || "");
+const VERSION_URL = `${import.meta.env.BASE_URL || "/"}version.json`;
 const DISMISS_KEY = "oh-update-dismissed-build";
 
 const bar = {
@@ -55,14 +60,22 @@ const dismissBtn = {
 };
 
 export default function AppUpdateBanner() {
-  // Only native app builds carry a numeric build stamp; everything else no-ops.
-  const supported = Number.isFinite(APP_BUILD) && APP_BUILD > 0;
+  // Two shapes of "an update exists", one banner. The native app asks its on-device
+  // server for the release manifest and updates by downloading an APK; the website
+  // compares its baked build id against the deployed version.json and updates by
+  // reloading onto the new bundle. Desktop/dev carry neither stamp and no-op.
+  const isApp = Number.isFinite(APP_BUILD) && APP_BUILD > 0;
+  const isWeb = !isApp && WEB_BUILD !== "";
+  const supported = isApp || isWeb;
   const [latest, setLatest] = useState(null);
   const [dismissed, setDismissed] = useState(() => {
     try {
-      return Number(localStorage.getItem(DISMISS_KEY)) || 0;
+      const stored = localStorage.getItem(DISMISS_KEY);
+      // App builds compare numerically ("is this newer than what I dismissed"); web
+      // ids are opaque and compare by equality, so keep the raw string for them.
+      return isWeb ? String(stored ?? "") : Number(stored) || 0;
     } catch {
-      return 0;
+      return isWeb ? "" : 0;
     }
   });
   const [updating, setUpdating] = useState(false);
@@ -73,6 +86,17 @@ export default function AppUpdateBanner() {
     let cancelled = false;
     const check = async () => {
       try {
+        if (isWeb) {
+          // no-store, or the browser hands back the very file we are trying to
+          // notice a change in.
+          const res = await fetch(VERSION_URL, { cache: "no-store", signal: AbortSignal.timeout(6000) });
+          if (!res.ok) return;
+          const deployed = String((await res.json())?.build ?? "");
+          // Any DIFFERENCE means the deploy moved on. Not a > comparison: the ids are
+          // opaque, and a rollback is just as much "not what you are running".
+          if (!cancelled && deployed && deployed !== WEB_BUILD) setLatest({ build: deployed, web: true });
+          return;
+        }
         const res = await fetch(`/api/app-update?track=${encodeURIComponent(APP_TRACK)}`, {
           signal: AbortSignal.timeout(6000),
         });
@@ -98,13 +122,36 @@ export default function AppUpdateBanner() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [supported]);
+  }, [supported, isWeb]);
 
   if (!supported) return null;
-  if (!isUpdateAvailable(APP_BUILD, latest)) return null;
-  if (latest.build <= dismissed) return null;
+  if (isWeb ? !latest : !isUpdateAvailable(APP_BUILD, latest)) return null;
+  // Web ids are opaque strings, so dismissal is an equality check rather than "<=".
+  if (isWeb ? String(dismissed) === String(latest.build) : latest.build <= dismissed) return null;
 
-  const onUpdate = () => {
+  const onUpdate = async () => {
+    if (isWeb) {
+      setUpdating(true);
+      // Bundle filenames are content-hashed, so re-fetching the shell is all it takes
+      // to land on the new code. Ask the service worker to update first: it caches
+      // nothing (it passes every request through), but an old registration can still
+      // be the controller for this page.
+      //
+      // Deliberately NOT clearing Cache Storage. The big map archives live there
+      // (open-historia-preload-*, ~160MB of PMTiles); wiping them would turn a code
+      // update into a full map re-download, which is exactly what that cache exists to
+      // avoid. Nothing in it is version-specific. Best-effort: never block the reload.
+      try {
+        if ("serviceWorker" in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.update().catch(() => {})));
+        }
+      } catch {
+        /* ignore — reload anyway */
+      }
+      window.location.reload();
+      return;
+    }
     if (!latest.apk) return;
     setUpdating(true);
     // Downloads the new APK; Android then prompts to install it and reopen the app.
@@ -124,14 +171,16 @@ export default function AppUpdateBanner() {
       <div style={text}>
         A new version of Open Historia is ready.
         <span style={sub}>
-          {updating
-            ? "Downloading… open the finished download to install and reopen."
-            : latest.notes || `Build ${latest.build} · tap Update to download and install.`}
+          {isWeb
+            ? (updating ? "Reloading…" : "Reload to get the latest fixes. Your games are saved.")
+            : updating
+              ? "Downloading… open the finished download to install and reopen."
+              : latest.notes || `Build ${latest.build} · tap Update to download and install.`}
         </span>
       </div>
-      {latest.apk ? (
+      {isWeb || latest.apk ? (
         <button type="button" style={btn} onClick={onUpdate} disabled={updating}>
-          {updating ? "Downloading…" : "Update now"}
+          {updating ? (isWeb ? "Reloading…" : "Downloading…") : "Update now"}
         </button>
       ) : null}
       <button type="button" style={dismissBtn} onClick={onDismiss} aria-label="Dismiss update notice">
