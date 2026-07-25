@@ -59,11 +59,40 @@ const dropMapBinaries = (isWeb) => {
   }
 }
 
+// Identifies THIS web build. It is baked into the bundle (VITE_WEB_BUILD) and written
+// to version.json beside it, so a running page can tell whether the copy of the site
+// it booted from is still the one being served. Computed once per build so both halves
+// always agree. A plain timestamp is enough — it only ever has to differ from the last
+// deploy and compare as "newer".
+const WEB_BUILD_ID = String(Date.now())
+
+// Emits version.json into the web build output. Deployed as /play/version.json (the
+// assemble step copies dist-web wholesale), which is what the update banner polls.
+const emitWebVersion = (isWeb: boolean) => {
+  let outDir = 'dist'
+  return {
+    name: 'oh-web-version',
+    apply: 'build' as const,
+    configResolved(config: { build: { outDir: string } }) {
+      outDir = config.build.outDir
+    },
+    closeBundle() {
+      if (!isWeb) return
+      fs.writeFileSync(
+        path.resolve(outDir, 'version.json'),
+        JSON.stringify({ build: WEB_BUILD_ID }),
+      )
+    },
+  }
+}
+
 // https://vite.dev/config/
 // `--mode web` (npm run build:web / build:site / dev:web) builds the website; any
 // other mode builds the local/desktop app that ships in "Download for Windows".
 export default defineConfig(({ mode }) => ({
   define: {
+    // Empty off the web, which is what keeps the banner inert on desktop/dev.
+    'import.meta.env.VITE_WEB_BUILD': JSON.stringify(mode === 'web' ? WEB_BUILD_ID : ''),
     // Make the web flag a COMPILE-TIME literal so Rollup dead-code-eliminates
     // every `if (import.meta.env.VITE_OH_WEB)` branch — and the web backend they
     // dynamically import (src/runtime/web/*) — from the desktop build. Without
@@ -81,6 +110,7 @@ export default defineConfig(({ mode }) => ({
       },
     }),
     dropMapBinaries(mode === 'web'),
+    emitWebVersion(mode === 'web'),
   ],
   // Proxy API calls to the Express server during `npm run dev` so the map editor's
   // save/load (and the game's runtime endpoints) work with hot-reload too.
