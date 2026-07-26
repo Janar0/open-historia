@@ -50,6 +50,9 @@ const createFlag = async (body = {}) => {
     author: String(body.author || "").slice(0, 80),
     dataUrl,
     contentHash,
+    // See server/flagStore.js — marks a flag installed from the community hub so
+    // it isn't re-offered to the hub when a scenario using it is published.
+    source: body.source && typeof body.source === "object" ? JSON.parse(JSON.stringify(body.source)) : null,
     createdAt: new Date().toISOString(),
   };
   await idbPut(STORES.flags, flag);
