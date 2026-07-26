@@ -61,6 +61,10 @@ export const createFlag = (body = {}) => {
     author: String(body.author || "").slice(0, 80),
     dataUrl,
     contentHash,
+    // Provenance, mirroring basemapStore: { community: true, url } marks a flag
+    // that came FROM the hub, so publishing a scenario doesn't offer it back to
+    // the community as if it were new. Null for a flag the map-maker uploaded.
+    source: body.source && typeof body.source === "object" ? JSON.parse(JSON.stringify(body.source)) : null,
     createdAt: new Date().toISOString(),
   };
   writeAll([flag, ...flags]);
