@@ -9,7 +9,7 @@
 // re-embedding it. Publishing is the token-less flow scenarios use: the app hands
 // the author the real image file and opens a prefilled issue form to drag it into.
 
-import { createBasemap, makeImageThumbnail, makeVectorThumbnail, sha256Hex } from "./basemapLibrary.js";
+import { createBasemap, listBasemaps, makeImageThumbnail, makeVectorThumbnail, sha256Hex } from "./basemapLibrary.js";
 import { unzipBundle, zipBundle } from "./bundleZip.js";
 
 // UTF-8-safe base64 <-> string (the scenario bundle base64-encodes the
@@ -280,6 +280,17 @@ const loadBasemapPayload = async (post) => {
 };
 
 // Install a community basemap into the local "Your basemaps" library.
+// Which file of a hub post actually carries the basemap, and how it must be read
+// back. A data file (an old .basemap.json bundle, or a vector's .geojson) is
+// parsed as JSON; anything else — an inline image, or an .svg GitHub attached as
+// a file — is fetched as a raw image. Shared by install and by publish-time
+// dedupe so a reference written from a local record and one written from a live
+// hub search are byte-identical.
+const payloadRefVia = (post) =>
+  post?.bundleUrl && !IMAGE_EXT_PATTERN.test(post.bundleUrl) ? "dataFile" : "image";
+const payloadRefUrl = (post) =>
+  (payloadRefVia(post) === "dataFile" ? post?.bundleUrl : post?.coverImageUrl || post?.bundleUrl) || null;
+
 export const installCommunityBasemap = async (post) => {
   const { meta, kind, payload } = await loadBasemapPayload(post);
   if ((kind === "image" && !payload.dataUrl) || (kind === "vector" && !payload.geojson)) {
@@ -294,7 +305,18 @@ export const installCommunityBasemap = async (post) => {
     thumbnail: thumbnail || meta.thumbnail || null,
     contentHash: meta.contentHash || post.contentHash || null,
     author: meta.author || post.author,
-    source: { community: true, hash: meta.contentHash || post.contentHash || null, url: post.url },
+    // `url` is the issue permalink (for "view the post"); `payloadUrl` is the file
+    // a later publish can point a communityRef at, resolved the same way a hub
+    // search hit is. Keeping both means dedupeScenarioBundleBackground never has
+    // to guess which one it is holding — an html_url there would resolve to a web
+    // page and the scenario would import with no basemap at all.
+    source: {
+      community: true,
+      hash: meta.contentHash || post.contentHash || null,
+      url: post.url,
+      payloadUrl: payloadRefUrl(post),
+      payloadVia: payloadRefVia(post),
+    },
     payload,
   });
 };
@@ -384,13 +406,36 @@ export const dedupeScenarioBundleBackground = async (bundle) => {
     bg = null;
   }
   if (!bg) return { referenced: false, needsPublish: false };
+
+  // Ask the LOCAL library first. A basemap installed from the Community tab was
+  // saved with source.community + the post's url (installCommunityBasemap), so we
+  // already know it is on the hub without asking GitHub — which matters because
+  // the hub search is the flaky part: offline, rate-limited (403) or simply slow,
+  // it returns nothing and the author would re-upload a basemap that is already
+  // shared. Falls through to the hub search for a basemap that came from anywhere
+  // else (an older install, a scenario import) but happens to match a post.
+  // Requires source.payloadUrl, which only installs from this version on record —
+  // an older install has just the issue permalink, which is not fetchable as a
+  // payload, so it correctly falls through to the hub search below.
+  const local = await listBasemaps().catch(() => []);
+  const installed = local.find(
+    (bm) => bm?.contentHash && bm.contentHash === bg.hash && bm?.source?.community && bm?.source?.payloadUrl,
+  );
+  if (installed) {
+    bundle.assets.backgroundData = {
+      mode: "communityRef",
+      hash: bg.hash,
+      via: installed.source.payloadVia === "dataFile" ? "dataFile" : "image",
+      url: installed.source.payloadUrl,
+      fileName: "background.json",
+    };
+    return { referenced: true, needsPublish: false };
+  }
+
   const match = await findCommunityBasemapByHash(bg.hash);
   if (match) {
-    // A data file (old .basemap.json bundle, or a vector .geojson) is fetched and
-    // parsed as JSON on import; an image link (incl. an .svg attached as a file) or
-    // an inline image is fetched as the raw image.
-    const viaDataFile = Boolean(match.bundleUrl) && !IMAGE_EXT_PATTERN.test(match.bundleUrl);
-    const url = viaDataFile ? match.bundleUrl : match.coverImageUrl || match.bundleUrl;
+    const viaDataFile = payloadRefVia(match) === "dataFile";
+    const url = payloadRefUrl(match);
     if (url) {
       bundle.assets.backgroundData = {
         mode: "communityRef",
