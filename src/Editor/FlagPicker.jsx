@@ -255,7 +255,24 @@ const FlagPicker = ({ open, onClose, ownerCode, currentFlag, mapFlags = {}, auth
     setBusyId(post.id);
     setCommunityError("");
     try {
-      pick(await loadCommunityFlagDataUrl(post));
+      const dataUrl = await loadCommunityFlagDataUrl(post);
+      // Save it into My flags the way a pack install does — same as before for the
+      // map-maker (the flag is applied either way), but it now leaves a record
+      // marked community, which is what stops a scenario using it from re-offering
+      // it to the hub. Best-effort: a library that won't save must not lose the pick.
+      try {
+        await saveFlag({
+          name: post.title || post.code || "Flag",
+          code: post.code || "",
+          author: post.author || "",
+          dataUrl,
+          source: { community: true, url: post.url || null },
+        });
+        refreshMine();
+      } catch (e) {
+        console.warn("[editor] could not save the community flag to the library:", e);
+      }
+      pick(dataUrl);
     } catch (e) {
       setCommunityError(e?.message || "Could not download that flag.");
     } finally {
@@ -280,6 +297,7 @@ const FlagPicker = ({ open, onClose, ownerCode, currentFlag, mapFlags = {}, auth
             code: flag.code || "",
             author: post.author || "",
             dataUrl: flag.dataUrl,
+            source: { community: true, url: post.url || null },
           });
           saved += 1;
         } catch { /* one bad flag must not sink the whole pack */ }

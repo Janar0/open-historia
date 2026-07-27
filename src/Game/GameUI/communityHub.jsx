@@ -24,6 +24,8 @@ import {
   splitScenarioBundleImage,
 } from "../../runtime/communityBasemaps.js";
 import { unzipBundle, zipBundle } from "../../runtime/bundleZip.js";
+import { sha256Hex } from "../../runtime/basemapLibrary.js";
+import { listFlags } from "../../runtime/flagLibrary.js";
 
 // The one and only hub. Not configurable by design.
 const HUB_OWNER = "Open-Historia";
@@ -32,6 +34,35 @@ const HUB_URL = `https://github.com/${HUB_OWNER}/${HUB_REPO}`;
 const HUB_API_ISSUES = `https://api.github.com/repos/${HUB_OWNER}/${HUB_REPO}/issues?state=open&labels=scenario&per_page=100`;
 const HUB_NEW_POST_URL = `${HUB_URL}/issues/new?template=scenario.yml`;
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+// How many of a scenario's custom flags are the author's OWN — i.e. worth
+// advertising to the hub. A flag installed from the Community tab is already
+// posted there, and tagging this scenario with it would list the very same flag
+// a second time in the picker's Community tab. Matched by content hash against
+// the local flag library (the same hash the library dedupes on). A flag with no
+// library record — made before provenance shipped, or arrived inside an imported
+// scenario — counts as the author's, so the tag is never wrongly suppressed.
+// This only affects the Flags-Count TAG: the flags still travel inside the
+// bundle exactly as before, so import is unchanged.
+const countPublishableFlags = async (flagsData) => {
+  const values = Object.values(flagsData ?? {}).filter(
+    (value) => typeof value === "string" && value.startsWith("data:"),
+  );
+  if (!values.length) return 0;
+  let communityHashes;
+  try {
+    communityHashes = new Set(
+      (await listFlags())
+        .filter((flag) => flag?.source?.community && flag?.contentHash)
+        .map((flag) => flag.contentHash),
+    );
+  } catch {
+    return values.length; // library unreachable: publish as before rather than under-report
+  }
+  if (!communityHashes.size) return values.length;
+  const hashes = await Promise.all(values.map((value) => sha256Hex(value).catch(() => null)));
+  return hashes.filter((hash) => !hash || !communityHashes.has(hash)).length;
+};
 
 // First GitHub-hosted .json (release asset, attachment or raw) link in an issue
 // body = the bundle. Release links come first in official posts so imports go
@@ -606,8 +637,7 @@ const CommunityPanel = ({ fullPage = false, onImported }) => {
       // count so the flag picker's Community tab surfaces the post as an
       // installable flag pack without downloading every bundle first. Harmless if
       // the scenario form has no such field — GitHub ignores unknown prefills.
-      const customFlagCount = Object.values(bundle.assets?.flags?.data ?? {})
-        .filter((value) => typeof value === "string" && value.startsWith("data:")).length;
+      const customFlagCount = await countPublishableFlags(bundle.assets?.flags?.data);
       const technicalLines = [
         ...(split ? [`Basemap-Hash: ${split.hash}`, `Basemap-Kind: ${split.kind}`] : []),
         ...(customFlagCount > 0 ? [`Flags-Count: ${customFlagCount}`] : []),
