@@ -88,7 +88,7 @@ while preserving your saves, scenarios, and map data.
 
 #### Android app (thin APK)
 
-Easiest: download **`pax-historia.apk`** from the
+Easiest: download **`open-historia.apk`** from the
 [**Android release**](https://github.com/Open-Historia/open-historia/releases/tag/android)
 and open it to install (allow installs from your browser when Android asks).
 It's a thin client: the game itself runs on whatever server it connects to, so you need
