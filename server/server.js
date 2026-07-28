@@ -559,6 +559,20 @@ const HUB_DOWNLOAD_HOSTS = new Set([
 ]);
 const HUB_MAX_BUNDLE_BYTES = 200 * 1024 * 1024;
 
+// This route echoes a file that ANY member of the public can attach to a hub
+// issue, and it serves it from the game's OWN origin. Without these two headers a
+// crafted post could be an .html (or a scripted .svg) and a link to
+// /api/hub/file?url=... would execute it as same-origin script -- with reach into
+// localStorage (the player's AI keys) and every /api/* route. nosniff stops the
+// browser inferring a dangerous type; the attachment disposition stops it
+// rendering one it was told about. Every real consumer reads this route with
+// fetch(), which ignores both headers, so nothing legitimate changes.
+const setHubFileGuards = (res) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", "attachment");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+};
+
 // Browser AI calls to self-hosted OpenAI-compatible endpoints (llama.cpp,
 // LM Studio, NVIDIA NIM...) die on CORS — those servers rarely send the
 // headers. The game server relays them instead: same-origin for the browser,
@@ -632,6 +646,7 @@ app.get("/api/hub/file", async (req, res) => {
       let cachedType = "application/octet-stream";
       try { cachedType = fs.readFileSync(cache.type, "utf8") || cachedType; } catch { /* default */ }
       res.setHeader("Cache-Control", "no-store");
+      setHubFileGuards(res);
       res.setHeader("Content-Type", cachedType);
       return fs.createReadStream(cache.body).pipe(res);
     }
@@ -677,6 +692,7 @@ app.get("/api/hub/file", async (req, res) => {
     }
 
     res.setHeader("Cache-Control", "no-store");
+    setHubFileGuards(res);
     // Pass the upstream content type through untouched. JSON bundles still parse
     // via response.json() (which ignores the header), while binary bundles (.zip)
     // and raw basemap images (.png/.jpg) arrive byte-for-byte.
