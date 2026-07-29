@@ -152,12 +152,23 @@ const BackIcon = () => (
     </svg>
 );
 
-const GearIcon = () => (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="3"/>
-    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+// Drawn rather than typed, like every other icon here. The list row used the
+// U+1F5D1 emoji, which has no colour glyph in Windows' default UI font and falls
+// back to a monochrome symbol face; an inline SVG renders the same everywhere and
+// matches the stroke weight of its neighbours.
+const TrashIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <path d="M3 6h18" />
+    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
     </svg>
 );
+
+
+
+
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
@@ -405,7 +416,10 @@ const CountrySelectorModal = ({ countries, loading, onStart, onCancel }) => {
 
 // ── Conversation view ─────────────────────────────────────────────────────────
 
-const ConversationView = ({ chat, playerCountry, gameDate, onArchive, onBack, onMessagesUpdate }) => {
+const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onMessagesUpdate }) => {
+    // Two-step delete, matching the list row. Disarms on blur so a half-pressed
+    // delete never sits waiting to catch a later click.
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
     const countries = useMemo(
         () => Array.isArray(chat?.countries)
             ? chat.countries.filter((country) => country && (country.name || country.code))
@@ -586,10 +600,15 @@ const ConversationView = ({ chat, playerCountry, gameDate, onArchive, onBack, on
             <span style={{ flex: 1, fontWeight: 700, fontSize: "0.95rem", color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             Chat with {countries.map(c => c.name).join(", ") || "unknown participant"}
             </span>
-            <button title="Archive chat" onClick={onArchive} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.45)", display: "flex", padding: "0.25rem", borderRadius: "6px" }}
-            onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-            onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.45)"; e.currentTarget.style.background = "none"; }}>
-            <GearIcon />
+            {/* Two-step, same as the list row: one click arms, the next confirms. */}
+            <button title={confirmingDelete ? "Click again to delete this chat" : "Delete chat"}
+            aria-label={confirmingDelete ? "Confirm deleting this chat" : "Delete chat"}
+            onClick={() => { if (confirmingDelete) { onDelete?.(); } else { setConfirmingDelete(true); } }}
+            onBlur={() => setConfirmingDelete(false)}
+            style={{ display: "flex", alignItems: "center", gap: "0.3rem", background: confirmingDelete ? "rgba(239,68,68,0.18)" : "none", border: `1px solid ${confirmingDelete ? "rgba(239,68,68,0.55)" : "transparent"}`, cursor: "pointer", color: confirmingDelete ? "#fca5a5" : "rgba(239,68,68,0.65)", fontSize: "0.72rem", fontWeight: 600, fontFamily: "sans-serif", padding: confirmingDelete ? "0.25rem 0.5rem" : "0.25rem", borderRadius: "6px", lineHeight: 1 }}
+            onMouseEnter={e => { if (!confirmingDelete) { e.currentTarget.style.color = "rgba(239,68,68,1)"; e.currentTarget.style.background = "rgba(239,68,68,0.1)"; } }}
+            onMouseLeave={e => { if (!confirmingDelete) { e.currentTarget.style.color = "rgba(239,68,68,0.65)"; e.currentTarget.style.background = "none"; } }}>
+            {confirmingDelete ? "Delete?" : <TrashIcon />}
             </button>
             <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.45)", fontSize: "1rem", lineHeight: 1, padding: "0.25rem 0.3rem", borderRadius: "6px" }}
             onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
@@ -701,6 +720,10 @@ const isChatUnread = (chat, seen) => {
 
 const ChatListItem = ({ chat, onClick, onDelete, unread = false }) => {
     const [hovered, setHovered] = React.useState(false);
+    // Deleting a chat is not undoable, so the bin arms first and deletes on the
+    // second click. Resets whenever the pointer leaves the row, so a half-pressed
+    // delete never sits waiting to catch a later click.
+    const [confirming, setConfirming] = React.useState(false);
     const previewCountries = chat.countries.slice(0, 4);
     const flagMap  = useCountryFlags(previewCountries);
     const flags    = previewCountries.map(c => flagMap[c.name] ?? "🏳").join(" ");
@@ -709,7 +732,7 @@ const ChatListItem = ({ chat, onClick, onDelete, unread = false }) => {
     const preview  = lastMsg ? lastMsg.text.replace(/\*\*/g, "").slice(0, 60) + (lastMsg.text.length > 60 ? "…" : "") : "No messages yet";
 
     return (
-        <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ position: "relative" }}>
+        <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setConfirming(false); }} style={{ position: "relative" }}>
         <button onClick={onClick} style={{ width: "100%", padding: "0.7rem 0.9rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.07)", background: hovered ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", transition: "background 0.15s", fontFamily: "sans-serif", textAlign: "left" }}>
         {/* Fixed-width slot, always rendered, so read and unread rows stay aligned. */}
         <div style={{ width: "0.5rem", flexShrink: 0, display: "flex", justifyContent: "center" }} aria-hidden="true">
@@ -722,10 +745,13 @@ const ChatListItem = ({ chat, onClick, onDelete, unread = false }) => {
         </div>
         </button>
         {hovered && (
-            <button onClick={e => { e.stopPropagation(); onDelete(); }}
-            style={{ position: "absolute", top: "50%", right: "0.6rem", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "rgba(239,68,68,0.7)", fontSize: "0.9rem", padding: "0.2rem", borderRadius: "6px", lineHeight: 1 }}
-            onMouseEnter={e => { e.currentTarget.style.color = "rgba(239,68,68,1)"; e.currentTarget.style.background = "rgba(239,68,68,0.1)"; }}
-            onMouseLeave={e => { e.currentTarget.style.color = "rgba(239,68,68,0.7)"; e.currentTarget.style.background = "none"; }}>🗑</button>
+            <button onClick={e => { e.stopPropagation(); if (confirming) { onDelete(); } else { setConfirming(true); } }}
+            title={confirming ? "Click again to delete this chat" : "Delete chat"}
+            aria-label={confirming ? "Confirm deleting this chat" : "Delete chat"}
+            style={{ position: "absolute", top: "50%", right: "0.6rem", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: "0.3rem", background: confirming ? "rgba(239,68,68,0.18)" : "none", border: `1px solid ${confirming ? "rgba(239,68,68,0.55)" : "transparent"}`, cursor: "pointer", color: confirming ? "#fca5a5" : "rgba(239,68,68,0.7)", fontSize: "0.72rem", fontWeight: 600, fontFamily: "sans-serif", padding: confirming ? "0.25rem 0.5rem" : "0.25rem", borderRadius: "6px", lineHeight: 1 }}
+            onMouseEnter={e => { if (!confirming) { e.currentTarget.style.color = "rgba(239,68,68,1)"; e.currentTarget.style.background = "rgba(239,68,68,0.1)"; } }}
+            onMouseLeave={e => { if (!confirming) { e.currentTarget.style.color = "rgba(239,68,68,0.7)"; e.currentTarget.style.background = "none"; } }}>
+            {confirming ? "Delete?" : <TrashIcon />}</button>
         )}
         </div>
     );
@@ -878,18 +904,23 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
         setActiveChat(newChat);
     };
 
+    // Deleting hides the thread from the player; it does NOT erase it. gameplay.js
+    // feeds closed chats back to the model as concluded-negotiation history, so
+    // dropping the record outright would make the AI act as though the talks never
+    // happened. Closing also means the next approach from that country opens a
+    // FRESH chat instead of reviving this one — closed chats are excluded from the
+    // "already talking to them" lookup.
+    //
+    // This is what the old Archive button did, so there is no separate archive
+    // control any more: two buttons that both close a chat only invited the
+    // question of which one really deleted it.
     const handleDeleteChat = (id) => {
-        setChats(prev => { const u = prev.filter(c => c.id !== id); saveAllChats(u); return u; });
-        if (activeChat?.id === id) setActiveChat(null);
-    };
-
-    const handleArchiveChat = (id) => {
         setChats(prev => {
             const updated = prev.map(chat => chat.id === id ? { ...chat, status: "closed" } : chat);
             saveAllChats(updated);
             return updated;
         });
-        setActiveChat(null);
+        if (activeChat?.id === id) setActiveChat(null);
     };
 
     // Open (or reuse) a 1-on-1 chat with a country requested from the region popup.
@@ -924,7 +955,7 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
             {showSelector && <CountrySelectorModal countries={availableCountries} loading={loadingCountries} onStart={handleStartChat} onCancel={() => setShowSelector(false)} />}
 
             {activeChat && Array.isArray(activeChat.countries) && activeChat.countries.length > 0 ? (
-                <ConversationView chat={activeChat} playerCountry={playerCountry} gameDate={gameDate} onArchive={() => handleArchiveChat(activeChat.id)} onBack={() => setActiveChat(null)} onMessagesUpdate={handleMessagesUpdate} />
+                <ConversationView chat={activeChat} playerCountry={playerCountry} gameDate={gameDate} onDelete={() => handleDeleteChat(activeChat.id)} onBack={() => setActiveChat(null)} onMessagesUpdate={handleMessagesUpdate} />
             ) : (
                 <>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
