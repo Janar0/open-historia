@@ -183,7 +183,14 @@ const shippedLangDir = fs.existsSync(path.join(distDir, "lang"))
   : path.join(__dirname, "../public/lang");
 const savedLangDir = path.join(DATA_DIR, "lang");
 
+const isLangCode = (code) => /^[a-z]{2,3}$/.test(code);
+
 const readLangPack = (dir, code) => {
+  // `code` arrives from the :code route param and is interpolated into a
+  // filename below. The route handlers check it too, but this is the function
+  // that actually touches the path, so it rejects anything that is not a bare
+  // language code rather than trusting every future caller to have done so.
+  if (!isLangCode(code)) return {};
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(dir, `${code}.json`), "utf8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
@@ -191,8 +198,6 @@ const readLangPack = (dir, code) => {
     return {};
   }
 };
-
-const isLangCode = (code) => /^[a-z]{2,3}$/.test(code);
 
 app.get("/api/lang/:code", (req, res) => {
   const code = String(req.params.code || "").toLowerCase();
