@@ -1468,6 +1468,11 @@ const applySimulationResult = async ({
     status: action.status === "planned" && result.clearActions ? "resolved" : action.status,
   }));
   const nextChats = [...normalizeChats(baseChats)];
+  // Chats this turn CREATED, kept apart from the pre-turn snapshot. A turn takes a
+  // while to generate and the player can edit the chat list while it runs, so the
+  // write at the end merges these onto whatever is actually stored by then rather
+  // than putting the stale snapshot back. See the re-read before writeChatsState.
+  const generatedChats = [];
 
   const { colors: nextColors, world: worldWithImpacts } = applyEventImpactsToWorld({
     colors: baseColors,
@@ -1505,7 +1510,7 @@ const applySimulationResult = async ({
         fallbackTitle: event.title,
         playerName: baseGame.country,
       });
-      if (nextChat) nextChats.unshift(nextChat);
+      if (nextChat) { nextChats.unshift(nextChat); generatedChats.unshift(nextChat); }
     }
   }
 
@@ -1516,7 +1521,7 @@ const applySimulationResult = async ({
     const nextChat = await buildGeneratedChat({ ...chatLike, source: "outreach" }, "", worldWithImpacts, {
       playerName: baseGame.country,
     });
-    if (nextChat) nextChats.unshift(nextChat);
+    if (nextChat) { nextChats.unshift(nextChat); generatedChats.unshift(nextChat); }
   }
 
   if (result.mode === "jump" || result.mode === "auto") {
@@ -1533,9 +1538,22 @@ const applySimulationResult = async ({
     }
   }
 
+  // Re-read the chat list instead of writing the pre-turn snapshot back over it.
+  // Turns take a while, and anything the player did to the list while one ran —
+  // deleting a thread, archiving one — exists only in storage. Writing baseChats
+  // on top resurrected deleted chats, and the AI's next message then landed in the
+  // revived thread instead of opening a fresh one. Falls back to the snapshot if
+  // the read fails, which is the old behaviour and never loses a generated chat.
+  let chatsToWrite;
+  try {
+    chatsToWrite = [...generatedChats, ...normalizeChats(await readChatsState({ force: true }))];
+  } catch {
+    chatsToWrite = nextChats;
+  }
+
   await Promise.all([
     writeActionsState(nextActions),
-    writeChatsState(nextChats),
+    writeChatsState(chatsToWrite),
     writeEventsState(nextEvents),
     writeGameData(nextGame),
     writeJson(JSON_URLS.colors, nextColors, { pretty: true }),
@@ -1564,7 +1582,7 @@ const applySimulationResult = async ({
 
   return {
     actions: nextActions,
-    chats: nextChats,
+    chats: chatsToWrite, // what was actually persisted, not the pre-turn snapshot
     colors: nextColors,
     events: nextEvents,
     game: nextGame,
