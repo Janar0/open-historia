@@ -17,6 +17,25 @@ const MAX_STORED_SHEETS = 60;
 const memoryCache = new Map();
 const isValidStatSheet = (value) => validateGameplayPayload("countryStatSheet", value).valid;
 
+// world.countryStats holds a PARTIAL sheet: applyEventImpactsToWorld merges only the
+// fields the AI actually changed, so after a coup it can hold nothing but
+// {leader, government, stability}. Validating that whole and dropping it when
+// incomplete is why an AI-installed leader never appeared — the pane fell straight
+// back to the full sheet it had generated BEFORE the coup, old leader and all.
+// Layer the AI's fields on top of that full sheet instead: the AI always wins, and
+// every partial change (leader, government, stability, a single index) shows up.
+const mergeStatSheet = (base, override) => {
+    if (!override || typeof override !== "object") return base;
+    if (!base || typeof base !== "object") return override;
+    const merged = { ...base, ...override };
+    for (const group of ["indices", "economy", "gdpBreakdown"]) {
+        if (override[group] && typeof override[group] === "object") {
+            merged[group] = { ...(base[group] || {}), ...override[group] };
+        }
+    }
+    return merged;
+};
+
 const readStoredSheets = () => {
     try {
         return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {};
@@ -184,6 +203,9 @@ const StatsPane = ({ active }) => {
         const code = targetCountry;
         if (!code) return;
         const cacheKey = `${player.gameKey}:${code}`;
+        // The AI's partial stat changes, kept aside so they can be layered over
+        // whichever full sheet we end up with (cached or freshly generated).
+        let aiOverride = null;
         if (!force) {
             // The persisted, AI-maintained sheet in world state wins and SURVIVES date
             // changes — it changes only when the AI changes it (polityChanges.stats).
@@ -195,20 +217,26 @@ const StatsPane = ({ active }) => {
                     setState({ status: "ready", sheet: persisted, error: "" });
                     return;
                 }
+                // Incomplete on its own, but still the AI's word on the fields it names.
+                if (persisted && typeof persisted === "object") aiOverride = persisted;
             } catch { /* fall through to the device cache / regenerate */ }
             // Device-cache fallback — no longer date-gated, so it persists across dates.
             const cached = memoryCache.get(cacheKey) ?? readStoredSheets()[cacheKey];
             if (cached && isValidStatSheet(cached.sheet)) {
-                memoryCache.set(cacheKey, cached);
-                setState({ status: "ready", sheet: cached.sheet, error: "" });
+                const sheet = mergeStatSheet(cached.sheet, aiOverride);
+                memoryCache.set(cacheKey, { date: player.date, sheet });
+                setState({ status: "ready", sheet, error: "" });
                 return;
             }
         }
         setState({ status: "loading", sheet: null, error: "" });
         try {
-            const sheet = await generateCountryStatSheet({ code, name: displayName || code });
-            const validation = validateGameplayPayload("countryStatSheet", sheet);
+            const generated = await generateCountryStatSheet({ code, name: displayName || code });
+            const validation = validateGameplayPayload("countryStatSheet", generated);
             if (!validation.valid) throw new Error(`The stat sheet failed validation: ${validation.error}`);
+            // A sheet generated now describes the country as it was BEFORE this game's
+            // events, so the AI's recorded changes still have to win over it.
+            const sheet = mergeStatSheet(generated, aiOverride);
             const entry = { date: player.date, sheet };
             memoryCache.set(cacheKey, entry);
             storeSheet(cacheKey, entry);
