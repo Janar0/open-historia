@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { configureMapRuntime } from "./runtime/assets.js";
+import { initializeServerAuth } from "./runtime/auth.js";
 import { startTranslator } from "./runtime/translator.js";
 import App from "./App.jsx";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -35,5 +36,10 @@ if (import.meta.env.VITE_OH_WEB) {
         .catch((error) => console.error("Web backend failed to install:", error))
         .finally(mount);
 } else {
-    mount();
+    // Local/desktop/mobile builds may be served to a small trusted group from
+    // one machine. Authenticate before the map starts issuing API and PMTiles
+    // requests; the auth module is a no-op for the hosted web build.
+    initializeServerAuth()
+        .catch((error) => console.error("Server authentication failed:", error))
+        .finally(mount);
 }

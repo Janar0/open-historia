@@ -744,8 +744,13 @@ const SocialLinks = ({ discordUrl, redditUrl, githubUrl }) => (
     </div>
 );
 
-const SettingsButton = ({ onToggle, topOffset = "0.5rem" }) => (
+const SettingsButton = ({ onToggle, isOpen = false, topOffset = "0.5rem" }) => (
     <button
+    type="button"
+    aria-label={isOpen ? "Close settings" : "Open settings"}
+    aria-expanded={isOpen}
+    aria-pressed={isOpen}
+    title={isOpen ? "Close settings" : "Open settings"}
     onClick={onToggle}
     style={{
         ...baseStyle,
@@ -754,11 +759,22 @@ const SettingsButton = ({ onToggle, topOffset = "0.5rem" }) => (
         height: "4rem",
         width: "4rem",
         cursor: "pointer",
-        fontSize: "1.8rem",
-        fontWeight: 700,
+        fontSize: "1.45rem",
+        transition: "transform 0.2s ease, background-color 0.2s ease",
+        transform: isOpen ? "rotate(28deg)" : "rotate(0deg)",
     }}
     >
-    ⋮
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3.5v2" />
+    <path d="M12 18.5v2" />
+    <path d="m5.99 5.99 1.42 1.42" />
+    <path d="m16.59 16.59 1.42 1.42" />
+    <path d="M3.5 12h2" />
+    <path d="M18.5 12h2" />
+    <path d="m5.99 18.01 1.42-1.42" />
+    <path d="m16.59 7.41 1.42-1.42" />
+    <circle cx="12" cy="12" r="3.2" />
+    </svg>
     </button>
 );
 
@@ -785,6 +801,7 @@ const SettingsMenu = ({
         hideCountryLabels: getMapSetting(MAP_SETTING_KEYS.hideCountryLabels),
         disableIdleRotation: getMapSetting(MAP_SETTING_KEYS.disableIdleRotation),
         disableEventCamera: getMapSetting(MAP_SETTING_KEYS.disableEventCamera),
+        showRoads: getMapSetting(MAP_SETTING_KEYS.showRoads),
         limitAiGeneration: getMapSetting(MAP_SETTING_KEYS.limitAiGeneration),
     }));
 
@@ -864,6 +881,14 @@ const SettingsMenu = ({
         enabled={mapSettings.hideCountryLabels}
         onToggle={() => updateMapSetting("hideCountryLabels", MAP_SETTING_KEYS.hideCountryLabels, !mapSettings.hideCountryLabels)}
         />
+        <Toggle
+        label="Detailed roads & towns"
+        enabled={mapSettings.showRoads}
+        onToggle={() => updateMapSetting("showRoads", MAP_SETTING_KEYS.showRoads, !mapSettings.showRoads)}
+        />
+        <div style={{ marginTop: "-0.7rem", marginBottom: "0.7rem", fontSize: "0.72rem", color: "rgba(255,255,255,0.45)", lineHeight: 1.35 }}>
+        At close zoom, adds dense city labels and an OpenStreetMap road overlay. It is visual only and does not change territory or simulation state.
+        </div>
         <Toggle
         label="Reduce motion"
         enabled={mapSettings.disableIdleRotation && mapSettings.disableEventCamera}

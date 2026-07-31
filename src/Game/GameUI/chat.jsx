@@ -3,7 +3,8 @@ import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { sendDiplomaticMessage, startDiplomaticChat, loadDiplomaticHistory } from "../AI/main.jsx";
-import { chooseNextDiplomaticSpeaker } from "../AI/gameplay.js";
+import { chooseNextDiplomaticSpeaker, sendKeyFigureMessage } from "../AI/gameplay.js";
+import { evaluateFigureMeeting, isFigureBrainActive, normalizeMeetingMode } from "../AI/figureRules.js";
 import { Actions } from "./actions";
 import {
     JSON_URLS,
@@ -12,7 +13,7 @@ import {
     readJson,
 } from "../../runtime/assets.js";
 import { flagEmojiFromGid } from "../../runtime/countryFlags.js";
-import { readChatsState, writeChatsState } from "../../runtime/gameState.js";
+import { readChatsState, readWorldState, writeChatsState } from "../../runtime/gameState.js";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -226,6 +227,12 @@ const MessageBubble = ({ msg }) => {
             boxSizing: "border-box",
         }}>
         {isPlayer ? msg.text : <div className="chat-markdown"><ReactMarkdown>{msg.text}</ReactMarkdown></div>}
+        {!isPlayer && msg.ledger && (msg.ledger.spent?.length > 0 || msg.ledger.produced?.length > 0) && (
+            <div style={{ marginTop: "0.55rem", paddingTop: "0.45rem", borderTop: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.62)", fontSize: "0.72rem", lineHeight: 1.45 }}>
+            {msg.ledger.spent?.length > 0 && <div>📉 Spent: {msg.ledger.spent.join(" · ")}</div>}
+            {msg.ledger.produced?.length > 0 && <div>📈 Produced: {msg.ledger.produced.join(" · ")}</div>}
+            </div>
+        )}
         </div>
 
         {!isPlayer && msg.time && (
@@ -319,6 +326,9 @@ const CountryTile = ({ country, code, flag, isSelected, onToggle }) => {
     const shortName = country.length > 12 ? country.slice(0, 11) + "…" : country;
     return (
         <button
+        type="button"
+        aria-pressed={isSelected}
+        aria-label={`${isSelected ? "Deselect" : "Select"} ${country}`}
         onClick={onToggle}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -375,7 +385,7 @@ const CountrySelectorModal = ({ countries, loading, onStart, onCancel }) => {
         <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "white" }}>Start New Diplomatic Chat</div>
         <div style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.4)", marginTop: "0.2rem" }}>Select countries to invite to the conversation</div>
         </div>
-        <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", fontSize: "1.1rem", padding: "0.1rem 0.3rem", borderRadius: "6px", lineHeight: 1 }}
+        <button type="button" aria-label="Close new diplomatic chat" onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", fontSize: "1.1rem", padding: "0.1rem 0.3rem", borderRadius: "6px", lineHeight: 1 }}
         onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
         onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.5)"; e.currentTarget.style.background = "none"; }}>✕</button>
         </div>
@@ -400,15 +410,79 @@ const CountrySelectorModal = ({ countries, loading, onStart, onCancel }) => {
         ))}
         </div>
         <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", gap: "0.5rem", flexShrink: 0 }}>
-        <button onClick={onCancel} style={{ flex: 1, padding: "0.65rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.8)", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", fontFamily: "sans-serif" }}
+        <button type="button" onClick={onCancel} style={{ flex: 1, padding: "0.65rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.8)", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", fontFamily: "sans-serif" }}
         onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
         onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.06)"}>Cancel</button>
-        <button onClick={() => selected.length > 0 && onStart(selected)} disabled={selected.length === 0}
+        <button type="button" onClick={() => selected.length > 0 && onStart(selected)} disabled={selected.length === 0}
         style={{ flex: 2, padding: "0.65rem", borderRadius: "10px", border: "none", background: selected.length > 0 ? "#3b82f6" : "rgba(59,130,246,0.3)", color: "white", fontSize: "0.85rem", fontWeight: 600, cursor: selected.length > 0 ? "pointer" : "not-allowed", fontFamily: "sans-serif" }}
         onMouseEnter={e => { if (selected.length > 0) e.currentTarget.style.background = "#2563eb"; }}
         onMouseLeave={e => { if (selected.length > 0) e.currentTarget.style.background = "#3b82f6"; }}>
         Chat with {selected.length} {selected.length === 1 ? "country" : "countries"}
         </button>
+        </div>
+        </div>
+    );
+};
+
+const FigureSelectorModal = ({ figures, loading, playerCountry, gameDate, onStart, onCancel }) => {
+    const [search, setSearch] = React.useState("");
+    const [selected, setSelected] = React.useState([]);
+    const [meetingMode, setMeetingMode] = React.useState("cabinet");
+    const [error, setError] = React.useState("");
+    const filtered = useMemo(
+        () => figures
+            .filter((figure) => isFigureBrainActive(figure))
+            .filter((figure) => evaluateFigureMeeting({ figure, playerPolity: playerCountry, gameDate, meetingMode }).allowed)
+            .filter((figure) => `${figure.name} ${figure.role} ${figure.polity}`.toLowerCase().includes(search.toLowerCase())),
+        [figures, playerCountry, gameDate, meetingMode, search],
+    );
+    const toggle = (figure) => {
+        setError("");
+        setSelected((prev) => prev.some((item) => item.id === figure.id)
+            ? prev.filter((item) => item.id !== figure.id)
+            : [...prev, figure]);
+    };
+    const submit = () => {
+        const check = evaluateFigureMeeting({ figures: selected, playerPolity: playerCountry, gameDate, meetingMode });
+        if (!check.allowed) { setError(check.reason); return; }
+        onStart(selected, normalizeMeetingMode(meetingMode));
+    };
+
+    return (
+        <div style={{ position: "absolute", inset: 0, backgroundColor: "rgba(17,24,39,0.98)", borderRadius: "16px", display: "flex", flexDirection: "column", zIndex: 10 }}>
+        <div style={{ padding: "1.1rem 1.25rem 0.6rem", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+        <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "white" }}>Convene a council</div>
+        <div style={{ fontSize: "0.78rem", color: "rgba(255,255,255,0.4)", marginTop: "0.2rem" }}>Only explicitly activated full brains can join</div>
+        </div>
+        <button type="button" aria-label="Close council selector" onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.5)", fontSize: "1.1rem", padding: "0.1rem 0.3rem", borderRadius: "6px", lineHeight: 1 }}>✕</button>
+        </div>
+        <input type="text" placeholder="Search people, roles, countries…" value={search} onChange={(event) => setSearch(event.target.value)} style={{ width: "100%", marginTop: "0.85rem", padding: "0.55rem 0.85rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)", color: "white", fontSize: "0.82rem", outline: "none", boxSizing: "border-box", fontFamily: "sans-serif" }} />
+        <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.6rem" }}>
+        {[{ id: "cabinet", label: "Cabinet", hint: "same room" }, { id: "secure-channel", label: "Secure channel", hint: "remote" }].map((option) => (
+            <button key={option.id} type="button" onClick={() => { setMeetingMode(option.id); setSelected([]); setError(""); }} style={{ flex: 1, padding: "0.45rem 0.5rem", borderRadius: "8px", border: meetingMode === option.id ? "1px solid rgba(139,92,246,0.7)" : "1px solid rgba(255,255,255,0.1)", background: meetingMode === option.id ? "rgba(139,92,246,0.18)" : "rgba(255,255,255,0.04)", color: "white", cursor: "pointer", fontSize: "0.72rem", fontFamily: "sans-serif" }}>
+            {option.label}<span style={{ display: "block", color: "rgba(255,255,255,0.4)", fontSize: "0.62rem", marginTop: "0.1rem" }}>{option.hint}</span>
+            </button>
+        ))}
+        </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem 1rem", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.5rem", alignContent: "start" }}>
+        {loading && <p style={{ gridColumn: "1/-1", color: "rgba(255,255,255,0.35)", fontSize: "0.82rem", textAlign: "center" }}>Loading key figures…</p>}
+        {!loading && filtered.length === 0 && <p style={{ gridColumn: "1/-1", color: "rgba(255,255,255,0.35)", fontSize: "0.82rem", textAlign: "center" }}>No eligible full-brain figures for this channel. The orchestrator can activate one through brainMode/full.</p>}
+        {filtered.map((figure) => {
+            const isSelected = selected.some((item) => item.id === figure.id);
+            return <button key={figure.id} type="button" aria-pressed={isSelected} onClick={() => toggle(figure)} style={{ textAlign: "left", minHeight: "5.5rem", padding: "0.7rem", borderRadius: "10px", border: isSelected ? "1px solid rgba(139,92,246,0.7)" : "1px solid rgba(255,255,255,0.08)", background: isSelected ? "rgba(139,92,246,0.18)" : "rgba(255,255,255,0.04)", color: "white", cursor: "pointer", fontFamily: "sans-serif" }}>
+            <div style={{ fontWeight: 700, fontSize: "0.82rem" }}>{isSelected ? "✓ " : "🧠 "}{figure.name}</div>
+            <div style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.7rem", marginTop: "0.25rem" }}>{figure.role || "Key figure"}</div>
+            <div style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.68rem", marginTop: "0.15rem" }}>{figure.polity || "Independent"} · full brain</div>
+            </button>;
+        })}
+        </div>
+        {error && <div role="alert" style={{ padding: "0 1rem 0.55rem", color: "#fca5a5", fontSize: "0.7rem" }}>{error}</div>}
+        <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+        <button type="button" onClick={onCancel} style={{ flex: 1, padding: "0.65rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.8)", fontSize: "0.85rem", cursor: "pointer", fontFamily: "sans-serif" }}>Cancel</button>
+        <button type="button" disabled={selected.length === 0} onClick={submit} style={{ flex: 2, padding: "0.65rem", borderRadius: "10px", border: "none", background: selected.length > 0 ? "#8b5cf6" : "rgba(139,92,246,0.3)", color: "white", fontSize: "0.85rem", fontWeight: 600, cursor: selected.length > 0 ? "pointer" : "not-allowed", fontFamily: "sans-serif" }}>Open council ({selected.length})</button>
         </div>
         </div>
     );
@@ -426,7 +500,20 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             : [],
         [chat?.countries],
     );
-    const isGroup = countries.length > 1;
+    const figures = useMemo(
+        () => Array.isArray(chat?.figures)
+            ? chat.figures.filter((figure) => figure && (figure.id || figure.name)).map((figure) => ({
+                ...figure,
+                code: figure.polity || figure.code || "",
+                name: figure.name || figure.id,
+                figureId: figure.id || figure.figureId,
+            }))
+            : [],
+        [chat?.figures],
+    );
+    const participants = useMemo(() => [...countries, ...figures], [countries, figures]);
+    const isFigureChat = figures.length > 0;
+    const isGroup = participants.length > 1;
 
     const [messages, setMessages]               = useState(chat.messages ?? []);
     const [phase, setPhase]                     = useState("player");
@@ -442,8 +529,8 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
     const messagesRef       = useRef(chat.messages ?? []);
 
     useEffect(() => {
-        countries.forEach(({ name, code }) => getCountryFlag({ code, name }));
-    }, [countries]);
+        participants.forEach(({ name, code }) => getCountryFlag({ code, name }));
+    }, [participants]);
 
     useEffect(() => {
         const saved = chat.messages ?? [];
@@ -462,7 +549,7 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             onMessagesUpdate(chat.id, updated);
         };
 
-        const isPlayerCountry = (country) => countryMatchesIdentity(country, playerCountry);
+        const isPlayerCountry = (country) => !country?.figureId && countryMatchesIdentity(country, playerCountry);
 
         const fetchLeaderResponse = async (country, playerMessage, queueAfter) => {
             if (isPlayerCountry(country)) {
@@ -474,7 +561,10 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             setIsLoading(true);
             setSpeakingCountry(country);
             try {
-                const { reply, reaction } = await sendDiplomaticMessage(playerMessage, country.name, countries);
+                const result = country.figureId
+                    ? await sendKeyFigureMessage(country.figureId, playerMessage, { ...chat, messages: messagesRef.current }, { playerCountry, gameDate })
+                    : await sendDiplomaticMessage(playerMessage, country.name, countries);
+                const { reply, reaction } = result;
 
                 if (reaction) {
                     const msgs = [...messagesRef.current];
@@ -484,12 +574,12 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
                             ...msgs[lastUserIdx],
                             reactions: { ...(msgs[lastUserIdx].reactions ?? {}), [country.name]: { emoji: reaction, code: country.code } },
                         };
-                        pushMessages([...msgs, { role: "leader", speaker: country.name, code: country.code, text: reply, time: gameDate }]);
+                        pushMessages([...msgs, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }]);
                     } else {
-                        pushMessages([...msgs, { role: "leader", speaker: country.name, code: country.code, text: reply, time: gameDate }]);
+                        pushMessages([...msgs, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }]);
                     }
                 } else {
-                    pushMessages([...messagesRef.current, { role: "leader", speaker: country.name, code: country.code, text: reply, time: gameDate }]);
+                    pushMessages([...messagesRef.current, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }]);
                 }
             } catch (err) {
                 pushMessages([...messagesRef.current, { role: "error", speaker: country.name, code: country.code, text: err.message, time: gameDate }]);
@@ -505,10 +595,10 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
         };
 
         const buildRoundQueue = () => {
-            const n = countries.length;
+            const n = participants.length;
             if (n === 0) return [];
             const s = nextSpeakerIdx.current % n;
-            return [...countries.slice(s), ...countries.slice(0, s)];
+            return [...participants.slice(s), ...participants.slice(0, s)];
         };
 
         const buildResponsiveQueue = async (updatedMessages) => {
@@ -538,11 +628,11 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
 
         const offerNextCountry = (queue) => {
             const [next, ...rest] = queue;
-            if (!next || countries.length === 0) {
+            if (!next || participants.length === 0) {
                 setPhase("player");
                 return;
             }
-            nextSpeakerIdx.current = (nextSpeakerIdx.current + 1) % countries.length;
+            nextSpeakerIdx.current = (nextSpeakerIdx.current + 1) % participants.length;
             if (isPlayerCountry(next)) {
                 setPendingCountry(null);
                 setRemainingQueue([]);
@@ -587,21 +677,21 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             await fetchLeaderResponse(country, lastPlayerMessage.current, rest);
         };
 
-        const typingSpeaker = speakingCountry ?? countries[0];
+        const typingSpeaker = speakingCountry ?? participants[0];
 
         return (
             <>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.85rem 1rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
-            <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", display: "flex", padding: "0.2rem", borderRadius: "6px" }}
+            <button type="button" aria-label="Back to diplomatic chats" onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", display: "flex", padding: "0.2rem", borderRadius: "6px" }}
             onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
             onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.6)"; e.currentTarget.style.background = "none"; }}>
             <BackIcon />
             </button>
             <span style={{ flex: 1, fontWeight: 700, fontSize: "0.95rem", color: "white", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            Chat with {countries.map(c => c.name).join(", ") || "unknown participant"}
+            {isFigureChat ? `Council (${chat.meetingMode === "secure-channel" ? "secure channel" : "cabinet"}): ` : "Chat with "}{participants.map(c => c.name).join(", ") || "unknown participant"}
             </span>
             {/* Two-step, same as the list row: one click arms, the next confirms. */}
-            <button title={confirmingDelete ? "Click again to delete this chat" : "Delete chat"}
+            <button type="button" title={confirmingDelete ? "Click again to delete this chat" : "Delete chat"}
             aria-label={confirmingDelete ? "Confirm deleting this chat" : "Delete chat"}
             onClick={() => { if (confirmingDelete) { onDelete?.(); } else { setConfirmingDelete(true); } }}
             onBlur={() => setConfirmingDelete(false)}
@@ -610,10 +700,25 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             onMouseLeave={e => { if (!confirmingDelete) { e.currentTarget.style.color = "rgba(239,68,68,0.65)"; e.currentTarget.style.background = "none"; } }}>
             {confirmingDelete ? "Delete?" : <TrashIcon />}
             </button>
-            <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.45)", fontSize: "1rem", lineHeight: 1, padding: "0.25rem 0.3rem", borderRadius: "6px" }}
+            <button type="button" aria-label="Close diplomatic conversation" onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.45)", fontSize: "1rem", lineHeight: 1, padding: "0.25rem 0.3rem", borderRadius: "6px" }}
             onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
             onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.45)"; e.currentTarget.style.background = "none"; }}>✕</button>
             </div>
+
+            {isFigureChat && (
+                <div style={{ padding: "0.55rem 0.8rem", borderBottom: "1px solid rgba(139,92,246,0.18)", background: "rgba(139,92,246,0.06)", display: "flex", flexDirection: "column", gap: "0.35rem", flexShrink: 0 }}>
+                {figures.map((figure) => (
+                    <div key={figure.figureId || figure.id} style={{ display: "flex", gap: "0.55rem", alignItems: "flex-start" }}>
+                        <span style={{ fontSize: "0.95rem" }}>🧠</span>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: "0.72rem", color: "rgba(255,255,255,0.78)", fontWeight: 600 }}>{figure.name}{figure.role ? ` · ${figure.role}` : ""}</div>
+                            {figure.thought && <div style={{ fontSize: "0.68rem", color: "rgba(255,255,255,0.48)", marginTop: "0.12rem" }}>Thought: {figure.thought}</div>}
+                            {figure.achievements?.length > 0 && <div style={{ fontSize: "0.66rem", color: "rgba(167,139,250,0.75)", marginTop: "0.1rem" }}>Achievement: {typeof figure.achievements.at(-1) === "string" ? figure.achievements.at(-1) : figure.achievements.at(-1)?.title}</div>}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            )}
 
             <div style={{ flex: 1, overflowY: "auto", overflowX: "visible", scrollbarWidth: "none", padding: "0.75rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
             {messages.length === 0 && !isLoading && (
@@ -621,7 +726,7 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
                 Begin the diplomatic conversation.
                 </p>
             )}
-            {messages.map((msg, i) => <MessageBubble key={i} msg={msg} chatCountries={countries} />)}
+            {messages.map((msg, i) => <MessageBubble key={i} msg={msg} chatCountries={participants} />)}
             {isLoading && typingSpeaker && <TypingBubble speaker={typingSpeaker.name} code={typingSpeaker.code} />}
             <div ref={messagesEndRef} />
             </div>
@@ -633,12 +738,16 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
                 </p>
                 <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button
+                type="button"
+                aria-label="Speak now"
                 onClick={handleSpeakInstead}
                 style={{ flex: 1, padding: "0.58rem 0.7rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.8)", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", fontFamily: "sans-serif", transition: "all 0.12s ease" }}
                 onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.11)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
                 >Speak</button>
                 <button
+                type="button"
+                aria-label={`Let ${pendingCountry.name} speak`}
                 onClick={handleLetSpeak}
                 style={{ flex: 2, padding: "0.58rem 0.7rem", borderRadius: "10px", border: "1px solid rgba(139,92,246,0.3)", background: "rgba(139,92,246,0.12)", color: "rgba(255,255,255,0.88)", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", fontFamily: "sans-serif", transition: "all 0.12s ease" }}
                 onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.24)"; e.currentTarget.style.borderColor = "rgba(139,92,246,0.55)"; }}
@@ -658,7 +767,7 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
                 onFocus={e => e.target.style.borderColor = "rgba(59,130,246,0.6)"}
                 onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.15)"}
                 />
-                <button onClick={handlePlayerSubmit} disabled={!playerInput.trim()}
+                <button type="button" aria-label="Send diplomatic message" onClick={handlePlayerSubmit} disabled={!playerInput.trim()}
                 style={{ backgroundColor: playerInput.trim() ? "#3b82f6" : "rgba(59,130,246,0.3)", border: "none", borderRadius: "10px", width: "2.5rem", height: "2.5rem", display: "flex", alignItems: "center", justifyContent: "center", cursor: playerInput.trim() ? "pointer" : "not-allowed", flexShrink: 0, fontSize: "1rem", transition: "background-color 0.2s" }}
                 onMouseEnter={e => { if (playerInput.trim()) e.currentTarget.style.backgroundColor = "#2563eb"; }}
                 onMouseLeave={e => { if (playerInput.trim()) e.currentTarget.style.backgroundColor = "#3b82f6"; }}
@@ -724,28 +833,29 @@ const ChatListItem = ({ chat, onClick, onDelete, unread = false }) => {
     // second click. Resets whenever the pointer leaves the row, so a half-pressed
     // delete never sits waiting to catch a later click.
     const [confirming, setConfirming] = React.useState(false);
-    const previewCountries = chat.countries.slice(0, 4);
+    const previewCountries = Array.isArray(chat.countries) ? chat.countries.slice(0, 4) : [];
     const flagMap  = useCountryFlags(previewCountries);
     const flags    = previewCountries.map(c => flagMap[c.name] ?? "🏳").join(" ");
-    const names    = chat.countries.map(c => c.name).join(", ");
+    const figureNames = Array.isArray(chat.figures) ? chat.figures.map((figure) => figure.name).filter(Boolean) : [];
+    const names    = [...(Array.isArray(chat.countries) ? chat.countries.map(c => c.name) : []), ...figureNames].join(", ");
     const lastMsg  = chat.messages?.at(-1);
     const preview  = lastMsg ? lastMsg.text.replace(/\*\*/g, "").slice(0, 60) + (lastMsg.text.length > 60 ? "…" : "") : "No messages yet";
 
     return (
         <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => { setHovered(false); setConfirming(false); }} style={{ position: "relative" }}>
-        <button onClick={onClick} style={{ width: "100%", padding: "0.7rem 0.9rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.07)", background: hovered ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", transition: "background 0.15s", fontFamily: "sans-serif", textAlign: "left" }}>
+        <button type="button" aria-label={`Open chat with ${names}`} onClick={onClick} style={{ width: "100%", padding: "0.7rem 0.9rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.07)", background: hovered ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", transition: "background 0.15s", fontFamily: "sans-serif", textAlign: "left" }}>
         {/* Fixed-width slot, always rendered, so read and unread rows stay aligned. */}
         <div style={{ width: "0.5rem", flexShrink: 0, display: "flex", justifyContent: "center" }} aria-hidden="true">
         {unread && <div style={{ width: "0.5rem", height: "0.5rem", borderRadius: "50%", background: "#60a5fa" }} />}
         </div>
-        <div style={{ fontSize: "1.3rem", flexShrink: 0, lineHeight: 1 }}>{flags}</div>
+        <div style={{ fontSize: "1.3rem", flexShrink: 0, lineHeight: 1 }}>{flags || (figureNames.length ? "🧠" : "🏳")}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: "0.82rem", fontWeight: unread ? 700 : 600, color: unread ? "#fff" : "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{names}{unread && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "#60a5fa", marginLeft: "0.4rem" }}>new</span>}</div>
         <div style={{ fontSize: "0.75rem", color: unread ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.35)", marginTop: "0.15rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{preview}</div>
         </div>
         </button>
         {hovered && (
-            <button onClick={e => { e.stopPropagation(); if (confirming) { onDelete(); } else { setConfirming(true); } }}
+            <button type="button" onClick={e => { e.stopPropagation(); if (confirming) { onDelete(); } else { setConfirming(true); } }}
             title={confirming ? "Click again to delete this chat" : "Delete chat"}
             aria-label={confirming ? "Confirm deleting this chat" : "Delete chat"}
             style={{ position: "absolute", top: "50%", right: "0.6rem", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: "0.3rem", background: confirming ? "rgba(239,68,68,0.18)" : "none", border: `1px solid ${confirming ? "rgba(239,68,68,0.55)" : "transparent"}`, cursor: "pointer", color: confirming ? "#fca5a5" : "rgba(239,68,68,0.7)", fontSize: "0.72rem", fontWeight: 600, fontFamily: "sans-serif", padding: confirming ? "0.25rem 0.5rem" : "0.25rem", borderRadius: "6px", lineHeight: 1 }}
@@ -768,14 +878,17 @@ export const requestDiplomaticChat = (country) => {
 
 const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
     const [countries, setCountries]               = useState([]);
+    const [figures, setFigures]                   = useState([]);
     const [loadingCountries, setLoadingCountries] = useState(true);
+    const [loadingFigures, setLoadingFigures]     = useState(true);
     const [playerCountry, setPlayerCountry]       = useState("your nation");
     const [gameDate, setGameDate]                 = useState("");
     const [chats, setChats]                       = useState([]);
     const [activeChat, setActiveChat]             = useState(null);
     const [showSelector, setShowSelector]         = useState(false);
+    const [showCouncil, setShowCouncil]           = useState(false);
     const [hasLoadedInitialData, setHasLoadedInitialData] = useState(false);
-    const openChats = chats.filter((chat) => chat.status !== "closed" && Array.isArray(chat.countries) && chat.countries.length > 0);
+    const openChats = chats.filter((chat) => chat.status !== "closed" && ((Array.isArray(chat.countries) && chat.countries.length > 0) || (Array.isArray(chat.figures) && chat.figures.length > 0)));
 
     // Which chats to flag as unread, snapshotted when the panel OPENS and held
     // until it closes — rows must not reshuffle under the cursor while the player
@@ -811,17 +924,20 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
         if (!isOpen || hasLoadedInitialData) return;
 
         let cancelled = false;
-        Promise.all([loadCountryNames(), loadAllChats()])
-        .then(([countryList, savedChats]) => {
+        Promise.all([loadCountryNames(), loadAllChats(), readWorldState({ force: true })])
+        .then(([countryList, savedChats, world]) => {
             if (cancelled) return;
             setCountries(countryList);
+            setFigures(Array.isArray(world?.keyFigures) ? world.keyFigures.filter((figure) => isFigureBrainActive(figure)) : []);
             setLoadingCountries(false);
+            setLoadingFigures(false);
             if (savedChats.length > 0) setChats(savedChats);
             setHasLoadedInitialData(true);
         })
         .catch(() => {
             if (!cancelled) {
                 setLoadingCountries(false);
+                setLoadingFigures(false);
                 setHasLoadedInitialData(true);
             }
         });
@@ -904,6 +1020,35 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
         setActiveChat(newChat);
     };
 
+    const handleStartCouncil = (selected, meetingMode = "cabinet") => {
+        const newChat = {
+            id: Date.now(),
+            mode: "council",
+            meetingMode: normalizeMeetingMode(meetingMode),
+            title: `Council: ${selected.map((figure) => figure.name).join(", ")}`,
+            countries: [],
+            figures: selected.map((figure) => ({
+                id: figure.id,
+                name: figure.name,
+                role: figure.role,
+                polity: figure.polity,
+                brainMode: figure.brainMode || "full",
+                brainEnabled: figure.brainEnabled !== false,
+                brainStatus: figure.brainStatus || "active",
+                meetingModes: figure.meetingModes || [],
+                meetingAccess: figure.meetingAccess || "normal",
+                thought: figure.thought || figure.currentThought || "",
+                achievements: figure.achievements || [],
+                projects: figure.projects || [],
+            })),
+            messages: [],
+            status: "open",
+        };
+        setChats((prev) => { const updated = [newChat, ...prev]; saveAllChats(updated); return updated; });
+        setShowCouncil(false);
+        setActiveChat(newChat);
+    };
+
     // Deleting hides the thread from the player; it does NOT erase it. gameplay.js
     // feeds closed chats back to the model as concluded-negotiation history, so
     // dropping the record outright would make the AI act as though the talks never
@@ -950,17 +1095,18 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
         return (
             <>
             <MarkdownStyleInjector />
-            <div style={{ position: "fixed", bottom: isOpen ? "4.25rem" : "-40rem", left: "0rem", width: "26.25rem", maxWidth: "calc(100vw - 1rem)", height: "min(calc(100vh - 9rem), max(calc(100vh - 33rem), 30rem))", minHeight: "10rem", backgroundColor: "rgba(17,24,39,0.95)", backdropFilter: "blur(8px)", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "-4px 0 24px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.06)", zIndex: 9998, overflow: "hidden", transition: "bottom 0.35s cubic-bezier(0.4,0,0.2,1),opacity 0.35s ease", opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? "auto" : "none", fontFamily: "sans-serif", color: "white", display: "flex", flexDirection: "column" }}>
+            <div role="dialog" aria-label="Diplomatic chats" aria-hidden={!isOpen} style={{ position: "fixed", bottom: isOpen ? "calc(4.25rem + env(safe-area-inset-bottom, 0px))" : "calc(-40rem - env(safe-area-inset-bottom, 0px))", left: "0rem", width: "26.25rem", maxWidth: "calc(100vw - 1rem)", height: "min(calc(100dvh - 9rem - env(safe-area-inset-bottom, 0px)), max(calc(100dvh - 33rem), 30rem))", minHeight: "10rem", backgroundColor: "rgba(17,24,39,0.95)", backdropFilter: "blur(8px)", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "-4px 0 24px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.06)", zIndex: 9998, overflow: "hidden", transition: "bottom 0.35s cubic-bezier(0.4,0,0.2,1),opacity 0.35s ease", opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? "auto" : "none", fontFamily: "sans-serif", color: "white", display: "flex", flexDirection: "column" }}>
 
             {showSelector && <CountrySelectorModal countries={availableCountries} loading={loadingCountries} onStart={handleStartChat} onCancel={() => setShowSelector(false)} />}
+            {showCouncil && <FigureSelectorModal figures={figures} loading={loadingFigures} playerCountry={playerCountry} gameDate={gameDate} onStart={handleStartCouncil} onCancel={() => setShowCouncil(false)} />}
 
-            {activeChat && Array.isArray(activeChat.countries) && activeChat.countries.length > 0 ? (
+            {activeChat && ((Array.isArray(activeChat.countries) && activeChat.countries.length > 0) || (Array.isArray(activeChat.figures) && activeChat.figures.length > 0)) ? (
                 <ConversationView chat={activeChat} playerCountry={playerCountry} gameDate={gameDate} onDelete={() => handleDeleteChat(activeChat.id)} onBack={() => setActiveChat(null)} onMessagesUpdate={handleMessagesUpdate} />
             ) : (
                 <>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
                 <span style={{ fontWeight: 700, fontSize: "1rem" }}>Diplomatic Chats</span>
-                <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: "1.1rem", lineHeight: 1, padding: "0.15rem 0.3rem", borderRadius: "6px" }}
+                <button type="button" aria-label="Close diplomatic chats" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: "1.1rem", lineHeight: 1, padding: "0.15rem 0.3rem", borderRadius: "6px" }}
                 onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
                 onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.5)"; e.currentTarget.style.background = "none"; }}>✕</button>
                 </div>
@@ -972,9 +1118,14 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
                 ) : orderedChats.map(chat => <ChatListItem key={chat.id} chat={chat} unread={unreadIds.has(String(chat.id))} onClick={() => openChatFromList(chat)} onDelete={() => handleDeleteChat(chat.id)} />)}
                 </div>
                 <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
-                <button onClick={() => setShowSelector(true)} style={{ width: "100%", padding: "0.7rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.85)", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", fontFamily: "sans-serif" }}
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button type="button" aria-label="Start a new diplomatic chat" onClick={() => setShowSelector(true)} style={{ flex: 1, padding: "0.7rem", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.85)", fontSize: "0.82rem", fontWeight: 500, cursor: "pointer", fontFamily: "sans-serif" }}
                 onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.12)"}
-                onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}>Start New Chat</button>
+                onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}>Diplomacy</button>
+                <button type="button" aria-label="Convene a council with key figures" onClick={() => setShowCouncil(true)} style={{ flex: 1, padding: "0.7rem", borderRadius: "10px", border: "1px solid rgba(139,92,246,0.35)", background: "rgba(139,92,246,0.12)", color: "rgba(255,255,255,0.9)", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", fontFamily: "sans-serif" }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(139,92,246,0.2)"}
+                onMouseLeave={e => e.currentTarget.style.background = "rgba(139,92,246,0.12)"}>Council</button>
+                </div>
                 </div>
                 </>
             )}
@@ -1004,7 +1155,7 @@ const Chat = ({ hovered, setHovered, isOpen, onToggle }) => {
         const check = () => loadAllChats({ force: true })
         .then((saved) => {
             if (cancelled || !Array.isArray(saved)) return;
-            const open = saved.filter((c) => c.status !== "closed" && Array.isArray(c.countries) && c.countries.length > 0);
+            const open = saved.filter((c) => c.status !== "closed" && ((Array.isArray(c.countries) && c.countries.length > 0) || (Array.isArray(c.figures) && c.figures.length > 0)));
             // The badge only READS the baseline. The panel writes it when it opens,
             // and it must be the only writer: if this poll also wrote on isOpen it
             // could clear the baseline first and the list would find nothing unread.
@@ -1040,13 +1191,13 @@ const Chat = ({ hovered, setHovered, isOpen, onToggle }) => {
         return (
             <>
             {hasOpened && <ChatPanel isOpen={isOpen} onClose={onToggle} requestedCountry={pendingCountry} onConsumeRequest={() => setPendingCountry(null)} />}
-            <button title="Chat" style={{ width: "3.3rem", height: "3.3rem", borderRadius: "10px", border: hovered ? "1px solid rgba(255,255,255,0.2)" : isOpen ? "1px solid rgba(139,92,246,0.5)" : "1px solid rgba(255,255,255,0.1)", background: isOpen ? "linear-gradient(145deg,rgba(109,40,217,0.4),rgba(76,29,149,0.4))" : hovered ? "linear-gradient(145deg,rgba(40,55,80,0.95),rgba(20,30,50,0.95))" : "linear-gradient(145deg,rgba(30,42,65,0.95),rgba(15,22,40,0.95))", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.12s ease", boxShadow: hovered ? "inset 0 1px 0 rgba(255,255,255,0.1),0 2px 8px rgba(0,0,0,0.4)" : "inset 0 1px 0 rgba(255,255,255,0.06),inset 0 -1px 0 rgba(0,0,0,0.3),0 2px 6px rgba(0,0,0,0.35)", fontSize: "1.2rem", outline: "none", transform: hovered ? "translateY(-1px)" : "translateY(0)", color: "white", fontFamily: "sans-serif", flexShrink: 0 }}
+            <button type="button" title={isOpen ? "Close diplomatic chats" : "Open diplomatic chats"} aria-label={isOpen ? "Close diplomatic chats" : unseenCount > 0 ? `Open diplomatic chats, ${unseenCount} unread` : "Open diplomatic chats"} aria-pressed={isOpen} aria-expanded={isOpen} style={{ width: "3.3rem", height: "3.3rem", borderRadius: "10px", border: hovered ? "1px solid rgba(255,255,255,0.2)" : isOpen ? "1px solid rgba(139,92,246,0.5)" : "1px solid rgba(255,255,255,0.1)", background: isOpen ? "linear-gradient(145deg,rgba(109,40,217,0.4),rgba(76,29,149,0.4))" : hovered ? "linear-gradient(145deg,rgba(40,55,80,0.95),rgba(20,30,50,0.95))" : "linear-gradient(145deg,rgba(30,42,65,0.95),rgba(15,22,40,0.95))", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.12s ease", boxShadow: hovered ? "inset 0 1px 0 rgba(255,255,255,0.1),0 2px 8px rgba(0,0,0,0.4)" : "inset 0 1px 0 rgba(255,255,255,0.06),inset 0 -1px 0 rgba(0,0,0,0.3),0 2px 6px rgba(0,0,0,0.35)", fontSize: "1.2rem", outline: "none", transform: hovered ? "translateY(-1px)" : "translateY(0)", color: "white", fontFamily: "sans-serif", flexShrink: 0 }}
             onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
             onClick={() => setChatOpen(o => !o)}>
             <span style={{ position: "relative", display: "inline-flex" }}>
                 💬
                 {unseenCount > 0 && !isOpen && (
-                    <span style={{ position: "absolute", top: "-0.55rem", right: "-0.8rem", minWidth: "1.05rem", height: "1.05rem", padding: "0 0.2rem", borderRadius: "999px", background: "#dc2626", border: "1px solid rgba(255,255,255,0.35)", color: "white", fontSize: "0.62rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+                    <span aria-hidden="true" style={{ position: "absolute", top: "-0.55rem", right: "-0.8rem", minWidth: "1.05rem", height: "1.05rem", padding: "0 0.2rem", borderRadius: "999px", background: "#dc2626", border: "1px solid rgba(255,255,255,0.35)", color: "white", fontSize: "0.62rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
                         {unseenCount > 9 ? "9+" : unseenCount}
                     </span>
                 )}
@@ -1058,13 +1209,41 @@ const Chat = ({ hovered, setHovered, isOpen, onToggle }) => {
 
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 
+const PanelButton = ({ icon, label, hovered, setHovered, isOpen, onClick }) => (
+    <button
+        type="button"
+        title={isOpen ? `Close ${label}` : label}
+        aria-label={isOpen ? `Close ${label}` : `Open ${label}`}
+        aria-pressed={isOpen}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={onClick}
+        style={{
+            width: "3.3rem", height: "3.3rem", borderRadius: "10px",
+            border: isOpen ? "1px solid rgba(59,130,246,0.65)" : hovered ? "1px solid rgba(255,255,255,0.2)" : "1px solid rgba(255,255,255,0.1)",
+            background: isOpen ? "linear-gradient(145deg,rgba(30,96,170,0.5),rgba(23,63,112,0.5))" : hovered ? "linear-gradient(145deg,rgba(40,55,80,0.95),rgba(20,30,50,0.95))" : "linear-gradient(145deg,rgba(30,42,65,0.95),rgba(15,22,40,0.95))",
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.12s ease",
+            boxShadow: hovered ? "inset 0 1px 0 rgba(255,255,255,0.1),0 2px 8px rgba(0,0,0,0.4)" : "inset 0 1px 0 rgba(255,255,255,0.06),inset 0 -1px 0 rgba(0,0,0,0.3),0 2px 6px rgba(0,0,0,0.35)",
+            fontSize: "1.15rem", outline: "none", transform: hovered ? "translateY(-1px)" : "translateY(0)", color: "white", fontFamily: "sans-serif", flexShrink: 0,
+        }}
+    >
+        <span aria-hidden="true">{icon}</span>
+    </button>
+);
+
 const Toolbar = memo(({ onOpenAdvisor, activePanel, onTogglePanel }) => {
     const [hoveredChat, setHoveredChat]       = useState(false);
     const [hoveredActions, setHoveredActions] = useState(false);
+    const [hoveredForces, setHoveredForces] = useState(false);
+    const [hoveredMarkers, setHoveredMarkers] = useState(false);
+    const [hoveredReserves, setHoveredReserves] = useState(false);
     return (
-        <div style={{ position: "fixed", bottom: "0.5rem", left: "0.5rem", height: "4rem", width: "8.75rem", gap: "0.75rem", padding: "0 0.1rem", backgroundColor: "rgba(17,24,39,0.9)", backdropFilter: "blur(4px)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontFamily: "sans-serif", borderRadius: "14px", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 8px 24px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+        <div role="toolbar" aria-label="Game panels toolbar" style={{ position: "fixed", bottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", height: "4rem", width: "17.4rem", gap: "0.15rem", padding: "0 0.1rem", backgroundColor: "rgba(17,24,39,0.9)", backdropFilter: "blur(4px)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontFamily: "sans-serif", borderRadius: "14px", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 8px 24px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.05)" }}>
         <Chat hovered={hoveredChat} setHovered={setHoveredChat} isOpen={activePanel === "chat"} onToggle={() => onTogglePanel("chat")} />
         <Actions onOpenAdvisor={onOpenAdvisor} hovered={hoveredActions} setHovered={setHoveredActions} isOpen={activePanel === "actions"} onToggle={() => onTogglePanel("actions")} />
+        <PanelButton icon="🪖" label="Forces" hovered={hoveredForces} setHovered={setHoveredForces} isOpen={activePanel === "forces"} onClick={() => onTogglePanel("forces")} />
+        <PanelButton icon="📍" label="Map markers" hovered={hoveredMarkers} setHovered={setHoveredMarkers} isOpen={activePanel === "markers"} onClick={() => onTogglePanel("markers")} />
+        <PanelButton icon="📦" label="Military reserves" hovered={hoveredReserves} setHovered={setHoveredReserves} isOpen={activePanel === "reserves"} onClick={() => onTogglePanel("reserves")} />
         </div>
     );
 });

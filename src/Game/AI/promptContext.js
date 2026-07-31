@@ -207,20 +207,208 @@ export const buildUnitsSummaryText = (world) => {
   }).join("\n");
 };
 
+const contextRecordList = (value) => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+
+  const recordFields = new Set([
+    "id", "figureId", "name", "fullName", "figure", "person", "role", "position", "title",
+    "polity", "country", "ownerCode", "capacity", "productionCapacity", "output", "facility",
+    "quantity", "amount", "date", "kind", "category", "item", "project", "system", "note",
+    "description",
+  ]);
+  if (Object.keys(value).some((key) => recordFields.has(key))) return [value];
+
+  return Object.entries(value).map(([key, entry]) => (
+    entry && typeof entry === "object" && !Array.isArray(entry)
+      ? { id: key, ...entry }
+      : { id: key, value: entry }
+  ));
+};
+
+const clipContextValue = (value, limit = 240) => {
+  const text = String(value ?? "");
+  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
+};
+
+const formatContextValue = (value, depth = 0) => {
+  if (value == null) return "";
+  if (typeof value !== "object") return clipContextValue(normalizeString(value));
+  if (depth >= 1) return clipContextValue(JSON.stringify(value));
+  if (Array.isArray(value)) {
+    return clipContextValue(value.slice(0, 5).map((entry) => formatContextValue(entry, depth + 1)).filter(Boolean).join(", "));
+  }
+  return clipContextValue(Object.entries(value)
+    .slice(0, 5)
+    .map(([key, entry]) => `${key} ${formatContextValue(entry, depth + 1)}`)
+    .filter((entry) => entry.trim())
+    .join(", "));
+};
+
+const buildCompactContextSummary = (value, {
+  emptyText,
+  labelFields,
+  heading,
+  limit = 32,
+}) => {
+  const records = contextRecordList(value);
+  if (records.length === 0) return emptyText;
+
+  const lines = records.slice(0, limit).map((record, index) => {
+    if (!record || typeof record !== "object") return `- ${formatContextValue(record)}`;
+    const label = labelFields
+      .map((field) => formatContextValue(record[field]))
+      .find(Boolean) || `Record ${index + 1}`;
+    const details = Object.entries(record)
+      .filter(([key, entry]) => !labelFields.includes(key) && key !== "id" && entry != null && entry !== "")
+      .slice(0, 8)
+      .map(([key, entry]) => `${key} ${formatContextValue(entry)}`)
+      .filter((entry) => entry.trim());
+    return `- ${label}${details.length > 0 ? `: ${details.join("; ")}` : ""}`;
+  });
+
+  const suffix = records.length > limit ? `\n(+${records.length - limit} more records not listed)` : "";
+  return `${heading}:\n${lines.join("\n")}${suffix}`;
+};
+
+export const buildKeyFiguresSummaryText = (world) => {
+  const figures = normalizeWorldState(world).keyFigures;
+  if (figures.length === 0) return "No key-figure records are currently supplied.";
+  const listText = (value, limit = 3) => normalizeArray(value)
+    .slice(0, limit)
+    .map((entry) => typeof entry === "object" ? entry?.title || entry?.name || entry?.summary || "" : String(entry ?? ""))
+    .filter(Boolean)
+    .join(", ");
+
+  const lines = figures.slice(0, 80).map((figure) => {
+    const mode = String(figure.brainMode || (figure.brainEnabled ? "full" : "off")).toLowerCase();
+    const base = [
+      `${figure.name || figure.id || "Unnamed figure"}`,
+      figure.role ? `role ${figure.role}` : "",
+      figure.polity ? `polity ${figure.polity}` : "",
+      `status ${figure.status || "unknown"}`,
+      `brain ${["off", "light", "full"].includes(mode) ? mode : "off"}`,
+      figure.meetingAccess ? `access ${figure.meetingAccess}` : "",
+      Array.isArray(figure.meetingModes) && figure.meetingModes.length > 0 ? `channels ${figure.meetingModes.join(", ")}` : "",
+      figure.birthDate ? `born ${figure.birthDate}` : "",
+      figure.deathDate ? `died ${figure.deathDate}` : "",
+    ].filter(Boolean);
+    if (mode === "off") return `- ${base.join("; ")} (factual record only; no personal brain)`;
+
+    const compact = [
+      Array.isArray(figure.goals) && figure.goals.length > 0 ? `goals ${figure.goals.slice(0, 3).join(", ")}` : "",
+      Array.isArray(figure.traits) && figure.traits.length > 0 ? `traits ${figure.traits.slice(0, 3).join(", ")}` : "",
+      figure.location ? `location ${figure.location}` : "",
+    ].filter(Boolean);
+    if (mode !== "full") return `- ${base.join("; ")}${compact.length ? `; ${compact.join("; ")}` : ""} (light dossier; do not call a personal brain)`;
+
+    const privateState = [
+      ...compact,
+      figure.thought ? `thought ${figure.thought}` : "",
+      Array.isArray(figure.achievements) && figure.achievements.length > 0 ? `achievements ${listText(figure.achievements.slice(-3))}` : "",
+      Array.isArray(figure.projects) && figure.projects.length > 0 ? `projects ${listText(figure.projects)}` : "",
+    ].filter(Boolean);
+    return `- ${base.join("; ")}${privateState.length ? `; ${privateState.join("; ")}` : ""}`;
+  });
+  const suffix = figures.length > 80 ? `\n(+${figures.length - 80} more factual records not listed)` : "";
+  return `KEY FIGURES (orchestrator budget; most people stay off):\n${lines.join("\n")}${suffix}`;
+};
+
+export const buildMilitaryIndustrySummaryText = (world) => {
+  const industry = world?.militaryIndustry;
+  const sections = ["arsenal", "research", "production", "ledger"]
+    .filter((section) => contextRecordList(industry?.[section]).length > 0);
+  if (sections.length === 0) {
+    const hasSectionShape = industry && typeof industry === "object" && !Array.isArray(industry)
+      && ["arsenal", "research", "production", "ledger"].some((section) => section in industry);
+    if (hasSectionShape) return "No military-industry records are currently supplied.";
+    return buildCompactContextSummary(industry, {
+      emptyText: "No military-industry records are currently supplied.",
+      heading: "MILITARY INDUSTRY",
+      labelFields: ["name", "polity", "country", "ownerCode", "owner", "code", "id"],
+    });
+  }
+
+  return sections.map((section) => buildCompactContextSummary(industry[section], {
+    emptyText: "",
+    heading: section.toUpperCase(),
+    labelFields: ["name", "item", "title", "project", "polity", "country", "ownerCode", "owner", "id"],
+    limit: 16,
+  })).join("\n");
+};
+
+// Tactical sectors are the fine-grained layer beneath administrative region
+// ownership. Keep the summary compact but explicit so the model can continue a
+// battle across several jumps instead of recreating a fresh front every turn.
+export const buildControlSectorsSummaryText = (world) => {
+  const sectors = normalizeWorldState(world).controlSectors;
+  if (sectors.length === 0) return "No tactical control sectors or prolonged battles are currently recorded.";
+  const lines = sectors.slice(0, 80).map((sector) => {
+    const center = sector.center && typeof sector.center === "object" ? sector.center : {};
+    const lat = Number(center.lat);
+    const lng = Number(center.lng);
+    const coords = Number.isFinite(lat) && Number.isFinite(lng)
+      ? `lat ${lat.toFixed(2)}, lng ${lng.toFixed(2)}`
+      : "unknown location";
+    const opposition = sector.contestedBy
+      ? `, contested by ${Array.isArray(sector.contestedBy) ? sector.contestedBy.join(", ") : sector.contestedBy}`
+      : "";
+    const battle = sector.battleId ? `, battle ${sector.battleId}` : "";
+    const started = sector.startedAt ? `, started ${sector.startedAt}` : "";
+    const cells = (sector.cells || []).slice(0, 24).map((cell) => {
+      const cellCenter = cell.center && typeof cell.center === "object" ? cell.center : {};
+      const cellLat = Number(cellCenter.lat);
+      const cellLng = Number(cellCenter.lng);
+      const cellCoords = Number.isFinite(cellLat) && Number.isFinite(cellLng)
+        ? `@${cellLat.toFixed(2)},${cellLng.toFixed(2)}`
+        : "@unknown";
+      const cellOpposition = cell.contestedBy
+        ? ` vs ${Array.isArray(cell.contestedBy) ? cell.contestedBy.join("/") : cell.contestedBy}`
+        : "";
+      const parent = cell.parentCellId ? ` child-of ${cell.parentCellId}` : "";
+      return `${cell.id}=${cell.ownerCode} ${cell.control}% depth ${cell.depth || 1}${cellOpposition}${parent} ref ${sector.id}:${cell.id} ${cellCoords}`;
+    }).join(", ");
+    const cellSummary = cells ? `; cells: ${cells}` : "";
+    return `- ${sector.name} [id ${sector.id}] in region ${sector.regionId}: ${sector.ownerCode} controls ${sector.control}%${opposition}; status ${sector.status}; center ${coords}; radius ${sector.radiusKm} km${battle}${started}${cellSummary}${sector.note ? ` — ${sector.note}` : ""}`;
+  }).join("\n");
+  return "These are partial tactical-control patches inside administrative regions, not region ownership. Cell depth is limited to 2: depth 1 is the normal grid, depth 2 is the final micro-cell level. Reference a leaf cell as sectorId:cellId. Update them with sectorOps; use territoryOps for a named cell-backed subregion; use regionTransfers only for a complete administrative change.\n" + lines;
+};
+
+export const buildTerritoryFragmentsSummaryText = (world) => {
+  const fragments = normalizeWorldState(world).territoryFragments;
+  if (fragments.length === 0) return "No named subregions, autonomous pockets, or secession fragments are currently recorded.";
+  return fragments.slice(0, 60).map((fragment) =>
+    `- ${fragment.name} [id ${fragment.id}] (${fragment.kind}, ${fragment.status}, owner ${fragment.ownerCode}) inside region ${fragment.parentRegionId}; cells ${fragment.cellRefs.join(", ")}${fragment.note ? ` — ${fragment.note}` : ""}`,
+  ).join("\n");
+};
+
 // Structures founded during play (world.markers): cities, military bases,
 // bunkers, missile silos, embassies. Listed with coordinates so the model can
 // reference, defend, target, or expand them — and knows their names are taken.
 export const buildMarkersSummaryText = (world) => {
   const markers = normalizeArray(world?.markers);
-  if (markers.length === 0) return "No structures have been built during play yet.";
+  if (markers.length === 0) return "No player-placed map markers or AI-built structures are currently recorded.";
   return markers.slice(0, 60).map((marker) => {
     const lat = Number(marker.lat);
     const lng = Number(marker.lng);
     const coords = Number.isFinite(lat) && Number.isFinite(lng)
       ? `lat ${lat.toFixed(2)}, lng ${lng.toFixed(2)}`
       : "unknown location";
-    return `- ${marker.name} [id ${marker.id}] (${marker.kind}${marker.ownerCode ? `, owner ${marker.ownerCode}` : ""}) at ${coords}${marker.note ? ` — ${marker.note}` : ""}`;
+    return `- ${marker.name} [id ${marker.id}] (${marker.kind}${marker.ownerCode ? `, owner ${marker.ownerCode}` : ""}, source ${marker.source}, status ${marker.status}) at ${coords}${marker.note ? ` — ${marker.note}` : ""}`;
   }).join("\n");
+};
+
+export const buildMilitaryReservesSummaryText = (world) => {
+  const reserves = normalizeWorldState(world).militaryReserves;
+  const entries = Object.entries(reserves);
+  if (entries.length === 0) return "No military reserve sheets are currently reported. Do not assume zero; logistics data has not been supplied yet.";
+  const formatMap = (value) => {
+    const pairs = Object.entries(value || {}).map(([key, amount]) => `${key} ${amount}`);
+    return pairs.length ? pairs.join(", ") : "none reported";
+  };
+  return entries.slice(0, 40).map(([owner, sheet]) =>
+    `- ${owner}: manpower reserve ${sheet.manpower}, committed ${sheet.manpowerCommitted}; equipment [${formatMap(sheet.equipment)}]; munitions [${formatMap(sheet.munitions)}]; fuel ${sheet.fuel}; supplies ${sheet.supplies}; maintenance ${sheet.maintenance}${sheet.note ? ` — ${sheet.note}` : ""}`,
+  ).join("\n");
 };
 
 // City coordinates for the model, so troop deployments and events land on the
@@ -452,6 +640,10 @@ export const buildPromptContext = async (bundle, {
   const unconsolidatedChats = normalizeChats(bundle.chats)
     .filter((entry) => !consolidatedChatIds.has(entry.id));
   const currentChat = normalizedChat ?? unconsolidatedChats[0] ?? null;
+  const currentChatParticipants = [
+    ...normalizeArray(currentChat?.countries).map((participant) => participant.name),
+    ...normalizeArray(currentChat?.figures).map((participant) => participant.name),
+  ].filter(Boolean);
 
   return {
     actionInput,
@@ -470,7 +662,7 @@ export const buildPromptContext = async (bundle, {
     chat: JSON.stringify(unconsolidatedChats),
     chatHistory: currentChat?.messages?.map((message) => `${message.speaker || message.role}: ${message.text}`).join("\n") || "No chat history.",
     chatHistoryLong: buildDetailedChatHistoryText(unconsolidatedChats, { limit: chatLimit }),
-    chatParticipants: currentChat?.countries?.map((country) => country.name).join(", ") || "",
+    chatParticipants: currentChatParticipants.join(", ") || "",
     chatSummary: buildChatSummaryText(unconsolidatedChats),
     chatsToConsolidate: chatsToConsolidate || buildDetailedChatHistoryText(unconsolidatedChats, { limit: 12, messageLimit: 50 }),
     consolidatedHistory: buildConsolidatedHistoryText(bundle.world),
@@ -483,16 +675,21 @@ export const buildPromptContext = async (bundle, {
     gameMasterRequest,
     language: bundle.world.language || bundle.game.language || "English",
     lastSpeaker: currentChat?.messages?.at(-1)?.speaker || "",
+    keyFiguresSummary: buildKeyFiguresSummaryText(bundle.world),
     markersSummary: buildMarkersSummaryText(bundle.world),
+    militaryIndustrySummary: buildMilitaryIndustrySummaryText(bundle.world),
     numberOfRegions: String(regionCatalog.length),
     plannedActions: buildActionHistoryText(bundle.actions),
     playerBattalionSummaries: buildUnitsSummaryText(bundle.world),
+    controlSectorsSummary: buildControlSectorsSummaryText(bundle.world),
+    territoryFragmentsSummary: buildTerritoryFragmentsSummaryText(bundle.world),
+    militaryReservesSummary: buildMilitaryReservesSummaryText(bundle.world),
     playerPolity: bundle.game.country || "Unknown polity",
     playerPolityRegions: await buildPlayerPolityRegionsText(bundle, regionCatalog),
     recentEvents,
     recentEventsLong: campaignHistory,
     recentRoundsWithDates: buildRecentRoundsWithDates(bundle),
-    respondingPolityName: respondingPolityName || currentChat?.countries.find((country) => country.name !== bundle.game.country)?.name || "",
+    respondingPolityName: respondingPolityName || currentChatParticipants.find((name) => name !== bundle.game.country) || "",
     round: String(bundle.game.round || 1),
     simulationRules: normalizeString(bundle.world.simulationRules) || "No extra simulation rules were provided.",
     startDate: bundle.game.startDate || "",

@@ -52,7 +52,7 @@
         "@type": "HowToStep",
         "position": "2",
         "name": "Start the server",
-        "text": "Run 'node server/server.js' to start the Express server on port 3000 (configurable via PORT environment variable)."
+        "text": "Run 'node server/server.js' to start the Express server on port 3000; use OH_HOST and a shared API key for LAN play."
       },
       {
         "@type": "HowToStep",
@@ -146,11 +146,13 @@
       <p>Connecting an AI backend for diplomacy and events requires a local LLM (see the <a href="/ai-setup/">AI setup guide</a>), but the game is fully playable without AI as a pure strategy sandbox with the map editor and scenario system.</p>
     </div>
 
-    <h2>CORS Configuration</h2>
+    <h2>Private LAN Access</h2>
     <div class="card">
-      <p>By default, the server only accepts write operations (save, create, delete) from the same origin. If you're connecting from a different device on the network, set the environment variable to allow cross-origin requests:</p>
-      <pre><code>OH_ALLOW_CROSS_ORIGIN=1 node server/server.js</code></pre>
-      <p>This is safe for LAN and private networks. For public internet hosting, consider putting the server behind a reverse proxy like nginx or Caddy.</p>
+      <p>The server listens on this machine only by default. For three trusted players on a LAN or Tailscale, create one long random key, bind explicitly to the network, and give the key to the players:</p>
+      <pre><code>openssl rand -hex 32 &gt; open-historia-server.key
+chmod 600 open-historia-server.key
+OH_HOST=0.0.0.0 OH_SHARED_API_KEY_FILE=$PWD/open-historia-server.key node server/server.js</code></pre>
+      <p>Each browser asks for the key once and sends it as a Bearer header. Never put it in a URL or commit the key file. A non-loopback bind without a key is refused.</p>
     </div>
 
     <h2>Running as a Service</h2>
@@ -168,6 +170,8 @@ WorkingDirectory=/path/to/open-historia
 ExecStart=/usr/bin/node server/server.js
 Restart=on-failure
 Environment=PORT=3000
+Environment=OH_HOST=0.0.0.0
+Environment=OH_SHARED_API_KEY_FILE=/path/to/open-historia-server.key
 
 [Install]
 WantedBy=multi-user.target</code></pre>

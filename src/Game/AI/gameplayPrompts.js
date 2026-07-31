@@ -7,8 +7,13 @@ const PROMPT_ADVISOR_DEFAULT = DEFAULT_PROMPTS.advisor;
 const PROMPT_LEADER_DEFAULT = DEFAULT_PROMPTS.leader;
 
 const PROMPT_TASK_DEFAULTS = DEFAULT_PROMPTS.tasks;
+const FIGURE_BRAIN_PROMPT_DEFAULT = "You are the private strategic brain of ${FIGURE_NAME}, a key historical person in Open Historia. You are not the main narrator and you must not speak for the whole country. This call is allowed only because the orchestrator explicitly activated this person's brainMode=full; people in off/light mode have no private thoughts and must not receive this call. Answer in the figure's own voice, shaped by their personality, role, goals, fears, current thought and achievements. Use only the supplied world state and chat history. You may request resources, propose a research or production step, record a private thought or achievement, and explain what the figure needs next. Never silently change the map or national inventory: return those as structured figureOps, industryOps or reserveOps for the narrator to validate. A cabinet is a physical meeting: do not imply that a foreign or hostile figure is in the same room unless the supplied contact metadata explicitly grants it. The current contact channel is ${FIGURE_MEETING_MODE}; keep physical presence and remote contact distinct. Keep the reply concise but specific and in ${language}.\n\nFigure dossier:\n${FIGURE_DOSSIER}\n\nCouncil history:\n${FIGURE_CHAT_HISTORY}\n\nCurrent military industry:\n${MILITARY_INDUSTRY_SUMMARY}\n\nReturn JSON only: {\"reply\":\"\",\"thought\":\"\",\"achievement\":{\"title\":\"\",\"summary\":\"\"},\"figureOps\":[],\"industryOps\":[],\"reserveOps\":[],\"ledger\":{\"spent\":[],\"produced\":[]}}";
+const PROMPT_TASK_DEFAULTS_WITH_FIGURE = {
+  ...PROMPT_TASK_DEFAULTS,
+  figureBrain: FIGURE_BRAIN_PROMPT_DEFAULT,
+};
 
-export const GAMEPLAY_PROMPT_DEFAULTS = PROMPT_TASK_DEFAULTS;
+export const GAMEPLAY_PROMPT_DEFAULTS = PROMPT_TASK_DEFAULTS_WITH_FIGURE;
 
 export const PROMPT_HELPER_DEFAULTS = DEFAULT_PROMPTS.helpers;
 
@@ -155,6 +160,13 @@ export const PROMPT_SECTION_DEFINITIONS = [
     type: "task",
   },
   {
+    description: "Private replies and continuity updates for a selected key figure.",
+    helpers: ["PLAYER_POLITY", "ORIGIN_ROUND_DATE", "KEY_FIGURES_SUMMARY", "MILITARY_INDUSTRY_SUMMARY"],
+    key: "figureBrain",
+    label: "Key Figure Brain",
+    type: "task",
+  },
+  {
     description: "Compress recent events and chats into continuity-safe summaries.",
     helpers: [
       "PLAYER_POLITY",
@@ -227,7 +239,7 @@ export const PROMPT_SECTION_BY_KEY = Object.fromEntries(
   PROMPT_SECTION_DEFINITIONS.map((section) => [section.key, section]),
 );
 
-export const PROMPT_TASK_KEYS = Object.keys(PROMPT_TASK_DEFAULTS);
+export const PROMPT_TASK_KEYS = Object.keys(PROMPT_TASK_DEFAULTS_WITH_FIGURE);
 
 export const normalizePromptPack = (rawPrompts) => {
   const prompts = rawPrompts && typeof rawPrompts === "object" ? rawPrompts : {};
@@ -246,7 +258,7 @@ export const normalizePromptPack = (rawPrompts) => {
     tasks: Object.fromEntries(
       PROMPT_TASK_KEYS.map((key) => [
         key,
-        normalizeString(prompts[key] ?? tasks[key]) || PROMPT_TASK_DEFAULTS[key],
+        normalizeString(prompts[key] ?? tasks[key]) || PROMPT_TASK_DEFAULTS_WITH_FIGURE[key],
       ]),
     ),
   };

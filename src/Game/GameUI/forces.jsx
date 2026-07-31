@@ -48,6 +48,8 @@ const surface = {
 
 const UnitRow = ({ unit, dimmed, onClick }) => (
   <button
+    type="button"
+    aria-label={`Show ${unit.name} on the map`}
     onClick={onClick}
     style={{
       display: "flex",
@@ -163,6 +165,8 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
         >
           <span>{MODE_HINT[mode.kind] ?? "Select a target"}</span>
           <button
+            type="button"
+            aria-label="Cancel unit interaction mode"
             onClick={() => clearInteractionMode()}
             style={{
               background: "rgba(220,70,70,0.25)",
@@ -184,7 +188,7 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
           style={{
             ...surface,
             position: "fixed",
-            bottom: "4.75rem",
+            bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))",
             left: "0.5rem",
             width: "17rem",
             maxHeight: "60vh",
@@ -197,6 +201,8 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
             <strong style={{ fontSize: "14px" }}>Forces</strong>
             <button
+              type="button"
+              aria-label="Close forces panel"
               onClick={() => setOpen(false)}
               style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: "14px" }}
             >
@@ -237,6 +243,8 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
               style={{ width: "100%", boxSizing: "border-box", background: "rgba(0,0,0,0.3)", color: "white", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "6px", padding: "4px", fontSize: "12px", marginBottom: "6px" }}
             />
             <button
+              type="button"
+              aria-label="Place unit on the map"
               onClick={startDeploy}
               style={{ width: "100%", background: "rgba(59,130,246,0.35)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "6px", color: "white", cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "6px 0" }}
             >

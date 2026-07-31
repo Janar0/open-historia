@@ -54,12 +54,25 @@ import {
   isAllowedHubUrl,
   parseByteRange,
 } from "./security.js";
+import {
+  AUTH_REQUIRED,
+  apiAuthMiddleware,
+  isLoopbackBindHost,
+} from "./auth.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 import { DATA_DIR } from "./dataDir.js";
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = String(process.env.OH_HOST || "127.0.0.1").trim() || "127.0.0.1";
 const distDir = path.join(__dirname, "../dist");
+
+if (!isLoopbackBindHost(HOST) && !AUTH_REQUIRED) {
+  throw new Error(
+    `Refusing to bind the game server to ${HOST} without authentication. ` +
+    "Set OH_SHARED_API_KEY_FILE (recommended) or OH_SHARED_API_KEY first.",
+  );
+}
 
 const jsonParser = express.json({ limit: "64mb" });
 const largeJsonParser = express.json({ limit: "2048mb" });
@@ -67,13 +80,12 @@ const uploadParser = express.raw({ type: () => true, limit: "2048mb" });
 
 // The Android app's connect screen lives on the WebView's own origin, so its
 // probe of this server is a cross-origin request — without these headers the
-// phone blocks it (CORS) and the app can never connect. This is a personal
-// game server whose whole API is open to whoever can reach it, so a blanket
-// allow changes nothing security-wise.
+// phone blocks it (CORS) and the app can never connect. CORS remains broad for
+// native clients; it is not used as authentication.
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   // PMTiles range reads are cross-origin from the phone shell. Range is
   // CORS-safelisted so 206s work, but pmtiles' recovery path for a very small
   // archive reads Content-Range off a 416 — and a non-exposed header reads as
@@ -87,6 +99,11 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// When configured, the shared key protects every API route except the public
+// status probe. Static assets and the SPA stay reachable so a browser can show
+// the access screen before it knows the key.
+app.use(apiAuthMiddleware);
 
 ensureScenarioStore();
 ensureGameStore();
@@ -106,10 +123,11 @@ const sendError = (res, statusCode, error) => {
 // /api/server/shutdown. The app serves its own SPA, so real gameplay writes
 // are same-origin (Origin host === Host). No-Origin writes are trusted only
 // from loopback — a native client on the same machine — so a curl from another
-// host on the LAN can't slip past with no Origin header. Set
-// OH_ALLOW_CROSS_ORIGIN=1 to restore the old fully-open behavior.
+// host on the LAN can't slip past with no Origin header. A valid bearer key is
+// sufficient proof of intent and bypasses this CSRF-only check.
 const ALLOW_CROSS_ORIGIN_WRITES = process.env.OH_ALLOW_CROSS_ORIGIN === "1";
 app.use((req, res, next) => {
+  if (req.apiKeyAuthenticated) return next();
   const decision = crossOriginWriteAllowed({
     method: req.method,
     origin: req.headers.origin,
@@ -123,7 +141,7 @@ app.use((req, res, next) => {
   return sendError(
     res,
     403,
-    new Error("Cross-origin write blocked. Set OH_ALLOW_CROSS_ORIGIN=1 on the server to allow it."),
+    new Error("Cross-origin write blocked. Use the server page or authenticate with its shared API key."),
   );
 });
 
@@ -167,6 +185,11 @@ const readUiSettings = () => {
     return {};
   }
 };
+
+app.get("/api/auth/status", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ required: AUTH_REQUIRED, authenticated: Boolean(req.apiKeyAuthenticated) });
+});
 
 app.get("/api/ui-settings", (_req, res) => {
   res.json(readUiSettings());
@@ -896,15 +919,18 @@ app.get("*splat", (_req, res) => {
   res.sendFile(path.join(distDir, "index.html"));
 });
 
-const httpServer = app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+const httpServer = app.listen(PORT, HOST, () => {
+  console.log(`Server running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
+  if (AUTH_REQUIRED) {
+    console.log("Shared API-key authentication enabled.");
+  }
 });
 
 // A taken port used to crash with a raw EADDRINUSE stack, which the launchers
 // then reported as a bare "Server stopped." — say what actually happened.
 httpServer.on("error", (error) => {
   if (error?.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use — Open Historia is probably already running.`);
+    console.error(`Port ${PORT} on ${HOST} is already in use — Open Historia is probably already running.`);
     console.error("Close the other instance (the ⏻ button in the game stops it), or set the");
     console.error(`PORT environment variable to run this one on a different port.`);
     process.exit(1);

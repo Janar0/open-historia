@@ -731,7 +731,10 @@ const Actions = ({ onOpenAdvisor, hovered, setHovered, isOpen, onToggle }) => {
         )}
         <button
         type="button"
-        title="Actions"
+        title={isOpen ? "Close actions" : "Open actions"}
+        aria-label={isOpen ? "Close actions" : "Open actions"}
+        aria-pressed={isOpen}
+        aria-expanded={isOpen}
         style={{
             alignItems: "center",
             background: isOpen

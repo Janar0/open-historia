@@ -18,6 +18,89 @@ body {
   box-sizing: border-box;
 }
 
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(103, 194, 255, 0.95) !important;
+  outline-offset: 2px !important;
+}
+
+::selection {
+  background: rgba(76, 145, 255, 0.42);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 0.48rem;
+  height: 0.48rem;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(4, 9, 18, 0.42);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(126, 163, 210, 0.28);
+  border: 1px solid rgba(3, 8, 16, 0.8);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(126, 188, 244, 0.48);
+}
+
+.timeline-markdown a,
+.chat-markdown a,
+.advisor-markdown a {
+  color: #9ac8ff;
+  text-decoration-color: rgba(154, 200, 255, 0.45);
+  text-underline-offset: 0.15em;
+}
+
+.timeline-markdown a:hover,
+.chat-markdown a:hover,
+.advisor-markdown a:hover {
+  color: #d2e7ff;
+  text-decoration-color: currentColor;
+}
+
+.actions-composer::placeholder {
+  color: rgba(201, 218, 242, 0.45);
+}
+
+@media (max-width: 640px) {
+  .actions-composer {
+    font-size: 0.88rem !important;
+    min-height: 2.85rem !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .startup-shell {
   position: fixed;
   inset: 0;

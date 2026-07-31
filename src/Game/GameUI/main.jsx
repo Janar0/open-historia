@@ -8,6 +8,8 @@ import { Other } from "./other";
 import { Toolbar } from "./chat";
 import { Search } from "./search";
 import { ForcesPanel } from "./forces";
+import { MarkersPanel } from "./markers";
+import { ReservesPanel } from "./reserves";
 import {
   getStoredProvider,
   loadProviderSettingsFormState,
@@ -33,8 +35,8 @@ const readAdvisorWidth = () => {
 };
 const baseStyle = {
   position: "fixed",
-  backgroundColor: "rgba(17, 24, 39, 0.9)",
-  backdropFilter: "blur(4px)",
+  backgroundColor: "rgba(8, 15, 27, 0.94)",
+  backdropFilter: "blur(10px) saturate(1.15)",
   zIndex: 9999,
   display: "flex",
   alignItems: "center",
@@ -42,9 +44,41 @@ const baseStyle = {
   color: "white",
   fontFamily: "sans-serif",
   borderRadius: "12px",
-  border: "1px solid rgba(255,255,255,0.1)",
-  boxShadow: "0 4px 6px -1px rgba(0,0,0,0.2)",
+  border: "1px solid rgba(148, 163, 184, 0.18)",
+  boxShadow: "0 10px 28px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06)",
 };
+
+const hudChromeStyle = {
+  position: "fixed",
+  left: 0,
+  right: 0,
+  pointerEvents: "none",
+  zIndex: 9990,
+};
+
+const HudChrome = () => (
+  <>
+    <div
+      aria-hidden="true"
+      style={{
+        ...hudChromeStyle,
+        top: 0,
+        height: "5.75rem",
+        background: "linear-gradient(180deg, rgba(2, 6, 14, 0.78), rgba(2, 6, 14, 0.18) 72%, transparent)",
+        borderBottom: "1px solid rgba(148, 163, 184, 0.08)",
+      }}
+    />
+    <div
+      aria-hidden="true"
+      style={{
+        ...hudChromeStyle,
+        bottom: 0,
+        height: "5.5rem",
+        background: "linear-gradient(0deg, rgba(2, 6, 14, 0.64), transparent 76%)",
+      }}
+    />
+  </>
+);
 const LazyAdvisorPanel = lazy(() =>
   import("./advisor").then((module) => ({ default: module.AdvisorPanel })),
 );
@@ -66,6 +100,9 @@ const checkWebGL = () => {
 
 const WebGLWarningPopup = () => (
   <div
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="webgl-warning-title"
     style={{
       position: "fixed",
       inset: 0,
@@ -100,7 +137,7 @@ const WebGLWarningPopup = () => (
       >
         ⚠️
       </div>
-      <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.3rem", color: "#e94560" }}>
+      <h2 id="webgl-warning-title" style={{ margin: "0 0 0.75rem", fontSize: "1.3rem", color: "#e94560" }}>
         WebGL Not Available
       </h2>
       <p style={{ margin: "0 0 0.5rem", lineHeight: 1.6, color: "#ccc", fontSize: "0.95rem" }}>
@@ -116,13 +153,22 @@ const WebGLWarningPopup = () => (
 );
 
 const AdvisorButton = ({ isAdvisorOpen, rightShift, onToggle }) => (
-  <button onClick={onToggle} style={{
+  <button
+    type="button"
+    aria-label={isAdvisorOpen ? "Close strategic advisor" : "Open strategic advisor"}
+    aria-pressed={isAdvisorOpen}
+    title={isAdvisorOpen ? "Close strategic advisor" : "Open strategic advisor"}
+    onClick={onToggle}
+    style={{
     ...baseStyle,
-    bottom: "0.5rem", right: rightShift,
+    bottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))", right: rightShift,
     height: "4rem", width: "4rem",
     cursor: "pointer", fontSize: "1.5rem",
     transition: "right 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
-  }}>🧭</button>
+  }}
+  >
+    <span aria-hidden="true">🧭</span>
+  </button>
 );
 
 const Main = ({
@@ -137,7 +183,6 @@ const Main = ({
   const [shouldLoadCheats, setShouldLoadCheats] = useState(false);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [advisorWidth, setAdvisorWidth] = useState(readAdvisorWidth);
-  const [isForcesOpen, setIsForcesOpen] = useState(false);
   const [activeBottomPanel, setActiveBottomPanel] = useState(null);
   const [shouldLoadAdvisor, setShouldLoadAdvisor] = useState(false);
   const [isFullscreenEnabled, setIsFullscreenEnabled] = useState(false);
@@ -259,28 +304,42 @@ const Main = ({
 
   return (
     <>
+      <HudChrome />
       {showWebGLWarning && <WebGLWarningPopup />}
-      <LibraryTopBar />
-      <DateWidget
-        activePanel={activeBottomPanel}
-        mapRef={mapRef}
-        onSetPanel={setActiveBottomPanel}
-        onTogglePanel={toggleBottomPanel}
-        rightShift={rightShift}
-        topOffset={TOP_BAR_OFFSET}
-      />
-      <Toolbar
-        onOpenAdvisor={openAdvisor}
-        activePanel={activeBottomPanel}
-        onTogglePanel={toggleBottomPanel}
-      />
+      <div role="group" aria-label="Game navigation and timeline" style={{ display: "contents" }}>
+        <LibraryTopBar />
+        <DateWidget
+          activePanel={activeBottomPanel}
+          mapRef={mapRef}
+          onSetPanel={setActiveBottomPanel}
+          onTogglePanel={toggleBottomPanel}
+          rightShift={rightShift}
+          topOffset={TOP_BAR_OFFSET}
+        />
+      </div>
+      <div role="group" aria-label="Game actions" style={{ display: "contents" }}>
+        <Toolbar
+          onOpenAdvisor={openAdvisor}
+          activePanel={activeBottomPanel}
+          onTogglePanel={toggleBottomPanel}
+        />
+      </div>
       <Other rightShift={rightShift} />
       <Search mapRef={mapRef} />
       <ForcesPanel
         mapRef={mapRef}
         topOffset={TOP_BAR_OFFSET}
-        open={isForcesOpen}
-        onToggle={() => setIsForcesOpen((v) => !v)}
+        open={activeBottomPanel === "forces"}
+        onToggle={() => toggleBottomPanel("forces")}
+      />
+      <MarkersPanel
+        mapRef={mapRef}
+        open={activeBottomPanel === "markers"}
+        onToggle={() => toggleBottomPanel("markers")}
+      />
+      <ReservesPanel
+        open={activeBottomPanel === "reserves"}
+        onToggle={() => toggleBottomPanel("reserves")}
       />
       <AdvisorButton
         isAdvisorOpen={isAdvisorOpen}
@@ -294,11 +353,12 @@ const Main = ({
       </Suspense>
       <Suspense fallback={null}>
         {shouldLoadCheats && (
-          <LazyCheatsPanel open={isCheatsOpen} onClose={() => setIsCheatsOpen(false)} onOpenForces={() => { setIsCheatsOpen(false); setIsForcesOpen(true); }} />
+          <LazyCheatsPanel open={isCheatsOpen} onClose={() => setIsCheatsOpen(false)} onOpenForces={() => { setIsCheatsOpen(false); setActiveBottomPanel("forces"); }} />
         )}
       </Suspense>
       <SettingsButton
         topOffset={TOP_BAR_OFFSET}
+        isOpen={isSettingsOpen}
         onToggle={() => setIsSettingsOpen(!isSettingsOpen)}
       />
       {isSettingsOpen && (

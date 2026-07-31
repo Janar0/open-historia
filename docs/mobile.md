@@ -26,7 +26,7 @@ It can still be pointed at a remote/LAN/Termux server on purpose — the embedde
   (~200 MB pmtiles/geojson)                     (pax-historia.apk + Build:N notes)
 ```
 
-The WebView and the server share the **same origin** (`http://127.0.0.1:3000`). That loopback bind + same-origin is the entire security model — no cross-origin writes are possible, so the server keeps its normal (unauthenticated, single-user) behavior. See [World state](world-state.md) for what the server actually serves once the WebView is inside it.
+The WebView and the server share the **same origin** (`http://127.0.0.1:3000`). The embedded server keeps the safe loopback default, so it normally needs no key; when the same server code is exposed to a LAN or remote players, set `OH_HOST` plus `OH_SHARED_API_KEY_FILE` and the client shows the shared access screen. See [World state](world-state.md) for what the server actually serves once the WebView is inside it.
 
 ### Committed vs. assembled
 

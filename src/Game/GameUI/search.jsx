@@ -4,6 +4,7 @@ import { useIsMobile } from "../../runtime/useIsMobile.js";
 
 const SEARCH_HEADERS = { "Accept-Language": "en, *;q=0.5" };
 const SEARCH_RESULT_CACHE = new Map();
+const SEARCH_RESULTS_ID = "open-historia-search-results";
 
 const formatSuggestion = (suggestion) => {
   const address = suggestion.address || {};
@@ -268,6 +269,10 @@ const Search = memo(({ mapRef }) => {
   };
 
   const hasSuggestions = expanded && suggestions.length > 0;
+  const activeSuggestionId =
+    selectedIndex >= 0 && suggestions[selectedIndex]
+      ? `search-result-${suggestions[selectedIndex].place_id}`
+      : undefined;
 
   return (
     <div
@@ -276,7 +281,9 @@ const Search = memo(({ mapRef }) => {
         // Desktop: sits right of the bottom toolbar and expands rightward.
         // Phones: the expanded box wouldn't fit there, so it opens as a
         // full-width bar just above the toolbar instead.
-        bottom: expanded && isMobile ? "5rem" : "1rem",
+        bottom: expanded && isMobile
+          ? "calc(5rem + env(safe-area-inset-bottom, 0px))"
+          : "calc(1rem + env(safe-area-inset-bottom, 0px))",
         // Clear of the bottom toolbar (0.5rem + 8.75rem wide).
         left: expanded && isMobile ? "0.5rem" : "9.75rem",
         height: "3rem",
@@ -307,7 +314,9 @@ const Search = memo(({ mapRef }) => {
         }}
       >
         <button
+          type="button"
           onClick={expanded ? close : undefined}
+          aria-label={expanded ? "Close place search" : "Open place search"}
           style={{
             background: "none",
             border: "none",
@@ -322,7 +331,7 @@ const Search = memo(({ mapRef }) => {
             color: status === "error" ? "#f87171" : "rgba(255,255,255,0.8)",
             transition: "color 0.2s",
           }}
-          title={expanded ? "Close" : "Search place"}
+          title={expanded ? "Close place search" : "Search for a place"}
         >
           {status === "loading" ? (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -353,6 +362,8 @@ const Search = memo(({ mapRef }) => {
 
         <input
           ref={inputRef}
+          type="search"
+          role="combobox"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -360,6 +371,11 @@ const Search = memo(({ mapRef }) => {
           }}
           onKeyDown={handleKeyDown}
           placeholder={status === "error" ? "Place not found..." : "Search place..."}
+          aria-label="Search for a place"
+          aria-expanded={hasSuggestions}
+          aria-controls={SEARCH_RESULTS_ID}
+          aria-autocomplete="list"
+          aria-activedescendant={activeSuggestionId}
           style={{
             background: "none",
             border: "none",
@@ -376,7 +392,9 @@ const Search = memo(({ mapRef }) => {
 
         {expanded && (
           <button
+            type="button"
             onClick={commit}
+            aria-label="Search for the entered place"
             style={{
               background: "none",
               border: "none",
@@ -389,7 +407,7 @@ const Search = memo(({ mapRef }) => {
               flexShrink: 0,
               transition: "color 0.2s",
             }}
-            title="Go"
+            title="Search for place"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="5" y1="12" x2="19" y2="12" />
@@ -401,6 +419,9 @@ const Search = memo(({ mapRef }) => {
 
       {hasSuggestions && (
         <div
+          id={SEARCH_RESULTS_ID}
+          role="listbox"
+          aria-label="Place search results"
           style={{
             position: "absolute",
             bottom: "calc(3rem - 1px)",
@@ -421,6 +442,11 @@ const Search = memo(({ mapRef }) => {
             return (
               <div
                 key={suggestion.place_id}
+                id={`search-result-${suggestion.place_id}`}
+                role="option"
+                aria-selected={index === selectedIndex}
+                aria-label={`${primary}${region ? `, ${region}` : ""}`}
+                title={`${primary}${region ? `, ${region}` : ""}`}
                 onMouseDown={(event) => {
                   event.preventDefault();
                   flyToResult(suggestion);
@@ -434,6 +460,10 @@ const Search = memo(({ mapRef }) => {
                   gap: "0.55rem",
                   backgroundColor:
                     index === selectedIndex ? "rgba(255,255,255,0.08)" : "transparent",
+                  boxShadow:
+                    index === selectedIndex
+                      ? "inset 2px 0 0 rgba(125, 211, 252, 0.9)"
+                      : "inset 2px 0 0 transparent",
                   borderBottom:
                     index < suggestions.length - 1
                       ? "1px solid rgba(255,255,255,0.05)"

@@ -10,6 +10,7 @@ export const MAP_SETTING_KEYS = {
     hideCountryLabels: "map_hide_country_labels",
     disableIdleRotation: "map_disable_idle_rotation",
     disableEventCamera: "map_disable_event_camera",
+    showRoads: "map_show_detailed_roads",
     // Not a map setting, but the same localStorage-toggle mechanism: when ON,
     // timeline-jump generation gets a 5-minute deadline and falls back to
     // canned events past it. OFF (the default) waits as long as the model

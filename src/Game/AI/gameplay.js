@@ -22,12 +22,21 @@ import {
 } from "../../runtime/assets.js";
 import {
   applyEventImpactsToWorld,
+  applyKeyFigureOps,
+  applyMilitaryIndustryOps,
+  applyReserveOps,
   normalizeActionEntry,
   normalizeActions,
   normalizeChatEntry,
   normalizeChats,
   normalizeEvents,
+  normalizeKeyFigureOps,
+  normalizeMilitaryIndustryOps,
+  normalizeKeyFigures,
   normalizeGameData,
+  normalizeReserveOps,
+  normalizeSectorOp,
+  normalizeTerritoryOps,
   normalizeWorldState,
   readActionsState,
   readChatsState,
@@ -44,6 +53,7 @@ import {
 import { dedupeGeneratedEvents } from "../../runtime/eventDedup.js";
 import { difficultyDirective } from "../../runtime/difficulty.js";
 import { MAP_SETTING_KEYS, getMapSetting } from "../../runtime/mapSettings.js";
+import { evaluateFigureMeeting, normalizeMeetingMode } from "./figureRules.js";
 
 const CHAT_HINT_PATTERNS = [
   /\bchat\b/i,
@@ -387,6 +397,24 @@ const buildTemplateVariables = async (bundle, options = {}) => {
 // time so it reaches existing frozen-prompt games too.
 const ACTIONS_REFERENCE = "[Actions You Can Take]\nThis is the full menu of levers you have to change the world. Everything you change rides on an event's \"impacts\" object, except the two whole-jump levers noted at the end. Reach for the RIGHT lever, and NEVER narrate a change in an event's text without also emitting the impact that makes it real — narration and world state must always agree.\n\n• regionTransfers — Move a region to a new owner. This is the most important lever and the one most often forgotten: use it for every conquest, cession, sale, liberation, annexation, or hand-over, one entry per region. Shape: {\"regionId\":\"<exact id, or the plain region name if you don't know the id>\",\"regionName\":\"\",\"fromCode\":\"\",\"toCode\":\"<new owner code>\"}. An event whose text says land changed hands but that carries no regionTransfers is invalid output and silently breaks the map. Transfer in order of proximity to the attacker's territory; never hand over an isolated region ringed by enemy land without a naval or airborne reason.\n\n• polityChanges — Create, rename, recolor, or re-describe a polity. One entry can do any combination: {\"code\":\"<polity code>\",\"name\":\"<new name, only if it changed>\",\"color\":\"#RRGGBB (only if it changed)\",\"aliases\":[\"...\"],\"reputation\":0-100,\"tags\":[\"...\"],\"stats\":{...},\"note\":\"<why>\"}. Create a polity by giving a new code with a name and color. Change name/color ONLY on a regime change (never for a mere new leader). On an ideological or alignment shift, rewrite the COMPLETE tags list (it is a full replacement, not a delta). Set reputation (0 = pariah, 100 = universally trusted) only when this turn's events actually moved a polity's standing. A country's national statistics move ONLY through \"stats\" here — send just the fields that changed; everything omitted keeps its prior value. That includes WHO LEADS: when a leader is overthrown, assassinated, dies, resigns or is voted out, put the successor's name in stats.leader (together with stats.government and stats.stability when those moved too). An event that narrates a leader falling but leaves stats.leader untouched leaves the OLD name standing on that country's stat sheet, so the story and the sheet disagree.\n\n• unitOps — Move the war on the map with battalions. Four ops:\n    {\"op\":\"spawn\",\"unit\":{\"name\":\"\",\"type\":\"infantry|armor|air|naval|artillery|garrison\",\"ownerCode\":\"\",\"strength\":1-1000,\"lng\":0,\"lat\":0,\"regionId\":\"\"}}\n    {\"op\":\"move\",\"unitId\":\"<existing id>\",\"toLng\":0,\"toLat\":0,\"regionId\":\"\",\"note\":\"\"}\n    {\"op\":\"strength\",\"unitId\":\"<existing id>\",\"strength\":0-1000,\"note\":\"\"}\n    {\"op\":\"remove\",\"unitId\":\"<existing id>\",\"note\":\"\"}\n  Spawn units for mobilizations and reinforcements, move them to reflect offensives, lower their strength as they take losses, and remove them only when destroyed or disbanded. Only reference unit ids that appear in the current-units list. When a front is decisively won, pair the advance with a regionTransfers entry so the border follows the troops.\n\n• markerOps — Place, remove, or rename a named structure or city. Three ops:\n    {\"op\":\"build\",\"marker\":{\"name\":\"\",\"kind\":\"<lowercase, e.g. military base / port / embassy / airfield / city>\",\"ownerCode\":\"\",\"lng\":0,\"lat\":0,\"note\":\"\",\"foundedAt\":\"\"}}\n    {\"op\":\"remove\",\"name\":\"<exact existing name>\",\"note\":\"\"}\n    {\"op\":\"rename\",\"name\":\"<current name>\",\"newName\":\"<new name>\",\"note\":\"<why>\"}\n  Emit build whenever an event founds or constructs a place, remove when one is destroyed, and rename when a city or structure is renamed (rename works on existing map cities too — a city renamed after a leader or ideology, a capital re-designated, a conquered city given the conqueror's name). Structures NEVER move borders: a facility one polity builds inside another's land does not transfer the region, and ownerCode is who runs the facility, not who owns the ground.\n\n• createdChats — Have another polity open a diplomatic chat with the player BECAUSE of this event (a war scare prompting mediation, a border incident prompting an ultimatum, a windfall prompting a trade delegation). Shape: {\"countries\":[\"...\"],\"title\":\"<names the purpose>\",\"speaker\":\"<the initiating polity — never the player>\",\"openingMessage\":\"<that leader's first message, in their voice>\"}. The other side always speaks first; a blank or untitled chat is invalid.\n\n• actionIds — List the ids of the player's queued actions that this event resolves, so the game can clear them from the queue.\n\nWhole-jump levers (top level of your output, NOT inside an event):\n• diplomaticOutreach — Polities reaching out to the player on their OWN initiative this period — treaty feelers, trade proposals, non-aggression pacts, mediation offers, warnings, summit invitations — not tied to any single event. Same shape as createdChats. Open one whenever a polity plausibly would, rather than defaulting to none.\n• catalyst — An interactive branching scene handed to the player when a moment genuinely demands their decision, or null when none is warranted. Shape: {\"title\":\"\",\"premise\":\"\",\"opening\":\"\",\"choices\":[\"...\", \"...\", up to 5 distinct]}.\n\nKeep the total across createdChats and diplomaticOutreach to at most 3 per jump, and only when the approach genuinely serves the sender's interests.";
 
+const MARKERS_AND_RESERVES_REFERENCE = `[Player Map Markers and Military Reserves]
+Player-placed map markers appear in the marker list with source "player" and status "pending". When the marker's coordinates and context identify a real place, use impacts.markerOps with {"op":"update","markerId":"<id>","name":"<current name>","newName":"<informed name>","kind":"objective|city|front|supply depot|base","status":"identified","note":"<description>"}. Operate on the existing marker instead of creating a duplicate nearby. Keep its coordinates unchanged unless the player explicitly moves it.
+Military reserve sheets appear in the current military reserves context. Use impacts.reserveOps to send absolute updated values when mobilisation, casualties, production, resupply, fuel use, or shortages materially change a polity's manpower, equipment, munitions, fuel, supplies, or maintenance. Missing data means unknown, not zero.
+`;
+
+const FIGURES_AND_INDUSTRY_REFERENCE = `[Key Figures, Brain Budget and Plausible Contact]
+Key figures are persistent named people, not countries or map units. Use impacts.keyFigureOps for consequential appointments, assignments, achievements, deaths or changes in a person's status. Keep the factual cast broad if useful, but keep most people at brainMode "off". "off" is a compact record with no private thoughts or separate model call; "light" stores only a small motive/goal dossier; "full" is reserved for roughly the current crisis, command, research, production, negotiation or council. Keep no more than about 8 full brains active at once and downgrade stale figures back to light or off. Never give every general, minister or foreign leader a personality by default. brainEnabled is a legacy alias: explicit brainMode wins.
+Use meetingAccess and meetingModes as hard contact metadata decided from the current timeline. A cabinet means a physical shared room and requires the date, liveness, location and access to make sense. The default for a newly recorded figure is secure-channel or correspondence only. Before allowing a physical meeting, the Game Master must explicitly update the relevant figures with the cabinet mode and, for a cross-polity meeting, meetingAccess "granted". If the timeline no longer supports an already-open cabinet, remove cabinet from meetingModes and set meetingAccess to "restricted" or "impossible"; the runtime will stop the physical chat and leave remote channels available when permitted. If the timeline does not support a shared room, keep cabinet absent and use emissaries, letters, radio or another secure channel. Never add a person-name exception or infer physical access merely because a player requested a conversation; alternate history can grant or remove access through ordinary keyFigureOps updates.
+Use impacts.militaryIndustryOps with section "arsenal" for unlocked weapons and stocks, "research" for projects, "production" for active lines, and "ledger" for dated signed records. A breakthrough must upsert an arsenal item. Production and expenditure must append ledger records. Example: {"op":"upsert","section":"arsenal","entry":{"id":"f1m","name":"F-1M rocket","ownerCode":"Germany","category":"rocket","quantity":6}} and {"op":"append","section":"ledger","entry":{"id":"ledger-01","name":"F-1M production","ownerCode":"Germany","itemId":"f1m","kind":"production","delta":6,"date":"YYYY-MM-DD","note":"6 units produced this turn"}}. For costs append a negative ledger delta and write the concrete block in note: "spent 5 F-1 rockets, 500 soldiers and 30 tanks"; pair this with reserveOps when a reserve sheet exists. Missing inventory is unknown, not zero.
+`;
+
+const TACTICAL_SECTORS_REFERENCE = `[Tactical Sectors and Prolonged Battles]
+The map has a fine-grained tactical layer below administrative regions. Use impacts.sectorOps for partial control inside a region, never regionTransfers, when a force holds a city, suburb, road, bridgehead, or other local patch while the rest of the region remains with its existing owner. The parent shape is {"op":"upsert","sector":{"id":"stable-id","regionId":"exact region id or name","name":"local sector","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-80,"status":"assault|contested|encircled|held|withdrawn|destroyed","battleId":"stable-battle-id","startedAt":"date","updatedAt":"date","note":"","cells":[{"id":"stable-cell-id","name":"optional village or approach","parentCellId":"optional-parent-when-splitting","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20,"status":"contested","note":""}],"cellOps":[{"op":"upsert","cell":{"id":"child-cell-id","parentCellId":"stable-cell-id","ownerCode":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20}},{"op":"remove","id":"old-cell-id"}]}} and {"op":"remove","id":"sector-id"}.
+   Keep the same sector id, battleId, and cell ids across jumps. For an HOI-style front, use a 3x3 grid by default. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole grid changes; use cellOps when only one approach changes, when a few cells are captured, or when one cell is split. Updating only the parent sector preserves the existing cell hierarchy. The engine creates a stable 3x3 tactical grid for old sectors that have no cells, so those generated ids are also valid to update. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several named sectors when the battle has separate approaches or supply routes. Never invent a regionTransfer for a cell.`;
+
+const TERRITORY_FRAGMENT_REFERENCE = `[Cell-backed Territory Splits]
+The administrative map region is still the parent anchor. To cut out only part of it, first ensure the relevant sector has the required leaf cells, then emit impacts.territoryOps with a stable id and exact cellRefs in the form sectorId:cellId. Example: {"op":"create","fragment":{"id":"bakhmut-pocket-01","name":"Bakhmut Pocket","parentRegionId":"<exact map region>","ownerCode":"<FULL country name>","cellRefs":["battle-sector-01:cell-03","battle-sector-01:cell-06"],"kind":"subregion|autonomy|occupation|secession|new-state","status":"active","note":"..."}}. Use leaf cells only; a fragment cannot reference an abstract parent cell. This creates a named subregion/pocket without transferring the whole parent region. For a genuinely new country, pair the fragment with impacts.polityChanges containing a new polity code, name, and color, then set the fragment ownerCode to that new full polity name. For a province or autonomous area inside another country, keep ownerCode as the controlling country. Dissolve it with {"op":"remove","id":"..."}. Do not use territoryOps as a substitute for a complete regionTransfer.`;
+
 const runJsonTask = async (taskKey, {
   fallback,
   signal,
@@ -439,6 +467,13 @@ const runJsonTask = async (taskKey, {
     systemPrompt = `${systemPrompt}\n\n[Place Renaming]\nYou may rename places when the story warrants it (a city renamed after a leader or ideology, a capital re-designated, a colonial name replaced, a conquered city given the conqueror's name). Emit an impacts.markerOps entry {"op":"rename","name":"<current name>","newName":"<new name>","note":"<why>"}. This works on structures you built AND on existing map cities. Do it sparingly and only when a real event motivates it.`;
   }
 
+  // Tactical sectors are injected at call time so existing frozen campaigns get
+  // the partial-control and prolonged-battle rules too.
+  if (["jumpForward", "autoJumpForward", "gameMaster"].includes(taskKey)) {
+    systemPrompt = `${systemPrompt}\n\n${TACTICAL_SECTORS_REFERENCE}\n\nCurrent tactical sectors and prolonged battles:\n${variables.controlSectorsSummary || "No tactical sectors are currently recorded."}`;
+    systemPrompt = `${systemPrompt}\n\n${TERRITORY_FRAGMENT_REFERENCE}\n\nCurrent named territory fragments:\n${variables.territoryFragmentsSummary || "No named territory fragments are currently recorded."}`;
+  }
+
   // Reputation context: how the world currently regards the player, and how the
   // model should let it bias behaviour and evolve it via polityChanges.
   // Territory is owned by REGIONS, but the model kept naming CITIES in regionTransfers
@@ -473,7 +508,13 @@ const runJsonTask = async (taskKey, {
   // The actions menu goes last so the system prompt for every jump ends with the full
   // list of levers the model can pull (reaches existing games too — see ACTIONS_REFERENCE).
   if (["jumpForward", "autoJumpForward"].includes(taskKey)) {
-    systemPrompt = `${systemPrompt}\n\n${ACTIONS_REFERENCE}`;
+    systemPrompt = `${systemPrompt}\n\n${ACTIONS_REFERENCE}\n\n${MARKERS_AND_RESERVES_REFERENCE}\n\nCurrent player and AI map markers:\n${variables.markersSummary || "No map markers are currently recorded."}\n\nCurrent military reserve sheets:\n${variables.militaryReservesSummary || "No military reserve sheets are currently reported."}`;
+  }
+  if (taskKey === "gameMaster") {
+    systemPrompt = `${systemPrompt}\n\n${MARKERS_AND_RESERVES_REFERENCE}\n\nCurrent player and AI map markers:\n${variables.markersSummary || "No map markers are currently recorded."}\n\nCurrent military reserve sheets:\n${variables.militaryReservesSummary || "No military reserve sheets are currently reported."}`;
+  }
+  if (["jumpForward", "autoJumpForward", "gameMaster"].includes(taskKey)) {
+    systemPrompt = `${systemPrompt}\n\n${FIGURES_AND_INDUSTRY_REFERENCE}\nCurrent key figures:\n${variables.keyFiguresSummary || "No key figures are currently recorded."}\nCurrent military industry:\n${variables.militaryIndustrySummary || "No military-industry records are currently recorded."}`;
   }
 
   const controller = new AbortController();
@@ -817,14 +858,18 @@ const fallbackNextSpeaker = ({ chat, excludedSpeaker }) => {
   }
 
   const lastMessage = normalizedChat.messages.at(-1);
-  const mentionedSpeaker = pickMentionedSpeaker(lastMessage?.text, normalizedChat.countries, excludedSpeaker);
+  const participants = [
+    ...normalizeArray(normalizedChat.countries),
+    ...normalizeArray(normalizedChat.figures),
+  ];
+  const mentionedSpeaker = pickMentionedSpeaker(lastMessage?.text, participants, excludedSpeaker);
   if (mentionedSpeaker) {
     return { nextSpeaker: mentionedSpeaker.name };
   }
 
   const fallbackCountry =
-    normalizedChat.countries.find((country) => country.name !== excludedSpeaker) ??
-    normalizedChat.countries[0] ??
+    participants.find((country) => country.name !== excludedSpeaker) ??
+    participants[0] ??
     { name: "" };
 
   return {
@@ -1065,6 +1110,247 @@ const resolveRegionTransfers = async (containers, world) => {
   return unresolved;
 };
 
+// Sector coordinates and owner strings are normalized locally first, then the
+// region/owner identities are checked against the active map/catalog. Invalid
+// sectors are dropped during salvage instead of poisoning world.controlSectors;
+// on the first attempt a concise reason gives the model a chance to correct it.
+const resolveControlSectorOps = async (containers, world) => {
+  const catalog = await loadRegionCatalog().catch(() => []);
+  const worldState = normalizeWorldState(world);
+  const byId = new Map(catalog.map((region) => [normalizeString(region.id), region]));
+  const byName = new Map();
+  for (const region of catalog) {
+    const key = regionKey(region.name);
+    if (!key) continue;
+    const bucket = byName.get(key) || [];
+    bucket.push(region);
+    byName.set(key, bucket);
+  }
+
+  const knownOwners = new Map();
+  const addOwner = (value, canonical = value) => {
+    const rawKey = regionKey(value);
+    const canonicalName = toCountryName(normalizeString(canonical));
+    if (rawKey && canonicalName) knownOwners.set(rawKey, canonicalName);
+    if (canonicalName) knownOwners.set(regionKey(canonicalName), canonicalName);
+  };
+  for (const country of await loadCountryNames().catch(() => [])) {
+    addOwner(country?.code, country?.name || country?.code);
+    addOwner(country?.name, country?.name || country?.code);
+  }
+  for (const region of catalog) {
+    addOwner(region.countryCode, region.country || region.countryCode);
+    addOwner(region.country, region.country || region.countryCode);
+  }
+  for (const [code, entry] of Object.entries(worldState.polityOverrides || {})) {
+    addOwner(code, entry?.name || code);
+    addOwner(entry?.name, entry?.name || code);
+    for (const alias of entry?.aliases || []) addOwner(alias, entry?.name || code);
+  }
+  Object.values(worldState.regionOwnershipOverrides || {}).forEach((owner) => addOwner(owner));
+  worldState.units.forEach((unit) => addOwner(unit.ownerCode));
+
+  const resolveOwner = (value) => {
+    const key = regionKey(value);
+    return knownOwners.get(key) || (knownOwners.size === 0 ? toCountryName(normalizeString(value)) : "");
+  };
+  const resolveRegion = (value) => {
+    const raw = normalizeString(value);
+    if (!raw || catalog.length === 0) return raw;
+    if (byId.has(raw)) return raw;
+    const matches = byName.get(regionKey(raw)) || [];
+    return matches.length === 1 ? matches[0].id : "";
+  };
+
+  const dropped = [];
+  for (const { impacts, path } of containers) {
+    if (!impacts || !Array.isArray(impacts.sectorOps)) continue;
+    const kept = [];
+    for (let index = 0; index < impacts.sectorOps.length; index += 1) {
+      const operation = normalizeSectorOp(impacts.sectorOps[index]);
+      if (!operation) continue;
+      if (operation.op === "remove") {
+        kept.push(operation);
+        continue;
+      }
+
+      const sector = operation.sector;
+      const regionId = resolveRegion(sector.regionId);
+      if (!regionId) {
+        dropped.push({ path: `${path}.sectorOps[${index}]`, reason: `region "${sector.regionId}" is not in the active map` });
+        continue;
+      }
+      const ownerCode = resolveOwner(sector.ownerCode);
+      if (!ownerCode) {
+        dropped.push({ path: `${path}.sectorOps[${index}]`, reason: `owner "${sector.ownerCode}" is not a known polity` });
+        continue;
+      }
+      const contestedValues = Array.isArray(sector.contestedBy)
+        ? sector.contestedBy
+        : sector.contestedBy ? [sector.contestedBy] : [];
+      const contestedBy = contestedValues.map(resolveOwner).filter(Boolean)
+        .filter((value, valueIndex, values) => values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === valueIndex)
+        .filter((value) => value.toLowerCase() !== ownerCode.toLowerCase());
+      const cells = (sector.cells || []).map((cell) => {
+        const cellOwnerCode = resolveOwner(cell.ownerCode) || ownerCode;
+        const cellContestedValues = Array.isArray(cell.contestedBy)
+          ? cell.contestedBy
+          : cell.contestedBy ? [cell.contestedBy] : [];
+        const cellContestedBy = cellContestedValues.map(resolveOwner).filter(Boolean)
+          .filter((value, valueIndex, values) => values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === valueIndex)
+          .filter((value) => value.toLowerCase() !== cellOwnerCode.toLowerCase());
+        return {
+          ...cell,
+          ownerCode: cellOwnerCode,
+          ...(cellContestedBy.length > 0
+            ? { contestedBy: cellContestedBy.length === 1 ? cellContestedBy[0] : cellContestedBy }
+            : { contestedBy: undefined }),
+        };
+      });
+      const cellOps = (operation.cellOps || []).map((cellOp) => {
+        if (cellOp.op === "remove") return cellOp;
+        const cell = cellOp.cell;
+        const cellOwnerCode = resolveOwner(cell.ownerCode) || ownerCode;
+        const cellContestedValues = Array.isArray(cell.contestedBy)
+          ? cell.contestedBy
+          : cell.contestedBy ? [cell.contestedBy] : [];
+        const cellContestedBy = cellContestedValues.map(resolveOwner).filter(Boolean)
+          .filter((value, valueIndex, values) => values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === valueIndex)
+          .filter((value) => value.toLowerCase() !== cellOwnerCode.toLowerCase());
+        return {
+          op: "upsert",
+          cell: {
+            ...cell,
+            ownerCode: cellOwnerCode,
+            ...(cellContestedBy.length > 0
+              ? { contestedBy: cellContestedBy.length === 1 ? cellContestedBy[0] : cellContestedBy }
+              : { contestedBy: undefined }),
+          },
+        };
+      });
+      kept.push({
+        op: "upsert",
+        sector: {
+          ...sector,
+          regionId,
+          ownerCode,
+          ...(contestedBy.length > 0 ? { contestedBy: contestedBy.length === 1 ? contestedBy[0] : contestedBy } : { contestedBy: undefined }),
+          cells,
+        },
+        ...(cellOps.length > 0 ? { cellOps } : {}),
+      });
+    }
+    impacts.sectorOps = kept;
+  }
+  return dropped;
+};
+
+// A territory fragment is deliberately cell-backed. Resolve its parent region and
+// reject references to missing or non-leaf cells before the event reaches storage;
+// this keeps the AI's new-state operation deterministic and prevents invisible
+// "subregions" that have no geometry on the map.
+const resolveTerritoryOps = async (containers, world) => {
+  const catalog = await loadRegionCatalog().catch(() => []);
+  const byId = new Map(catalog.map((region) => [normalizeString(region.id), region]));
+  const byName = new Map();
+  for (const region of catalog) {
+    const key = regionKey(region.name);
+    if (!key) continue;
+    const bucket = byName.get(key) || [];
+    bucket.push(region);
+    byName.set(key, bucket);
+  }
+  const resolveRegion = (value) => {
+    const raw = normalizeString(value);
+    if (catalog.length === 0) return raw;
+    if (byId.has(raw)) return raw;
+    const matches = byName.get(regionKey(raw)) || [];
+    return matches.length === 1 ? matches[0].id : "";
+  };
+  const sectorCellMaps = new Map();
+  const addSectorCells = (sectorId, cells, cellOps = []) => {
+    const allCells = sectorCellMaps.get(sectorId) || new Map();
+    for (const cell of cells || []) {
+      if (cell?.id) allCells.set(normalizeString(cell.id), cell);
+    }
+    for (const operation of cellOps || []) {
+      if (operation?.op === "upsert" && operation.cell?.id) allCells.set(operation.cell.id, operation.cell);
+      if (operation?.op === "remove") allCells.delete(operation.id);
+    }
+    sectorCellMaps.set(sectorId, allCells);
+  };
+  const worldState = normalizeWorldState(world);
+  for (const sector of worldState.controlSectors) addSectorCells(sector.id, sector.cells);
+  for (const { impacts } of containers) {
+    for (const operation of normalizeArray(impacts?.sectorOps)) {
+      const normalized = normalizeSectorOp(operation);
+      if (normalized?.op === "upsert") {
+        addSectorCells(normalized.sector.id, normalized.sector.cells, normalized.cellOps);
+      }
+    }
+  }
+
+  const knownRefs = new Set();
+  const leafRefs = new Set();
+  for (const [sectorId, allCells] of sectorCellMaps) {
+    const parentIds = new Set([...allCells.values()].map((cell) => normalizeString(cell?.parentCellId)).filter(Boolean));
+    for (const cell of allCells.values()) {
+      const ref = `${sectorId}:${cell.id}`;
+      knownRefs.add(ref);
+      if (!parentIds.has(cell.id)) leafRefs.add(ref);
+    }
+  }
+
+  const dropped = [];
+  for (const { impacts, path } of containers) {
+    if (!impacts || !Array.isArray(impacts.territoryOps)) continue;
+    const kept = [];
+    for (let index = 0; index < impacts.territoryOps.length; index += 1) {
+      const operation = normalizeTerritoryOps([impacts.territoryOps[index]])[0];
+      const operationPath = `${path}.territoryOps[${index}]`;
+      if (!operation) {
+        dropped.push({ path: operationPath, reason: "it must create/update a fragment with id, parentRegionId, ownerCode and cellRefs, or remove an existing id" });
+        continue;
+      }
+      if (operation.op === "remove") {
+        kept.push(operation);
+        continue;
+      }
+      const parentRegionId = resolveRegion(operation.fragment.parentRegionId);
+      if (!parentRegionId) {
+        dropped.push({ path: operationPath, reason: `parent region "${operation.fragment.parentRegionId}" is not in the active map` });
+        continue;
+      }
+      const missing = operation.fragment.cellRefs.filter((ref) => !knownRefs.has(ref));
+      const nonLeaf = operation.fragment.cellRefs.filter((ref) => !missing.includes(ref) && !leafRefs.has(ref));
+      if (missing.length > 0) {
+        dropped.push({ path: operationPath, reason: `cellRefs do not exist: ${missing.slice(0, 5).join(", ")}` });
+        continue;
+      }
+      if (nonLeaf.length > 0) {
+        dropped.push({ path: operationPath, reason: `cellRefs must point to leaf cells, not parent cells: ${nonLeaf.slice(0, 5).join(", ")}` });
+        continue;
+      }
+      kept.push({
+        ...operation,
+        fragment: { ...operation.fragment, parentRegionId },
+      });
+    }
+    impacts.territoryOps = kept;
+  }
+  return dropped;
+};
+
+const buildSectorFeedback = (dropped) => [
+  ...dropped.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
+  "Use an exact active map region id/name, a known full polity name, and real finite center coordinates; partial control belongs in sectorOps, not regionTransfers.",
+].join("\n");
+
+const buildTerritoryFeedback = (dropped) => [
+  ...dropped.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
+  "Use an exact active region id, a new stable fragment id, and leaf cellRefs in the exact form sectorId:cellId. The maximum cell depth is 2.",
+].join("\n");
+
 // One retry's worth of corrective vocabulary: the exact regions the losing side
 // currently owns, so a model that wrote "Pomerania" can resend the same answer
 // with the real names/ids ("Pomorskie (POL.11_1)") instead of losing the map
@@ -1136,9 +1422,23 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
   const containers = Array.isArray(candidate?.events)
     ? candidate.events.map((event, index) => ({ impacts: event?.impacts, path: `$.events[${index}].impacts` }))
     : [{ impacts: candidate?.impacts, path: "$.impacts" }];
+  if (candidate?.impacts && Array.isArray(candidate.events)) {
+    containers.push({ impacts: candidate.impacts, path: "$.impacts" });
+  }
+  if (Array.isArray(candidate?.sectorOps) || Array.isArray(candidate?.territoryOps)) {
+    containers.push({ impacts: candidate, path: "$" });
+  }
   const unresolvedTransfers = await resolveRegionTransfers(containers, world);
   if (strict && unresolvedTransfers.length > 0) {
     return buildTransferFeedback(unresolvedTransfers);
+  }
+  const droppedSectors = await resolveControlSectorOps(containers, world);
+  if (strict && droppedSectors.length > 0) {
+    return buildSectorFeedback(droppedSectors);
+  }
+  const droppedTerritory = await resolveTerritoryOps(containers, world);
+  if (strict && droppedTerritory.length > 0) {
+    return buildTerritoryFeedback(droppedTerritory);
   }
   // Reluctance guard (strict attempt only): events that NARRATE a capture while
   // the whole payload ships ZERO regionTransfers are the recurring field report
@@ -1217,6 +1517,22 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
     }
     if (impacts && Array.isArray(impacts.unitOps)) impacts.unitOps = keptUnitOps;
 
+    // Tactical sector ops are intentionally independent of administrative
+    // region transfers: an invalid patch should not discard a whole otherwise
+    // usable turn, but the first attempt should tell the model exactly what to
+    // repair so a long battle does not silently disappear from the map.
+    const keptSectorOps = [];
+    for (let index = 0; index < normalizeArray(impacts?.sectorOps).length; index += 1) {
+      const operation = impacts.sectorOps[index];
+      const normalized = normalizeSectorOp(operation);
+      if (!normalized) {
+        if (strict) return `${path}.sectorOps[${index}] must be an upsert with a valid sector or a remove with an existing id.`;
+        continue;
+      }
+      keptSectorOps.push(normalized);
+    }
+    if (impacts && Array.isArray(impacts.sectorOps)) impacts.sectorOps = keptSectorOps;
+
     // Marker ops that would be silently dropped by normalization instead fail
     // the strict attempt, so the retry tells the model what was missing.
     const keptMarkerOps = [];
@@ -1239,10 +1555,27 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
           if (strict) return `${operationPath} must carry the name (or markerId) of the structure to remove.`;
           continue;
         }
+      } else if (op === "update" || op === "annotate" || op === "identify") {
+        if (!normalizeString(operation?.name) && !normalizeString(operation?.markerId)) {
+          if (strict) return `${operationPath} must carry the name (or markerId) of the marker to identify.`;
+          continue;
+        }
       }
       keptMarkerOps.push(operation);
     }
     if (impacts && Array.isArray(impacts.markerOps)) impacts.markerOps = keptMarkerOps;
+
+    const keptReserveOps = [];
+    for (let index = 0; index < normalizeArray(impacts?.reserveOps).length; index += 1) {
+      const operation = impacts.reserveOps[index];
+      const normalized = normalizeReserveOps([operation])[0];
+      if (!normalized) {
+        if (strict) return `${path}.reserveOps[${index}] must contain a known ownerCode and a valid reserve sheet.`;
+        continue;
+      }
+      keptReserveOps.push(normalized);
+    }
+    if (impacts && Array.isArray(impacts.reserveOps)) impacts.reserveOps = keptReserveOps;
   }
 
   // Unprompted outreach chats (top-level, not tied to an event) need real
@@ -1829,11 +2162,133 @@ export const chooseNextDiplomaticSpeaker = async ({
     return fallbackNextSpeaker({ chat: normalizedChat, excludedSpeaker: excludeSpeaker }).nextSpeaker;
   }
 
+  const participants = [
+    ...normalizeArray(normalizedChat.countries),
+    ...normalizeArray(normalizedChat.figures),
+  ];
   const validSpeaker =
-    normalizedChat.countries.find((country) => country.name.toLowerCase() === nextSpeaker.toLowerCase()) ??
-    normalizedChat.countries.find((country) => country.name !== excludeSpeaker);
+    participants.find((participant) => participant.name.toLowerCase() === nextSpeaker.toLowerCase()) ??
+    participants.find((participant) => participant.name !== excludeSpeaker);
 
   return validSpeaker?.name || "";
+};
+
+// Key figures use a separate, deliberately narrow model call. The main narrator
+// owns the world; this brain owns only the person's voice, thoughts and proposals.
+// That separation keeps a council reply from silently becoming a national decree.
+export const sendKeyFigureMessage = async (
+  figureId,
+  playerMessage,
+  chat,
+  { playerCountry = "", gameDate = "" } = {},
+) => {
+  const bundle = await readGameStateBundle({ force: true });
+  const world = normalizeWorldState(bundle.world);
+  const figure = normalizeKeyFigures(world.keyFigures).find((entry) => entry.id === figureId);
+  if (!figure) throw new Error("This key figure is no longer available.");
+  const meetingMode = normalizeMeetingMode(chat?.meetingMode || "cabinet");
+  const meetingCheck = evaluateFigureMeeting({
+    figures: [figure],
+    playerPolity: playerCountry,
+    gameDate,
+    meetingMode,
+  });
+  if (!meetingCheck.allowed) throw new Error(meetingCheck.reason || `${figure.name} is not currently available for a council conversation.`);
+
+  const normalizedChat = normalizeChats([chat])[0] || normalizeChatEntry({
+    mode: "council",
+    figures: [figure],
+    messages: [],
+  });
+  const variables = await buildTemplateVariables(bundle, { chat: normalizedChat });
+  const figureHistory = normalizeArray(normalizedChat?.messages)
+    .slice(-24)
+    .map((message) => `${message.speaker || message.role}: ${message.text}`)
+    .join("\n") || "No previous council exchange.";
+  const figureDossier = JSON.stringify({
+    ...figure,
+    privateThought: figure.thought || figure.currentThought || "",
+    recentAchievements: figure.achievements || [],
+    currentProjects: figure.projects || [],
+  });
+
+  const { payload } = await runJsonTask("figureBrain", {
+    fallback: () => ({
+      reply: `${figure.name} listens carefully and asks for a concrete brief before committing resources.`,
+      thought: "Needs a clearer operational brief before making a commitment.",
+      figureOps: [],
+      industryOps: [],
+      reserveOps: [],
+      ledger: { spent: [], produced: [] },
+    }),
+    userMessage: `The player says: ${normalizeString(playerMessage)}\nRespond as ${figure.name}. Return JSON only.`,
+    variables: {
+      ...variables,
+      FIGURE_NAME: figure.name,
+      FIGURE_DOSSIER: figureDossier,
+      FIGURE_CHAT_HISTORY: figureHistory,
+      FIGURE_MEETING_MODE: meetingMode,
+      MILITARY_INDUSTRY_SUMMARY: variables.militaryIndustrySummary || "No military-industry records are currently supplied.",
+      playerPolity: playerCountry || variables.playerPolity,
+      date: gameDate || variables.date,
+    },
+  });
+
+  const reply = normalizeString(payload?.reply) || `${figure.name} has no immediate answer.`;
+  const explicitFigureOps = normalizeKeyFigureOps(payload?.figureOps);
+  const figurePatch = {};
+  if (normalizeString(payload?.thought)) {
+    figurePatch.thought = normalizeString(payload.thought);
+    figurePatch.lastThoughtAt = gameDate || variables.date || "";
+  }
+  const achievement = payload?.achievement && normalizeString(payload.achievement.title)
+    ? {
+        title: normalizeString(payload.achievement.title),
+        summary: normalizeString(payload.achievement.summary),
+        date: gameDate || variables.date || "",
+      }
+    : null;
+  if (achievement) figurePatch.achievements = [...normalizeArray(figure.achievements), achievement].slice(-24);
+  if (Object.keys(figurePatch).length > 0) {
+    explicitFigureOps.push({ op: "update", id: figure.id, figure: figurePatch });
+  }
+
+  const nextWorld = {
+    ...world,
+    keyFigures: applyKeyFigureOps(world.keyFigures, explicitFigureOps),
+    militaryIndustry: applyMilitaryIndustryOps(world.militaryIndustry, normalizeMilitaryIndustryOps(payload?.industryOps)),
+    militaryReserves: applyReserveOps(world.militaryReserves, normalizeReserveOps(payload?.reserveOps)),
+  };
+  await writeWorldState(nextWorld);
+
+  const ledger = payload?.ledger && typeof payload.ledger === "object"
+    ? {
+        spent: normalizeArray(payload.ledger.spent).map(normalizeString).filter(Boolean),
+        produced: normalizeArray(payload.ledger.produced).map(normalizeString).filter(Boolean),
+      }
+    : { spent: [], produced: [] };
+  const nextMessage = {
+    code: figure.polity || "",
+    figureId: figure.id,
+    id: `figure-message-${Date.now()}`,
+    ledger,
+    role: "figure",
+    speaker: figure.name,
+    text: reply,
+    time: gameDate || variables.date || "",
+  };
+  const savedChats = await readChatsState({ force: true });
+  const nextChats = savedChats.map((entry) => entry.id === normalizedChat?.id
+    ? {
+        ...entry,
+        figures: entry.figures?.map((participant) => participant.id === figure.id
+          ? { ...participant, ...(figurePatch.thought ? { thought: figurePatch.thought } : {}), ...(achievement ? { achievements: figurePatch.achievements } : {}) }
+          : participant),
+        messages: [...entry.messages, nextMessage],
+      }
+    : entry);
+  if (normalizedChat?.id) await writeChatsState(nextChats);
+  return { reply, reaction: null, ledger, thought: figurePatch.thought || "" };
 };
 
 export const consolidateRecentHistory = async ({ limit = 12 } = {}) => {

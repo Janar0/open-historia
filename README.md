@@ -95,7 +95,8 @@ It's a thin client: the game itself runs on whatever server it connects to, so y
 one of the two:
 
 - **A desktop on the same network** running the launcher — type its address
-  (e.g. `http://192.168.1.20:3000`) into the app once; it's remembered.
+  (e.g. `http://192.168.1.20:3000`) into the app once; it's remembered. If the
+  owner enabled LAN auth, enter the shared key on the server access screen.
 - **[Termux](https://termux.dev/) on the phone itself** running the server — the app
   finds it on first launch by itself, no address needed.
 
@@ -130,6 +131,19 @@ node server/server.js              # Start the server
 ```
 
 Then open **http://localhost:3000** in your browser.
+
+For a private LAN server shared with friends, generate one key and start with an
+explicit LAN bind. The game will ask each browser for this key once:
+
+```bash
+openssl rand -hex 32 > open-historia-server.key
+chmod 600 open-historia-server.key
+OH_HOST=0.0.0.0 OH_SHARED_API_KEY_FILE=$PWD/open-historia-server.key node server/server.js
+```
+
+The key is sent only as `Authorization: Bearer …`; do not put it in the URL or
+commit the key file. `OH_HOST` defaults to `127.0.0.1`, and a non-loopback bind
+without a key is refused.
 
 > **Note:** the large map binaries (`*.pmtiles`, `public/assets/*-seed.*`, and
 > `server/data/scenarios/default/regions.geojson`) are **not** in the repo — they are

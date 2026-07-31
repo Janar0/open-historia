@@ -229,7 +229,9 @@ const resolveRegionName = (transfer, regionLookup) => {
 };
 
 const getEventMapChangeCount = (event) =>
-(event?.impacts?.regionTransfers?.length || 0) + (event?.impacts?.polityChanges?.length || 0);
+(event?.impacts?.regionTransfers?.length || 0)
+    + (event?.impacts?.sectorOps?.length || 0)
+    + (event?.impacts?.polityChanges?.length || 0);
 
 const collectEventTags = (event, { polityLookup, regionLookup }) => {
     const labels = new Set();
@@ -250,6 +252,13 @@ const collectEventTags = (event, { polityLookup, regionLookup }) => {
         const ownerName = resolvePolityName(transfer.toCode, polityLookup);
         if (ownerName) {
             labels.add(ownerName);
+        }
+    }
+
+    for (const operation of event?.impacts?.sectorOps ?? []) {
+        const sector = operation?.sector;
+        if (sector?.name) {
+            labels.add(sector.name);
         }
     }
 
@@ -576,6 +585,11 @@ const MetricPill = ({ children, icon = null, tone = "default" }) => {
             border: "1px solid rgba(192,132,252,0.2)",
             color: "#e9d5ff",
         },
+        major: {
+            background: "rgba(245,158,11,0.14)",
+            border: "1px solid rgba(251,191,36,0.3)",
+            color: "#fde68a",
+        },
     };
 
     const resolved = toneMap[tone] || toneMap.default;
@@ -638,14 +652,19 @@ const ghostButtonStyle = {
 const EventCard = ({ event, footer = null, lookups }) => {
     const tags = collectEventTags(event, lookups);
     const mapChangeCount = getEventMapChangeCount(event);
+    const isMajorEvent = String(event.importance).toLowerCase() === "major";
 
     return (
         <div
+        aria-label={`${isMajorEvent ? "Major" : "World"} event: ${event.title || "Untitled event"}`}
+        role="article"
         style={{
             background: "linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.03))",
-            border: "1px solid rgba(255,255,255,0.08)",
+            border: isMajorEvent ? "1px solid rgba(251,191,36,0.28)" : "1px solid rgba(255,255,255,0.08)",
             borderRadius: "16px",
-            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+            boxShadow: isMajorEvent
+            ? "inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 24px rgba(120,53,15,0.12)"
+            : "inset 0 1px 0 rgba(255,255,255,0.03)",
             overflow: "hidden",
         }}
         >
@@ -672,6 +691,9 @@ const EventCard = ({ event, footer = null, lookups }) => {
         {event.source === "fallback" && (
             <MetricPill tone="accent">Fallback</MetricPill>
         )}
+        {isMajorEvent && (
+            <MetricPill tone="major">Major event</MetricPill>
+        )}
         </div>
         </div>
 
@@ -684,7 +706,11 @@ const EventCard = ({ event, footer = null, lookups }) => {
             </div>
         )}
 
-        <div style={{ color: "rgba(255,255,255,0.94)", fontSize: "0.82rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+        <div
+        role="heading"
+        aria-level="3"
+        style={{ color: isMajorEvent ? "#fff7ed" : "rgba(255,255,255,0.94)", fontSize: isMajorEvent ? "0.88rem" : "0.82rem", fontWeight: 800, letterSpacing: "0.06em", lineHeight: "1.35", textTransform: "uppercase" }}
+        >
         {event.title}
         </div>
 
@@ -823,6 +849,8 @@ const JumpNode = ({ isLoading, opt, onJump }) => {
     return (
         <button
         type="button"
+        aria-label={`Advance timeline ${opt.label} to ${opt.sublabel}`}
+        title={`Advance ${opt.label}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onClick={() => {
@@ -903,10 +931,20 @@ const TimelineSkipPanel = ({
             gap: 0,
         }}
         >
+        <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "0.75rem", width: "12.5rem" }}>
+        <span style={{ color: "rgba(255,255,255,0.92)", fontSize: "0.78rem", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+        Advance timeline
+        </span>
+        <span style={{ color: "rgba(196,165,255,0.62)", fontSize: "0.68rem" }}>
+        Choose a horizon
+        </span>
+        </div>
         {canUndo && (
             <>
             <button
             type="button"
+            aria-label={`Undo the last turn; ${undoCount} turn${undoCount === 1 ? "" : "s"} available`}
+            title="Restore the previous turn"
             disabled={isLoading}
             onClick={() => { if (!isLoading) onUndo(); }}
             style={{
@@ -943,6 +981,9 @@ const TimelineSkipPanel = ({
             width: "5.5rem",
         }}
         >
+        <span style={{ color: "rgba(196,165,255,0.62)", display: "block", fontSize: "0.66rem", letterSpacing: "0.08em", marginBottom: "0.2rem", textTransform: "uppercase" }}>
+        Current date
+        </span>
         {dayjs(currentDate).format("M/D/YYYY")}
         </div>
 
@@ -956,6 +997,8 @@ const TimelineSkipPanel = ({
         <div style={{ background: "rgba(139,92,246,0.4)", height: "1.25rem", width: "2px" }} />
         <button
         type="button"
+        aria-label="Automatically advance the timeline"
+        title="Let the simulation choose the next timeline beat"
         onClick={() => {
             if (isLoading) {
                 return;
@@ -975,7 +1018,8 @@ const TimelineSkipPanel = ({
             width: "12.5rem",
         }}
         >
-        <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>Auto-jump</div>
+        <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>Auto-advance</div>
+        <div style={{ color: "rgba(191,219,254,0.68)", fontSize: "0.68rem", marginTop: "0.18rem" }}>Let the simulation choose the next beat</div>
         </button>
 
         <div style={{ background: "rgba(139,92,246,0.4)", height: "1.25rem", width: "2px" }} />
@@ -993,6 +1037,7 @@ const TimelineSkipPanel = ({
         >
         <input
         type="number"
+        aria-label="Custom amount of time"
         min="1"
         step="any"
         value={customValue}
@@ -1014,6 +1059,7 @@ const TimelineSkipPanel = ({
         />
         <select
         data-no-translate
+        aria-label="Custom time unit"
         value={customUnit}
         onChange={(event) => setCustomUnit(event.target.value)}
         disabled={isLoading}
@@ -1038,6 +1084,8 @@ const TimelineSkipPanel = ({
         </select>
         <button
         type="button"
+        aria-label="Advance by the custom amount"
+        title="Advance by the custom amount"
         onClick={runCustomJump}
         disabled={isLoading || !customValue}
         style={{
@@ -1077,6 +1125,7 @@ const TimelineSkipPanel = ({
             {onCancel && (
                 <button
                 type="button"
+                aria-label="Cancel timeline simulation"
                 onClick={onCancel}
                 style={{
                     background: "rgba(220,38,38,0.18)",
@@ -1150,7 +1199,7 @@ const TimelineHistoryPanel = ({
         eyebrow=""
         isOpen={isOpen}
         onClose={onClose}
-        subtitle={record?.rangeLabel || ""}
+        subtitle={record ? `${record.rangeLabel || "Current turn"} · ${totalEvents} ${totalEvents === 1 ? "event" : "events"}` : "No turn recorded"}
         title="Events"
         topOffset={topOffset}
         >
@@ -1176,6 +1225,15 @@ const TimelineHistoryPanel = ({
             <EmptyPanelState text="No world events were recorded for this time skip." />
         ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div
+            aria-live="polite"
+            style={{ alignItems: "center", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.16)", borderRadius: "10px", color: "rgba(191,219,254,0.82)", display: "flex", fontSize: "0.7rem", justifyContent: "space-between", padding: "0.55rem 0.7rem" }}
+            >
+            <span style={{ fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            {record.source === "fallback" ? "Fallback simulation" : "Timeline update"}
+            </span>
+            <span>{visibleEvents.length} of {totalEvents} revealed</span>
+            </div>
             {visibleEvents.map((event, index) => {
                 const isLastVisible = index === visibleEvents.length - 1;
 
@@ -1191,6 +1249,7 @@ const TimelineHistoryPanel = ({
                 <>
                 <button
                 type="button"
+                aria-label="Reveal the next event"
                 onClick={() => onRevealNextEvent()}
                 style={{
                     ...ghostButtonStyle,
@@ -1205,6 +1264,7 @@ const TimelineHistoryPanel = ({
                     to the final state. Nothing is truncated — every event stays. */}
                 <button
                 type="button"
+                aria-label={`Reveal all ${totalEvents - visibleEvents.length} remaining events`}
                 onClick={() => onRevealAll?.()}
                 style={{
                     ...ghostButtonStyle,
@@ -1677,6 +1737,9 @@ const DateWidget = ({
         >
         <button
         type="button"
+        aria-label="Open event history"
+        aria-pressed={openPanel === "history"}
+        title="Open event history"
         style={{
             ...buttonStyle,
             color: openPanel === "history" ? "#bfdbfe" : buttonStyle.color,
@@ -1727,6 +1790,9 @@ const DateWidget = ({
 
         <button
         type="button"
+        aria-label="Open timeline controls"
+        aria-pressed={openPanel === "skip"}
+        title="Open timeline controls"
         style={{
             ...buttonStyle,
             color: openPanel === "skip" ? "rgba(196,165,255,0.9)" : buttonStyle.color,

@@ -12,6 +12,7 @@ import {
   attackWith,
   attackFeature,
 } from "./unitsController.js";
+import { getMarkerInteractionMode, clearMarkerInteractionMode, placePlayerMarker } from "./markersController.js";
 import {
   JSON_URLS,
   PMTILES_PROTOCOL_URLS,
@@ -603,6 +604,17 @@ const WorldMap = ({ isGlobe = false }) => {
     };
 
     const mode = getInteractionMode();
+    const markerMode = getMarkerInteractionMode();
+
+    if (markerMode.kind === "place") {
+      placePlayerMarker({
+        ...markerMode.params,
+        lng: event.lngLat.lng,
+        lat: event.lngLat.lat,
+      }).catch((error) => console.error("Failed to place map marker:", error));
+      clearMarkerInteractionMode();
+      return;
+    }
 
     // Active troop command modes intercept the click as a target, not a selection.
     if (mode.kind === "deploy") {

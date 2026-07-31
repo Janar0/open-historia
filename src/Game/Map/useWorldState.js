@@ -52,6 +52,10 @@ const stopPolling = () => {
 
 // Stable [] so a world with no markers doesn't churn the memo every poll.
 const EMPTY_MARKERS = [];
+const EMPTY_CONTROL_SECTORS = [];
+const EMPTY_TERRITORY_FRAGMENTS = [];
+const EMPTY_KEY_FIGURES = [];
+const EMPTY_MILITARY_INDUSTRY = { arsenal: [], research: [], production: [], ledger: [] };
 
 const areEqualShallow = (a, b) => {
   if (a === b) return true;
@@ -91,6 +95,11 @@ export function useWorldState() {
     regionClaimants: state?.regionClaimants ?? {},
     polityOverrides: state?.polityOverrides ?? {},
     markers: Array.isArray(state?.markers) ? state.markers : EMPTY_MARKERS,
+    controlSectors: Array.isArray(state?.controlSectors) ? state.controlSectors : EMPTY_CONTROL_SECTORS,
+    territoryFragments: Array.isArray(state?.territoryFragments) ? state.territoryFragments : EMPTY_TERRITORY_FRAGMENTS,
+    keyFigures: Array.isArray(state?.keyFigures) ? state.keyFigures : EMPTY_KEY_FIGURES,
+    militaryIndustry: state?.militaryIndustry && typeof state.militaryIndustry === "object" ? state.militaryIndustry : EMPTY_MILITARY_INDUSTRY,
+    militaryReserves: state?.militaryReserves && typeof state.militaryReserves === "object" ? state.militaryReserves : {},
     cityRenames: state?.cityRenames ?? {},
     labelFont: state?.labelFont ?? "",
     labelHaloColor: state?.labelHaloColor ?? "",
@@ -114,6 +123,11 @@ export function useWorldState() {
     JSON.stringify(prev.regionClaimants) === JSON.stringify(derived.regionClaimants) &&
     // Markers are an array of small objects; same content-compare reasoning.
     JSON.stringify(prev.markers) === JSON.stringify(derived.markers) &&
+    JSON.stringify(prev.controlSectors) === JSON.stringify(derived.controlSectors) &&
+    JSON.stringify(prev.territoryFragments) === JSON.stringify(derived.territoryFragments) &&
+    JSON.stringify(prev.keyFigures) === JSON.stringify(derived.keyFigures) &&
+    JSON.stringify(prev.militaryIndustry) === JSON.stringify(derived.militaryIndustry) &&
+    JSON.stringify(prev.militaryReserves) === JSON.stringify(derived.militaryReserves) &&
     JSON.stringify(prev.cityRenames) === JSON.stringify(derived.cityRenames) &&
     areEqualShallow(prev.polityOverrides, derived.polityOverrides)
       ? prev

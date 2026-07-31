@@ -246,6 +246,8 @@ const FeaturePopup = () => {
 
         <div style={{ padding: "0 12px 10px" }}>
           {ownerName ? <DetailRow label="Owner" value={ownerName} /> : null}
+          {!isCity && feature.source ? <DetailRow label="Source" value={feature.source === "player" ? "Player marker" : feature.source} /> : null}
+          {!isCity && feature.status ? <DetailRow label="Status" value={feature.status} /> : null}
           {Number.isFinite(population) && population > 0 ? (
             <DetailRow label="Population" value={population.toLocaleString()} />
           ) : null}

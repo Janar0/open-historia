@@ -12,7 +12,10 @@ const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 // draws with, so the font is guaranteed to have them.
 const MILITARY_KIND = /\b(base|fort|fortress|bunker|silo|garrison|missile|radar|airfield|airbase|barracks|outpost|citadel|castle)\b/;
 
-const glyphForKind = (kind) => (MILITARY_KIND.test(kind) ? "▲" : "■");
+const glyphForKind = (kind, status) => {
+  if (status === "pending") return "?";
+  return MILITARY_KIND.test(kind) ? "▲" : "■";
+};
 
 const ownerColorString = (colorMap, code) => {
   const rgb = colorMap[String(code ?? "").trim()];
@@ -50,7 +53,9 @@ const MarkersLayer = () => {
             name: marker.name,
             kind: marker.kind || "landmark",
             ownerCode: marker.ownerCode || "",
-            glyph: glyphForKind(String(marker.kind || "")),
+            source: marker.source || "ai",
+            status: marker.status || "active",
+            glyph: glyphForKind(String(marker.kind || ""), marker.status),
             rgb: ownerColorString(colorMap, marker.ownerCode),
           },
         })),
@@ -70,9 +75,9 @@ const MarkersLayer = () => {
           "text-size": ["interpolate", ["linear"], ["zoom"], 2, 9, 6, 14, 10, 20],
         }}
         paint={{
-          "text-color": ["get", "rgb"],
+          "text-color": ["case", ["==", ["get", "status"], "pending"], "#fbbf24", ["get", "rgb"]],
           "text-halo-color": "#ffffff",
-          "text-halo-width": 1,
+          "text-halo-width": ["case", ["==", ["get", "status"], "pending"], 1.5, 1],
         }}
       />
       <Layer

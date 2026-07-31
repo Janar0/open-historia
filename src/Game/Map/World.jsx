@@ -2,6 +2,9 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import Map from "react-map-gl/maplibre";
 import Nations from "./Nations";
+import ControlSectors from "./ControlSectors.jsx";
+import TerritoryFragments from "./TerritoryFragments.jsx";
+import RoadsLayer from "./RoadsLayer.jsx";
 import { useCustomBackground } from "./useCustomBackground.js";
 import GlobeEffects from "./GlobeEffects.jsx";
 import RegionPopup from "../Selection/Regions";
@@ -19,6 +22,7 @@ import {
   ensureBasemapProtocol,
   esriTileTemplate,
 } from "../../runtime/assets.js";
+import { MAP_SETTING_KEYS, useMapSetting } from "../../runtime/mapSettings.js";
 
 // The high-res source goes through the ohbase protocol so ESRI's "Map Data
 // Not Yet Available" placeholders get replaced with upscaled ancestor tiles.
@@ -177,6 +181,7 @@ function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
   // so the map drops ESRI immediately rather than flashing satellite Earth.
   const { background: customBg, declared: bgDeclared, basemap: worldBasemap } = useCustomBackground();
   const isGlobe = projection === "globe";
+  const roadsEnabled = useMapSetting(MAP_SETTING_KEYS.showRoads);
   const mapProjection = useMemo(() => ({ type: projection }), [projection]);
   const styleUsesGlobeCoords = customBg?.kind === "image" && isGlobe;
   const worldStyle = useMemo(
@@ -286,7 +291,7 @@ function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
           [Infinity, 85],
         ]}
         cursor="default"
-        attributionControl={false}
+        attributionControl={roadsEnabled ? { compact: true } : false}
         dragRotate={false}
         touchPitch={false}
         pitchWithRotate={false}
@@ -313,6 +318,9 @@ function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
         onMove={handleMove}
       >
         <Nations isGlobe={isGlobe} />
+        <RoadsLayer />
+        <ControlSectors />
+        <TerritoryFragments />
         <Cities />
         <MarkersLayer />
         <Units />

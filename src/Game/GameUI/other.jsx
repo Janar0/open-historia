@@ -97,7 +97,7 @@ const Other = memo(function Other({ rightShift = "0.5rem" }) {
         title={displayName}
         style={{
             ...baseStyle,
-            bottom: "4.75rem",
+            bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))",
             right: rightShift,
             height: "2.75rem",
             width: "2.75rem",

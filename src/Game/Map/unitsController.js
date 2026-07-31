@@ -280,7 +280,7 @@ export const attackWith = async (attackerId, targetId) => {
     `Attack: ${attacker.name} (id ${attacker.id}, owner ${attacker.ownerCode}) assaults ` +
       `${defender.name} (id ${defender.id}, owner ${defender.ownerCode}). Local resolution -> ` +
       `attacker strength ${result.attackerStrength}, defender strength ${result.defenderStrength}` +
-      `${result.captured ? "; attacker holds the field (consider a regionTransfer)" : ""}. ` +
+      `${result.captured ? "; attacker holds the field (use sectorOps for a local patch; use regionTransfer only if the whole region changes hands)" : ""}. ` +
       `Escalate, reinforce or counterattack as the wider front warrants.`,
   );
   return { resolved: true, distance, range };
@@ -290,8 +290,9 @@ export const attackWith = async (attackerId, targetId) => {
 // rather than another unit. There is no local clash to resolve against a
 // building, so the instant feedback is positional: in range the unit closes on
 // the objective and reads "engaged", and the queued order hands the assault to
-// the AI, which owns the outcome (a fallen city may mean a regionTransfer, a
-// stormed structure a markerOps remove/rebuild). Out of range it becomes an
+// the AI, which owns the outcome (a fallen city may mean a sectorOps update or,
+// only for a whole-region change, a regionTransfer; a stormed structure means a
+// markerOps remove/rebuild). Out of range it becomes an
 // approach order exactly like a long-range unit attack.
 export const attackFeature = async (attackerId, target) => {
   const attacker = getUnitById(attackerId);
@@ -336,8 +337,9 @@ export const attackFeature = async (attackerId, target) => {
   await queueOrder(
     `Assault order: ${attacker.name} (${attacker.type}, id ${attacker.id}, owner ${attacker.ownerCode}) attacks ` +
       `${targetLabel} at ${at} and is now engaged at the objective. Resolve the assault on the next turn — decide the ` +
-      `defense it meets, the casualties, and the outcome. If the objective falls, reflect it: a captured city usually ` +
-      `implies a regionTransfer of its region, and a destroyed or seized structure should be reflected with markerOps ` +
+      `defense it meets, the casualties, and the outcome. If the objective falls, reflect it: a local city, suburb, ` +
+      `road or bridgehead should update sectorOps and may remain contested across several turns; use a regionTransfer ` +
+      `only when the whole administrative region changes hands. A destroyed or seized structure should be reflected with markerOps ` +
       `(remove it, or rebuild it under the new owner). If the assault is repelled, say so in an event and adjust the unit.`,
     { unitId: attacker.id, lng: attacker.lng, lat: attacker.lat, status: attacker.status },
   );

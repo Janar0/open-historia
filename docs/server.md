@@ -10,12 +10,13 @@ Open Historia ships with a small **Express** server (`server/server.js`) that is
 
 `server/server.js` is an ES module. On import it:
 
-1. Builds the Express `app`, reads `PORT` (default `3000`, `server/server.js:61`) and `distDir = ../dist` (the Vite build output).
-2. Installs a **blanket CORS** middleware (`server/server.js:73-89`) — `Access-Control-Allow-Origin: *`, all methods, and three deliberate extras: `Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges` (so PMTiles range recovery can read `Content-Range` off a 416), and `Access-Control-Allow-Private-Network: true` (Chrome's Private Network Access preflight for loopback/LAN). `OPTIONS` short-circuits to `204`.
-3. Installs the **CSRF / cross-origin-write guard** (`server/server.js:112-128`, logic in `server/security.js`). See [Security guard](#security--path-safety).
-4. Calls `ensureScenarioStore()`, `ensureGameStore()`, `ensureMapEditorStore()`, `ensureBasemapStore()` — first-run seeding of `server/data/` (`server/server.js:91-94`).
-5. Registers all `/api/*` routes, then the `/fmg` static mount (if vendored), then `express.static(distDir)`, then the SPA catch-all `GET *splat → dist/index.html` (`server/server.js:813-820`).
-6. `app.listen(PORT)`; an `EADDRINUSE` is caught and turned into a human message instead of a raw stack (`server/server.js:828-836`).
+1. Builds the Express `app`, reads `PORT` (default `3000`) and `OH_HOST` (default `127.0.0.1`), and resolves `distDir = ../dist` (the Vite build output).
+2. Installs a **blanket CORS** middleware — `Access-Control-Allow-Origin: *`, all methods, `Authorization`, and the PMTiles range headers. `OPTIONS` short-circuits to `204`.
+3. Installs shared bearer-key auth (`server/auth.js`) before the API routes. When `OH_SHARED_API_KEY` or `OH_SHARED_API_KEY_FILE` is set, every `/api/*` route except `GET /api/auth/status` requires `Authorization: Bearer <key>`; static files remain reachable so the browser can show the access screen.
+4. Installs the **CSRF / cross-origin-write guard** (`server/security.js`). A valid bearer key bypasses this Origin-only guard; unauthenticated cross-origin writes remain blocked. See [Security guard](#security--path-safety).
+5. Calls `ensureScenarioStore()`, `ensureGameStore()`, `ensureMapEditorStore()`, `ensureBasemapStore()` — first-run seeding of `server/data/`.
+6. Registers all `/api/*` routes, then the `/fmg` static mount (if vendored), then `express.static(distDir)`, then the SPA catch-all.
+7. `app.listen(PORT, OH_HOST)`; an `EADDRINUSE` is caught and turned into a human message instead of a raw stack.
 
 Route ordering matters: `/fmg/*` and `express.static` are mounted **before** the `*splat` fallback so real files aren't swallowed by `index.html`.
 
@@ -25,6 +26,7 @@ Route ordering matters: `/fmg/*` and `express.static` are mounted **before** the
 | Scenario + game catalog, CRUD, runtime read/write, owner canonicalization, bundle import/export, asset serving | `server/libraryStore.js` | The bulk of the data model |
 | Owner-code → country-name schema-2 migration | `server/ownerMigration.js` | `resolveOwnerName` + record migrators |
 | Writable data-root resolution | `server/dataDir.js` | `DATA_DIR` |
+| Shared self-host auth | `server/auth.js` | API key loading, constant-time bearer check, LAN-bind guard |
 | Path containment, CSRF guard, range parsing, hub host allowlist | `server/security.js` | Pure, unit-tested helpers |
 | Map-editor documents | `server/mapEditorStore.js` | `/api/mapeditor/*` |
 | User basemap library ("Your basemaps") | `server/basemapStore.js` | `/api/basemaps/*` |
@@ -36,9 +38,27 @@ Route ordering matters: `/fmg/*` and `express.static` are mounted **before** the
 
 All routes are JSON in / JSON out unless noted. Errors are `{ error: message }` with the status shown (via `sendError`, `server/server.js:96-99`). Body-size limits: `jsonParser` = 64 MB, `largeJsonParser` = 2048 MB, `uploadParser` (`express.raw`, any type) = 2048 MB (`server/server.js:64-66`).
 
+### Authentication
+
+Set one of these on a shared server (not both):
+
+```bash
+openssl rand -hex 32 > open-historia-server.key
+chmod 600 open-historia-server.key
+OH_HOST=0.0.0.0 OH_SHARED_API_KEY_FILE=$PWD/open-historia-server.key node server/server.js
+```
+
+`GET /api/auth/status` is the only unauthenticated API route and returns only
+`{ required, authenticated }`. The local client stores the key per browser and
+adds it as a Bearer header to same-origin API and PMTiles requests. Query-string
+keys are deliberately unsupported. A non-loopback `OH_HOST` without auth is
+refused at startup. The key is shared by all trusted players; it is not separate
+per-user identity or permissions.
+
 ### Client preferences & language packs
 | Method | Path | Purpose | Handler |
 | --- | --- | --- | --- |
+| GET | `/api/auth/status` | Public capability probe: `{ required, authenticated }`; never returns the key | `server/server.js` |
 | GET | `/api/ui-settings` | Global shared UI settings (currently `language`) — every device sees the same choice | `server/server.js:171` |
 | PUT | `/api/ui-settings` | Set the shared UI language | `server/server.js:236` |
 | GET | `/api/lang/:code` | Merged language pack: shipped `dist|public/lang/<code>.json` **under** saved `data/lang/<code>.json` (saved wins) | `server/server.js:197` |
@@ -272,7 +292,7 @@ Bundles are the shareable unit strangers swap on the community hub. Schema strin
 | Helper | Guarantees |
 | --- | --- |
 | `resolveChildPath(baseDir, name, label)` | `name` must resolve to a **direct child** of `baseDir` — rejects `../`, path separators (incl. the `%2f` Express decodes to `/`), and absolutes. Used by `getScenarioDirectory`/`getGameDirectory` and by every store's `docPath`/`metaPath`/`payloadPath`, so a route `:id` can't escape the data dir. Re-exported in `libraryStore.js` as `resolveWithinDirectory`. |
-| `crossOriginWriteAllowed({method,origin,host,remoteAddress,allowAll})` | The CSRF guard. Allows safe methods (GET/HEAD/OPTIONS); same-origin writes (`Origin` host === `Host`); and no-`Origin` writes **only from loopback**. A foreign `Origin`, or a no-`Origin` write from a non-loopback host, is `403`. Bypass with `OH_ALLOW_CROSS_ORIGIN=1`. Without it, the blanket CORS (needed so the Android connect screen can *probe*) would otherwise let any visited web page POST/DELETE to `localhost`. |
+| `crossOriginWriteAllowed({method,origin,host,remoteAddress,allowAll})` | The CSRF guard. Allows safe methods (GET/HEAD/OPTIONS); same-origin writes (`Origin` host === `Host`); and no-`Origin` writes **only from loopback**. A foreign `Origin`, or a no-`Origin` write from a non-loopback host, is `403`. A valid bearer key bypasses this guard; `OH_ALLOW_CROSS_ORIGIN=1` remains only as a legacy local-development override. |
 | `isLoopbackAddress(addr)` | Unwraps IPv4-mapped IPv6 (`::ffff:127.0.0.1`); true for `::1`, `127.*`. |
 | `parseByteRange(header, size)` | Range parsing for `streamBinaryFile` (above). |
 | `isAllowedHubUrl(url, hosts)` | A hub download must be **https** and either on the fixed GitHub host set or any `*.githubusercontent.com`. Checked on the initial URL **and every redirect hop** in `/api/hub/file`, which follows redirects manually (`redirect: "manual"`) so a `github.com → attacker` redirect can't cause SSRF. |
@@ -297,7 +317,10 @@ Every store imports this one constant, so a single env var relocates **all** wri
 | Var | Default | Effect |
 | --- | --- | --- |
 | `PORT` | `3000` | Listen port (`server/server.js:61`) |
+| `OH_HOST` | `127.0.0.1` | Bind address. Use `0.0.0.0` or a LAN/Tailscale address only with a shared key |
 | `OH_DATA_DIR` | `server/data` | Writable data root for every store (`server/dataDir.js`) |
+| `OH_SHARED_API_KEY` | unset | Shared bearer key; at least 16 characters |
+| `OH_SHARED_API_KEY_FILE` | unset | File containing the shared bearer key; recommended over putting it in the process environment |
 | `OH_ALLOW_CROSS_ORIGIN` | unset | `=1` disables the cross-origin-write guard (`server/server.js:111`) |
 | `OH_IMPORT_COUNTER_URL` | `https://oh-import-counter.…workers.dev` | Import-telemetry counter Worker; empty string disables pings (`server/server.js:653`) |
 

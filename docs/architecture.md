@@ -206,7 +206,7 @@ The client **never** talks to storage directly. Every state read/write is a same
 | `/api/server/shutdown` | POST | Exits the process (the ⏻ button) |
 | `/fmg/*`, `*splat` | GET | Vendored FMG static + SPA fallback (`index.html`) |
 
-**Security middleware** (`server/server.js:73`, `:112`): blanket permissive CORS (so the Android WebView's cross-origin *probe* works) but state-changing writes are blocked unless same-origin or loopback (`crossOriginWriteAllowed` in `security.js`); override with `OH_ALLOW_CROSS_ORIGIN=1`. See [Server & security](server-api.md).
+**Security middleware**: the local server defaults to loopback, and an explicit non-loopback bind requires shared bearer-key auth (`OH_SHARED_API_KEY` or `OH_SHARED_API_KEY_FILE`). The client asks for the key once and adds it to same-origin API/PMTiles requests. The older Origin/loopback CSRF guard remains for unauthenticated local development; `OH_ALLOW_CROSS_ORIGIN=1` is a legacy override, not a public-server security setting. See [Server & security](server.md).
 
 ### The three backends, one contract
 
