@@ -1,0 +1,24 @@
+services:
+  open-historia:
+    image: ${OPEN_HISTORIA_IMAGE:-ghcr.io/janar0/open-historia:main}
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "${OPEN_HISTORIA_BIND:-0.0.0.0}:${OPEN_HISTORIA_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      OH_HOST: 0.0.0.0
+      OH_DATA_DIR: /data
+      OH_SHARED_API_KEY_FILE: /run/secrets/open_historia_api_key
+    secrets:
+      - open_historia_api_key
+    volumes:
+      - open-historia-data:/data
+
+secrets:
+  open_historia_api_key:
+    file: ${OPEN_HISTORIA_KEY_FILE:-./open-historia-server.key}
+
+volumes:
+  open-historia-data:

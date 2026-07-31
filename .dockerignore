@@ -1,0 +1,25 @@
+.git
+.github
+.codex
+.agents
+node_modules
+dist
+dist-web
+release
+fmg
+*.log
+*.key
+*.key.pem
+
+# Runtime data belongs in the named Docker volume. Keep only the built-in
+# scenario as the immutable seed copied into a fresh volume at first start.
+server/data/*
+!server/data/scenarios/
+!server/data/scenarios/default/
+!server/data/scenarios/default/**
+
+# These large files are fetched and checksum-verified during the image build.
+public/assets/*.pmtiles
+public/assets/regions-seed.geojson
+public/assets/cities-seed.json
+server/data/scenarios/default/regions.geojson

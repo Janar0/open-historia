@@ -37,6 +37,10 @@ concurrency:
 
 jobs:
   deploy:
+    # The Cloudflare project belongs to the upstream repository. A personal
+    # fork should publish its Docker image, not fail here because it cannot
+    # access upstream's CLOUDFLARE_* secrets.
+    if: github.repository == 'Open-Historia/open-historia'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

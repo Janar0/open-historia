@@ -145,6 +145,40 @@ The key is sent only as `Authorization: Bearer …`; do not put it in the URL or
 commit the key file. `OH_HOST` defaults to `127.0.0.1`, and a non-loopback bind
 without a key is refused.
 
+### Docker (recommended for a server)
+
+The fork publishes a production image to GHCR. The image already contains the
+client, server, built-in scenario, and map assets; campaigns and imported data
+live in a named Docker volume.
+
+```bash
+git clone https://github.com/Janar0/open-historia.git
+cd open-historia
+openssl rand -hex 32 > open-historia-server.key
+chmod 600 open-historia-server.key
+
+docker compose pull
+docker compose up -d
+```
+
+After a new push to `main`, update the running server with:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The `open-historia-data` volume is preserved across image updates. Do not use
+`docker compose down -v` unless you intentionally want to delete saved games
+and scenarios. By default the container publishes port `3000` on all interfaces
+and requires the shared key from `open-historia-server.key`; override
+`OPEN_HISTORIA_PORT`, `OPEN_HISTORIA_BIND`, or `OPEN_HISTORIA_KEY_FILE` in `.env`
+if needed.
+
+The image name is `ghcr.io/janar0/open-historia:main`. If the GHCR package is
+private, authenticate once on the server with `docker login ghcr.io`; after that
+updates remain the same two `docker compose` commands.
+
 > **Note:** the large map binaries (`*.pmtiles`, `public/assets/*-seed.*`, and
 > `server/data/scenarios/default/regions.geojson`) are **not** in the repo — they are
 > hosted as [GitHub Release assets](https://github.com/Open-Historia/open-historia/releases/tag/map-data)

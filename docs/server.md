@@ -55,6 +55,26 @@ keys are deliberately unsupported. A non-loopback `OH_HOST` without auth is
 refused at startup. The key is shared by all trusted players; it is not separate
 per-user identity or permissions.
 
+### Docker deployment
+
+The `Dockerfile` builds a production image with the Vite client, Express server,
+the built-in scenario, and checksum-verified map release assets. The
+`compose.yaml` stores mutable server data in the named `open-historia-data`
+volume and mounts the shared API key as a read-only Docker secret:
+
+```bash
+openssl rand -hex 32 > open-historia-server.key
+chmod 600 open-historia-server.key
+docker compose pull
+docker compose up -d
+```
+
+The `Docker image` workflow publishes `ghcr.io/janar0/open-historia:main` on
+every push to `main`. To update an existing host, run the same `pull` and `up`
+commands; the volume is not replaced. `docker compose down -v` deletes the
+saved server state and should only be used intentionally. A private GHCR package
+requires a one-time `docker login ghcr.io` on the host.
+
 ### Client preferences & language packs
 | Method | Path | Purpose | Handler |
 | --- | --- | --- | --- |
