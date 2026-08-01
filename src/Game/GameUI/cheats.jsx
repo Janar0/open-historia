@@ -23,6 +23,7 @@ import { useDraggablePanel } from "./useDraggablePanel.js";
 import { GameIcon } from "./Icon.jsx";
 
 const PANEL_TOP = "4.75rem";
+const COMMAND_PANEL_POSITION_KEY = "oh-panel-position-command-center-v2";
 const EMPTY_FEATURES = { type: "FeatureCollection", features: [] };
 const DIFFICULTY_ICONS = {
     "very-easy": "spark",
@@ -80,6 +81,17 @@ const primaryButtonStyle = {
     ...buttonStyle,
     background: "rgba(124,58,237,0.35)",
     border: "1px solid rgba(139,92,246,0.55)",
+};
+
+const panelSurface = {
+    background: "linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96))",
+    backdropFilter: "blur(18px) saturate(1.2)",
+    WebkitBackdropFilter: "blur(18px) saturate(1.2)",
+    border: "1px solid rgba(155, 190, 230, 0.16)",
+    borderRadius: 16,
+    boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+    color: "white",
+    fontFamily: "sans-serif",
 };
 
 const labelStyle = {
@@ -172,7 +184,7 @@ const PolitySelect = ({ polities, value, onChange, placeholder = "Pick a country
 );
 
 const CheatsPanel = ({ open, initialTool = null, onClose, onOpenForces }) => {
-    const draggable = useDraggablePanel("oh-panel-position-cheats");
+    const draggable = useDraggablePanel(COMMAND_PANEL_POSITION_KEY);
     const [tool, setTool] = useState(null);
     const [busy, setBusy] = useState(false);
     const [status, setStatus] = useState("");
@@ -272,26 +284,20 @@ const CheatsPanel = ({ open, initialTool = null, onClose, onOpenForces }) => {
         )}
 
         <div
-        className="oh-command-panel"
+        className="oh-panel"
         ref={draggable.panelRef}
         style={{
-            background: "rgba(17, 24, 39, 0.96)",
-            backdropFilter: "blur(8px)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: 16,
-            boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-            color: "white",
+            ...panelSurface,
             display: clickMode ? "none" : "flex",
             flexDirection: "column",
-            fontFamily: "sans-serif",
-            maxHeight: `calc(100vh - ${PANEL_TOP} - 1rem)`,
+            maxHeight: "calc(100vh - 6.25rem)",
             overflow: "hidden",
-            padding: "0.9rem",
+            padding: 12,
             position: "fixed",
-            right: "0.5rem",
-            top: PANEL_TOP,
+            bottom: "calc(5.25rem + env(safe-area-inset-bottom, 0px))",
+            left: "0.5rem",
             width: "min(24rem, calc(100vw - 1rem))",
-            zIndex: 10045,
+            zIndex: 10001,
             ...(draggable.positionStyle || {}),
         }}
         >
