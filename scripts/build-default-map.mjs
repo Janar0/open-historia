@@ -103,8 +103,9 @@ if (world.polityOverrides && typeof world.polityOverrides === "object") {
 }
 writeFileSync(worldPath, `${JSON.stringify(world, null, 2)}\n`, "utf8");
 
-// Cover image: the modern-era loading artwork fits the Modern Day scenario.
-const coverSrc = path.join(PROJECT_ROOT, "public", "loading_screen.jpg");
+// Cover image: the documentary loading artwork is a neutral fallback for the
+// editable Modern Day scenario and for cards without their own cover.
+const coverSrc = path.join(PROJECT_ROOT, "public", "loading_photo_1.jpg");
 if (existsSync(coverSrc)) {
   copyFileSync(coverSrc, path.join(SCENARIO_DIR, "cover-image.bin"));
   const metaPath = path.join(SCENARIO_DIR, "scenario.json");

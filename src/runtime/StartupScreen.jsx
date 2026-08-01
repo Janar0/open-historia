@@ -1,15 +1,12 @@
 /*! Open Historia — portions (loading-screen cycling + creator credit) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React, { useEffect, useState } from "react";
 
-// Loading-screen artwork. The first is the original; the rest cycle in once the
-// files exist in /public. Missing files are skipped (see the preload check), so
-// the screen never flashes a broken image.
+// Loading-screen artwork is intentionally documentary and text-free. Missing
+// files are skipped (see the preload check), so deployments can ship a smaller
+// art pack without flashing a broken background.
 const LOADING_IMAGES = [
-  "/loading_screen.jpg",
-  "/loading_screen_2.jpg",
-  "/loading_screen_3.jpg",
-  "/loading_screen_4.jpg",
-  "/loading_screen_5.png",
+  "/loading_photo_1.jpg",
+  "/loading_photo_2.jpg",
 ];
 const IMAGE_ROTATE_MS = 4500;
 

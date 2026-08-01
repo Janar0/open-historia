@@ -169,7 +169,7 @@ const ScenarioCard = ({
       background:
       `linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.72) 100%), ` +
       `radial-gradient(circle at 14% 18%, ${scenario.accentColor}bb, transparent 34%), ` +
-      "url('/loading_screen.jpg') center/cover",
+      "url('/loading_photo_1.jpg') center/cover",
           inset: 0,
           opacity: 0.92,
           position: "absolute",
