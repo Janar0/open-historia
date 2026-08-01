@@ -122,7 +122,7 @@ const ReservesPanel = ({ open = false, onToggle }) => {
   if (!open) return null;
 
   return (
-    <div className="oh-panel" ref={draggable.panelRef} style={{ ...surface, position: "fixed", bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", width: "20rem", maxHeight: "68vh", overflowY: "auto", zIndex: 9999, padding: "13px", ...(draggable.positionStyle || {}) }}>
+    <div className="oh-panel" ref={draggable.panelRef} style={{ ...surface, position: "fixed", bottom: "calc(5.25rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", width: "20rem", maxHeight: "68vh", overflowY: "auto", zIndex: 10001, padding: "13px", ...(draggable.positionStyle || {}) }}>
       <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
         <strong style={{ fontSize: "14px" }}>Military reserves</strong>
         <button type="button" aria-label="Close military reserves" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", display: "flex", padding: "0.2rem" }}><GameIcon name="close" size={16} /></button>

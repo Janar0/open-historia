@@ -285,18 +285,22 @@ const Search = memo(({ mapRef }) => {
         // full-width bar just above the toolbar instead.
         bottom: isMobile
           ? "calc(5rem + env(safe-area-inset-bottom, 0px))"
-          : "calc(1rem + env(safe-area-inset-bottom, 0px))",
-        // Clear the complete 17.4rem toolbar. The old 9.75rem offset landed
-        // search directly on top of its middle buttons.
-        left: isMobile ? "0.5rem" : "18.4rem",
+          : expanded
+            ? "calc(5.25rem + env(safe-area-inset-bottom, 0px))"
+            : "calc(1rem + env(safe-area-inset-bottom, 0px))",
+        // Keep the collapsed control on the opposite side of the bottom
+        // toolbar; an expanded search bar moves above it instead of covering
+        // the command buttons.
+        left: isMobile ? "0.5rem" : "auto",
+        right: isMobile ? "auto" : "0.5rem",
         height: "3rem",
         width: expanded ? (isMobile ? "calc(100vw - 1rem)" : "17rem") : "3rem",
         overflow: "visible",
-        transition: "width 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+        transition: "width 0.35s cubic-bezier(0.4, 0, 0.2, 1), bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
         cursor: expanded ? "default" : "pointer",
         display: "flex",
         alignItems: "center",
-        zIndex: 9999,
+        zIndex: 10002,
         borderRadius: hasSuggestions ? "0 0 12px 12px" : "12px",
         backgroundColor: "rgba(17, 24, 39, 0.9)",
         backdropFilter: "blur(4px)",

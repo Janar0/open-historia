@@ -194,13 +194,13 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
           style={{
             ...surface,
             position: "fixed",
-            bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))",
+            bottom: "calc(5.25rem + env(safe-area-inset-bottom, 0px))",
             left: "0.5rem",
             width: "17rem",
             maxHeight: "60vh",
             display: "flex",
             flexDirection: "column",
-            zIndex: 9999,
+            zIndex: 10001,
             padding: "12px",
             ...(draggable.positionStyle || {}),
           }}

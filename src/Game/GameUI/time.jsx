@@ -23,6 +23,7 @@ import { setUnitsOverride } from "../Map/unitsController.js";
 import { useIsMobile } from "../../runtime/useIsMobile.js";
 import { MAP_SETTING_KEYS, useMapSetting } from "../../runtime/mapSettings.js";
 import { GameIcon } from "./Icon.jsx";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 
 dayjs.extend(advancedFormat);
 
@@ -760,14 +761,16 @@ const PanelChrome = ({
     topOffset,
     onClose,
 }) => {
+    const draggable = useDraggablePanel("oh-panel-position-timeline");
     const hasHeaderText = Boolean(eyebrow || title || subtitle);
 
     return (
         <div
         className="oh-panel"
+        ref={draggable.panelRef}
         style={{
             ...panelSurface,
-            bottom: isOpen ? "4.9rem" : "-34rem",
+            bottom: isOpen ? "calc(5.25rem + env(safe-area-inset-bottom, 0px))" : "-34rem",
             display: "flex",
             flexDirection: "column",
             // Match the Actions/Chat panels: on short laptop screens the sliver
@@ -781,10 +784,14 @@ const PanelChrome = ({
             opacity: isOpen ? 1 : 0,
             pointerEvents: isOpen ? "auto" : "none",
             transition: "bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease",
+            zIndex: 10001,
+            ...(draggable.positionStyle || {}),
         }}
         >
         <div
+        {...draggable.dragHandleProps}
         style={{
+            ...draggable.dragHandleProps.style,
             borderBottom: hasHeaderText ? "1px solid rgba(255,255,255,0.07)" : "none",
             flexShrink: 0,
             padding: hasHeaderText ? "1rem 1.25rem 0.75rem" : "0.7rem 0.75rem 0",

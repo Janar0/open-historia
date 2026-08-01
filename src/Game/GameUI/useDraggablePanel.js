@@ -14,9 +14,14 @@ const readPosition = (storageKey) => {
   }
 };
 
+const clampAxis = (value, viewportSize, panelSize) => {
+  const max = Math.max(EDGE_GAP, viewportSize - panelSize - EDGE_GAP);
+  return Math.round(Math.max(EDGE_GAP, Math.min(value, max)));
+};
+
 const clampPosition = (position, rect) => ({
-  x: Math.round(Math.max(EDGE_GAP, Math.min(position.x, window.innerWidth - rect.width - EDGE_GAP))),
-  y: Math.round(Math.max(EDGE_GAP, Math.min(position.y, window.innerHeight - rect.height - EDGE_GAP))),
+  x: clampAxis(position.x, window.innerWidth, rect.width),
+  y: clampAxis(position.y, window.innerHeight, rect.height),
 });
 
 export const useDraggablePanel = (storageKey) => {

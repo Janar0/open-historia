@@ -423,7 +423,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             backgroundColor: "rgba(17, 24, 39, 0.95)",
             border: "1px solid rgba(255,255,255,0.1)",
             borderRadius: "16px",
-            bottom: isOpen ? "4.25rem" : "-30rem",
+            bottom: isOpen ? "calc(5.25rem + env(safe-area-inset-bottom, 0px))" : "-30rem",
             boxShadow: "-4px 0 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)",
             color: "white",
             display: "flex",
@@ -442,7 +442,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             position: "fixed",
             transition: "bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease",
             width: "26.25rem",
-            zIndex: 9998,
+            zIndex: 10001,
             ...(draggable.positionStyle || {}),
         }}
         >

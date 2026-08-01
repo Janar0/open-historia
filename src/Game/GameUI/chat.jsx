@@ -15,6 +15,7 @@ import {
 import { flagEmojiFromGid } from "../../runtime/countryFlags.js";
 import { readChatsState, readWorldState, writeChatsState, writeWorldState } from "../../runtime/gameState.js";
 import { GameIcon } from "./Icon.jsx";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -507,7 +508,7 @@ const FigureSelectorModal = ({ figures, loading, playerCountry, gameDate, onStar
 
 // ── Conversation view ─────────────────────────────────────────────────────────
 
-const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onMessagesUpdate }) => {
+const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onMessagesUpdate, dragHandleProps }) => {
     // Two-step delete, matching the list row. Disarms on blur so a half-pressed
     // delete never sits waiting to catch a later click.
     const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -709,7 +710,7 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
 
         return (
             <>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.85rem 1rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
+            <div {...dragHandleProps} style={{ ...dragHandleProps?.style, display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.85rem 1rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
             <button type="button" aria-label="Back to diplomatic chats" onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", display: "flex", padding: "0.2rem", borderRadius: "6px" }}
             onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
             onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.6)"; e.currentTarget.style.background = "none"; }}>
@@ -905,6 +906,7 @@ export const requestDiplomaticChat = (country) => {
 };
 
 const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
+    const draggable = useDraggablePanel("oh-panel-position-chat");
     const [countries, setCountries]               = useState([]);
     const [figures, setFigures]                   = useState([]);
     const [loadingCountries, setLoadingCountries] = useState(true);
@@ -1127,16 +1129,16 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
         return (
             <>
             <MarkdownStyleInjector />
-            <div className="oh-panel" role="dialog" aria-label="Diplomatic chats" aria-hidden={!isOpen} style={{ position: "fixed", bottom: isOpen ? "calc(4.25rem + env(safe-area-inset-bottom, 0px))" : "calc(-40rem - env(safe-area-inset-bottom, 0px))", left: "0rem", width: "26.25rem", maxWidth: "calc(100vw - 1rem)", height: "min(calc(100dvh - 9rem - env(safe-area-inset-bottom, 0px)), max(calc(100dvh - 33rem), 30rem))", minHeight: "10rem", backgroundColor: "rgba(17,24,39,0.95)", backdropFilter: "blur(8px)", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "-4px 0 24px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.06)", zIndex: 9998, overflow: "hidden", transition: "bottom 0.35s cubic-bezier(0.4,0,0.2,1),opacity 0.35s ease", opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? "auto" : "none", fontFamily: "sans-serif", color: "white", display: "flex", flexDirection: "column" }}>
+            <div className="oh-panel" ref={draggable.panelRef} role="dialog" aria-label="Diplomatic chats" aria-hidden={!isOpen} style={{ position: "fixed", bottom: isOpen ? "calc(5.25rem + env(safe-area-inset-bottom, 0px))" : "calc(-40rem - env(safe-area-inset-bottom, 0px))", left: "0rem", width: "26.25rem", maxWidth: "calc(100vw - 1rem)", height: "min(calc(100dvh - 9rem - env(safe-area-inset-bottom, 0px)), max(calc(100dvh - 33rem), 30rem))", minHeight: "10rem", backgroundColor: "rgba(17,24,39,0.95)", backdropFilter: "blur(8px)", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "-4px 0 24px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.06)", zIndex: 10001, overflow: "hidden", transition: "bottom 0.35s cubic-bezier(0.4,0,0.2,1),opacity 0.35s ease", opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? "auto" : "none", fontFamily: "sans-serif", color: "white", display: "flex", flexDirection: "column", ...(draggable.positionStyle || {}) }}>
 
             {showSelector && <CountrySelectorModal countries={availableCountries} loading={loadingCountries} onStart={handleStartChat} onCancel={() => setShowSelector(false)} />}
             {showCouncil && <FigureSelectorModal figures={figures} loading={loadingFigures} playerCountry={playerCountry} gameDate={gameDate} onStart={handleStartCouncil} onCancel={() => setShowCouncil(false)} />}
 
             {activeChat && ((Array.isArray(activeChat.countries) && activeChat.countries.length > 0) || (Array.isArray(activeChat.figures) && activeChat.figures.length > 0)) ? (
-                <ConversationView chat={activeChat} playerCountry={playerCountry} gameDate={gameDate} onDelete={() => handleDeleteChat(activeChat.id)} onBack={() => setActiveChat(null)} onMessagesUpdate={handleMessagesUpdate} />
+                <ConversationView chat={activeChat} playerCountry={playerCountry} gameDate={gameDate} onDelete={() => handleDeleteChat(activeChat.id)} onBack={() => setActiveChat(null)} onMessagesUpdate={handleMessagesUpdate} dragHandleProps={draggable.dragHandleProps} />
             ) : (
                 <>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
+                <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem 1.25rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.07)", flexShrink: 0 }}>
                 <span style={{ fontWeight: 700, fontSize: "1rem" }}>Diplomatic Chats</span>
                 <button type="button" aria-label="Close diplomatic chats" onClick={onClose} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: "1.1rem", lineHeight: 1, padding: "0.15rem 0.3rem", borderRadius: "6px" }}
                 onMouseEnter={e => { e.currentTarget.style.color = "white"; e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}

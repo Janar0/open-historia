@@ -21,6 +21,7 @@ import {
     setMapSetting,
 } from "../../runtime/mapSettings.js";
 import { GameIcon } from "./Icon.jsx";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 
 const baseStyle = {
     position: "fixed",
@@ -798,6 +799,7 @@ const SettingsMenu = ({
     redditUrl,
     githubUrl,
 }) => {
+    const draggable = useDraggablePanel("oh-panel-position-settings");
     const selectedProvider = apiProvider ?? DEFAULT_PROVIDER;
 
     const [mapSettings, setMapSettingsState] = useState(() => ({
@@ -815,6 +817,7 @@ const SettingsMenu = ({
 
     return (
         <div
+        ref={draggable.panelRef}
         style={{
             ...baseStyle,
             top: `calc(${topOffset} + 4.25rem)`,
@@ -830,10 +833,14 @@ const SettingsMenu = ({
             alignItems: "stretch",
             justifyContent: "flex-start",
             height: "auto",
+            zIndex: 10001,
+            ...(draggable.positionStyle || {}),
         }}
         >
         <h3
+        {...draggable.dragHandleProps}
         style={{
+        ...draggable.dragHandleProps.style,
             margin: "0 -1rem 1rem -1rem",
             padding: "0 1rem 1rem 1rem",
             fontSize: "1.1rem",
