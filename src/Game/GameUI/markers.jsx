@@ -1,5 +1,6 @@
 /*! Open Historia — player map marker panel © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React, { useCallback, useEffect, useState } from "react";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 import { subscribeMarkerMode, getMarkerInteractionMode, setMarkerInteractionMode, clearMarkerInteractionMode, placePlayerMarker, removePlayerMarker } from "../Map/markersController.js";
 import { useWorldState } from "../Map/useWorldState.js";
 
@@ -26,6 +27,7 @@ const fieldStyle = {
 };
 
 const MarkersPanel = ({ mapRef, open = false, onToggle }) => {
+  const draggable = useDraggablePanel("oh-panel-position-markers");
   const { markers } = useWorldState();
   const [name, setName] = useState("");
   const [kind, setKind] = useState("point");
@@ -82,6 +84,7 @@ const MarkersPanel = ({ mapRef, open = false, onToggle }) => {
 
       {open && (
         <div
+          ref={draggable.panelRef}
           style={{
             ...surface,
             position: "fixed",
@@ -93,9 +96,10 @@ const MarkersPanel = ({ mapRef, open = false, onToggle }) => {
             flexDirection: "column",
             zIndex: 9999,
             padding: "12px",
+            ...(draggable.positionStyle || {}),
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "9px" }}>
+          <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "9px" }}>
             <strong style={{ fontSize: "14px" }}>Map markers</strong>
             <button type="button" aria-label="Close map markers" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: "14px" }}>✕</button>
           </div>

@@ -19,6 +19,7 @@ import COUNTRY_NAMES from "../../runtime/generated/countryNames.js";
 import { DIFFICULTY_LEVELS, normalizeDifficulty } from "../../runtime/difficulty.js";
 import { applyGameMasterCommand } from "../AI/gameplay.js";
 import { setRegionClickInterceptor } from "../Selection/Regions.jsx";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 
 const PANEL_TOP = "4.75rem";
 const EMPTY_FEATURES = { type: "FeatureCollection", features: [] };
@@ -162,6 +163,7 @@ const PolitySelect = ({ polities, value, onChange, placeholder = "Pick a country
 );
 
 const CheatsPanel = ({ open, onClose, onOpenForces }) => {
+    const draggable = useDraggablePanel("oh-panel-position-cheats");
     const [tool, setTool] = useState(null);
     const [busy, setBusy] = useState(false);
     const [status, setStatus] = useState("");
@@ -234,7 +236,7 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
     if (!open) return null;
 
     const header = (title, subtitle) => (
-        <div style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "0.7rem", paddingBottom: "0.6rem" }}>
+        <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, borderBottom: "1px solid rgba(255,255,255,0.08)", marginBottom: "0.7rem", paddingBottom: "0.6rem" }}>
         <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between" }}>
         <div style={{ alignItems: "center", display: "flex", gap: "0.45rem", minWidth: 0 }}>
         {tool && (
@@ -260,6 +262,7 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
         )}
 
         <div
+        ref={draggable.panelRef}
         style={{
             background: "rgba(17, 24, 39, 0.96)",
             backdropFilter: "blur(8px)",
@@ -278,6 +281,7 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
             top: PANEL_TOP,
             width: "min(24rem, calc(100vw - 1rem))",
             zIndex: 10045,
+            ...(draggable.positionStyle || {}),
         }}
         >
         {!tool ? (

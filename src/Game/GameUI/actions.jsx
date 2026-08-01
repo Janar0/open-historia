@@ -12,6 +12,7 @@ import {
     readActionsState,
     writeActionsState,
 } from "../../runtime/gameState.js";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 
 dayjs.extend(advancedFormat);
 
@@ -223,6 +224,7 @@ const SuggestionCard = ({ topic, onQueue, queuedIds }) => (
 );
 
 const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
+    const draggable = useDraggablePanel("oh-panel-position-actions");
     const [actions, setActions] = React.useState([]);
     const [inputValue, setInputValue] = React.useState("");
     const [country, setCountry] = React.useState("your nation");
@@ -414,6 +416,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
 
     return (
         <div
+        ref={draggable.panelRef}
         style={{
             backdropFilter: "blur(8px)",
             backgroundColor: "rgba(17, 24, 39, 0.95)",
@@ -439,10 +442,13 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             transition: "bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease",
             width: "26.25rem",
             zIndex: 9998,
+            ...(draggable.positionStyle || {}),
         }}
         >
         <div
+        {...draggable.dragHandleProps}
         style={{
+            ...draggable.dragHandleProps.style,
             alignItems: "center",
             borderBottom: "1px solid rgba(255,255,255,0.07)",
             display: "flex",

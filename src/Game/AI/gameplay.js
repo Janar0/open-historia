@@ -1,5 +1,7 @@
 /*! Open Historia — portions (briefing dossiers + timeout/fallback hardening) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import { callAI } from "./main.jsx";
+import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
+import { point } from "@turf/helpers";
 import { normalizePromptPack } from "./gameplayPrompts.js";
 import { getGameplayTool, validateGameplayPayload } from "./gameplaySchemas.js";
 import { toCountryName } from "../../runtime/ownerNames.js";
@@ -27,6 +29,7 @@ import {
   applyMilitaryIndustryOps,
   applyReserveOps,
   applyResourceOps,
+  applySectorOps,
   applyUnitOps,
   normalizeActionEntry,
   normalizeActions,
@@ -59,6 +62,7 @@ import { dedupeGeneratedEvents } from "../../runtime/eventDedup.js";
 import { difficultyDirective } from "../../runtime/difficulty.js";
 import { MAP_SETTING_KEYS, getMapSetting } from "../../runtime/mapSettings.js";
 import { evaluateFigureMeeting, normalizeMeetingMode } from "./figureRules.js";
+import { hasTacticalAnchor, tacticalCellsAreConnected, tacticalDistanceKm } from "./sectorContinuity.js";
 
 const CHAT_HINT_PATTERNS = [
   /\bchat\b/i,
@@ -417,10 +421,13 @@ Use impacts.militaryIndustryOps with section "arsenal" for unlocked weapons and 
 
 const TACTICAL_SECTORS_REFERENCE = `[Tactical Sectors and Prolonged Battles]
 The map has a fine-grained tactical layer below administrative regions. Use impacts.sectorOps for partial control inside a region, never regionTransfers, when a force holds a city, suburb, road, bridgehead, or other local patch while the rest of the region remains with its existing owner. The parent shape is {"op":"upsert","sector":{"id":"stable-id","regionId":"exact region id or name","name":"local sector","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-80,"status":"assault|contested|encircled|held|withdrawn|destroyed","battleId":"stable-battle-id","startedAt":"date","updatedAt":"date","note":"","cells":[{"id":"stable-cell-id","name":"optional village or approach","parentCellId":"optional-parent-when-splitting","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20,"status":"contested","note":""}],"cellOps":[{"op":"upsert","cell":{"id":"child-cell-id","parentCellId":"stable-cell-id","ownerCode":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20}},{"op":"remove","id":"old-cell-id"}]}} and {"op":"remove","id":"sector-id"}.
-   Keep the same sector id, battleId, and cell ids across jumps. For an HOI-style front, use a 3x3 grid by default. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole grid changes; use cellOps when only one approach changes, when a few cells are captured, or when one cell is split. Updating only the parent sector preserves the existing cell hierarchy. The engine creates a stable 3x3 tactical grid for old sectors that have no cells, so those generated ids are also valid to update. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several named sectors when the battle has separate approaches or supply routes. Never invent a regionTransfer for a cell.`;
+   Keep the same sector id, battleId, and cell ids across jumps. Use a compact connected 3x3 grid by default: every center must lie inside the named parent region, neighboring cells should touch or nearly touch, and the radius must match the actual locality rather than covering most of a province. Cell control is the physical SHARE OF GROUND held by ownerCode; change it gradually and keep the lower-control edge toward the opposing front. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole grid changes; use cellOps when only one approach changes, when a few cells are captured, or when one cell is split. Updating only the parent sector preserves the existing cell hierarchy. The engine creates a stable 3x3 tactical grid for old sectors that have no cells, so those generated ids are also valid to update. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several named sectors when the battle has separate approaches or supply routes. Never invent a regionTransfer for a cell.`;
 
 const TERRITORY_FRAGMENT_REFERENCE = `[Cell-backed Territory Splits]
 The administrative map region is still the parent anchor. To cut out only part of it, first ensure the relevant sector has the required leaf cells, then emit impacts.territoryOps with a stable id and exact cellRefs in the form sectorId:cellId. Example: {"op":"create","fragment":{"id":"bakhmut-pocket-01","name":"Bakhmut Pocket","parentRegionId":"<exact map region>","ownerCode":"<FULL country name>","cellRefs":["battle-sector-01:cell-03","battle-sector-01:cell-06"],"kind":"subregion|autonomy|occupation|secession|new-state","status":"active","note":"..."}}. Use leaf cells only; a fragment cannot reference an abstract parent cell. This creates a named subregion/pocket without transferring the whole parent region. For a genuinely new country, pair the fragment with impacts.polityChanges containing a new polity code, name, and color, then set the fragment ownerCode to that new full polity name. For a province or autonomous area inside another country, keep ownerCode as the controlling country. Dissolve it with {"op":"remove","id":"..."}. Do not use territoryOps as a substitute for a complete regionTransfer.`;
+
+const PARTIAL_CAPTURE_OVERRIDE = `[Territory Transfer Boundary — Binding]
+"Captured territory" does NOT automatically mean a whole regionTransfer. If the event describes only a city, suburb, road, bridge, riverbank, salient, beachhead, district, approach, or an advancing front inside a larger named region, emit sectorOps and update connected leaf cells. Keep the administrative owner unchanged. Every new external sector must touch that controller's existing unit or controlled cell; all cell centers must remain inside the parent region. Build a continuous route from the border instead of jumping directly to an inland city. A newly created rebel polity may establish its first pocket only where its ground unit is spawned in that same event, after which its march must advance through connected sectors and unit movement. Emit regionTransfers only when the event explicitly establishes effective control of the entire administrative region and no substantial hostile pocket remains there; a violent transfer of one to three regions requires the new owner's sector there to be fully held. This rule overrides any broader reminder above that says every capture needs a regionTransfer.`;
 
 const runJsonTask = async (taskKey, {
   fallback,
@@ -537,6 +544,10 @@ const runJsonTask = async (taskKey, {
   }
   if (["jumpForward", "autoJumpForward", "gameMaster"].includes(taskKey)) {
     systemPrompt = `${systemPrompt}\n\n${FIGURES_AND_INDUSTRY_REFERENCE}\nCurrent key figures:\n${variables.keyFiguresSummary || "No key figures are currently recorded."}\nCurrent military industry:\n${variables.militaryIndustrySummary || "No military-industry records are currently recorded."}`;
+    // Deliberately last: older frozen prompts and the broad action reference say
+    // "capture = region transfer". The tactical layer makes that false for local
+    // advances, so this final binding boundary resolves the contradiction.
+    systemPrompt = `${systemPrompt}\n\n${PARTIAL_CAPTURE_OVERRIDE}`;
   }
 
   const controller = new AbortController();
@@ -1136,6 +1147,30 @@ const resolveRegionTransfers = async (containers, world) => {
 // region/owner identities are checked against the active map/catalog. Invalid
 // sectors are dropped during salvage instead of poisoning world.controlSectors;
 // on the first attempt a concise reason gives the model a chance to correct it.
+const tacticalLeaves = (sector) => {
+  const cells = normalizeArray(sector?.cells);
+  const parentIds = new Set(cells.map((cell) => normalizeString(cell?.parentCellId)).filter(Boolean));
+  const leaves = cells.filter((cell) => cell?.id && !parentIds.has(cell.id));
+  return leaves.length > 0
+    ? leaves
+    : sector?.center ? [{ center: sector.center, radiusKm: sector.radiusKm, ownerCode: sector.ownerCode }] : [];
+};
+
+const geometryContainsTacticalPoint = (geometry, candidate) => {
+  if (!geometry) return true;
+  const center = candidate?.center && typeof candidate.center === "object" ? candidate.center : candidate;
+  const lng = Number(center?.lng);
+  const lat = Number(center?.lat);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false;
+  try {
+    return booleanPointInPolygon(point([lng, lat]), geometry, { ignoreBoundary: false });
+  } catch {
+    // A malformed optional overview geometry must not invalidate an otherwise
+    // valid game operation; coordinate normalization still runs below.
+    return true;
+  }
+};
+
 const resolveControlSectorOps = async (containers, world) => {
   const catalog = await loadRegionCatalog().catch(() => []);
   const worldState = normalizeWorldState(world);
@@ -1171,6 +1206,15 @@ const resolveControlSectorOps = async (containers, world) => {
   }
   Object.values(worldState.regionOwnershipOverrides || {}).forEach((owner) => addOwner(owner));
   worldState.units.forEach((unit) => addOwner(unit.ownerCode));
+  // A rebellion or splinter state can be created and receive its first local
+  // sector in the same event. Register those names before resolving sector owners.
+  for (const { impacts } of containers) {
+    for (const change of normalizeArray(impacts?.polityChanges)) {
+      addOwner(change?.code, change?.name || change?.code);
+      addOwner(change?.name, change?.name || change?.code);
+      for (const alias of normalizeArray(change?.aliases)) addOwner(alias, change?.name || change?.code);
+    }
+  }
 
   const resolveOwner = (value) => {
     const key = regionKey(value);
@@ -1182,6 +1226,25 @@ const resolveControlSectorOps = async (containers, world) => {
     if (byId.has(raw)) return raw;
     const matches = byName.get(regionKey(raw)) || [];
     return matches.length === 1 ? matches[0].id : "";
+  };
+
+  let workingSectors = worldState.controlSectors;
+  const baseUnitAnchors = worldState.units
+    .filter((unit) => unit.status !== "defeated" && Number(unit.strength) > 0)
+    .map((unit) => ({ ownerCode: resolveOwner(unit.ownerCode), center: { lng: unit.lng, lat: unit.lat }, radiusKm: 2 }));
+  const newlyCreatedOwners = new Set();
+  for (const { impacts } of containers) {
+    for (const change of normalizeArray(impacts?.polityChanges)) {
+      const owner = resolveOwner(change?.name || change?.code);
+      if (owner) newlyCreatedOwners.add(owner.toLowerCase());
+    }
+  }
+
+  const administrativeOwner = (regionId) => {
+    const override = worldState.regionOwnershipOverrides?.[regionId];
+    if (override !== undefined) return resolveOwner(override);
+    const region = byId.get(regionId);
+    return resolveOwner(region?.country || region?.countryCode);
   };
 
   const dropped = [];
@@ -1250,7 +1313,7 @@ const resolveControlSectorOps = async (containers, world) => {
           },
         };
       });
-      kept.push({
+      const resolvedOperation = {
         op: "upsert",
         sector: {
           ...sector,
@@ -1260,7 +1323,95 @@ const resolveControlSectorOps = async (containers, world) => {
           cells,
         },
         ...(cellOps.length > 0 ? { cellOps } : {}),
-      });
+      };
+      const previewSectors = applySectorOps(workingSectors, [resolvedOperation]);
+      const candidateSector = previewSectors.find((candidate) => candidate.id === sector.id);
+      if (!candidateSector) {
+        dropped.push({ path: `${path}.sectorOps[${index}]`, reason: "the resulting tactical sector is invalid" });
+        continue;
+      }
+      const leaves = tacticalLeaves(candidateSector);
+      const regionGeometry = byId.get(regionId)?.geometry;
+      const outside = [candidateSector, ...leaves].find((candidate) => !geometryContainsTacticalPoint(regionGeometry, candidate));
+      if (outside) {
+        dropped.push({
+          path: `${path}.sectorOps[${index}]`,
+          reason: `its center or a cell lies outside parent region "${regionId}"`,
+        });
+        continue;
+      }
+      if (!tacticalCellsAreConnected(leaves)) {
+        dropped.push({
+          path: `${path}.sectorOps[${index}]`,
+          reason: "its leaf cells are disconnected; advance through neighboring cells or use separate sectors",
+        });
+        continue;
+      }
+      const overlappingLeafPair = leaves.some((left, leftIndex) => leaves.slice(leftIndex + 1).some((right) => {
+        const leftOwner = String(left.ownerCode || ownerCode).toLowerCase();
+        const rightOwner = String(right.ownerCode || ownerCode).toLowerCase();
+        if (leftOwner === rightOwner) return false;
+        const combinedRadius = Math.max(1, Number(left.radiusKm) || 0.5)
+          + Math.max(1, Number(right.radiusKm) || 0.5);
+        return tacticalDistanceKm(left, right) < combinedRadius * 0.65;
+      }));
+      if (overlappingLeafPair) {
+        dropped.push({
+          path: `${path}.sectorOps[${index}]`,
+          reason: "opposing leaf cells overlap; represent the contested ground as one cell with ownerCode, contestedBy and control",
+        });
+        continue;
+      }
+      const opposingOverlap = workingSectors
+        .filter((existing) => existing.id !== candidateSector.id && normalizeString(existing.regionId) === regionId)
+        .flatMap(tacticalLeaves)
+        .some((existingCell) => leaves.some((candidateCell) => {
+          const existingOwner = String(existingCell.ownerCode || "").toLowerCase();
+          const candidateOwner = String(candidateCell.ownerCode || ownerCode).toLowerCase();
+          if (!existingOwner || existingOwner === candidateOwner) return false;
+          const combinedRadius = Math.max(1, Number(existingCell.radiusKm) || 0.5)
+            + Math.max(1, Number(candidateCell.radiusKm) || 0.5);
+          return tacticalDistanceKm(existingCell, candidateCell) < combinedRadius * 0.65;
+        }));
+      if (opposingOverlap) {
+        dropped.push({
+          path: `${path}.sectorOps[${index}]`,
+          reason: "it substantially overlaps an opposing control cell; update that existing cell's control/owner instead of stacking territory",
+        });
+        continue;
+      }
+
+      const currentOwner = administrativeOwner(regionId);
+      const isExternalControl = !currentOwner || currentOwner.toLowerCase() !== ownerCode.toLowerCase();
+      if (isExternalControl) {
+        const anchors = [
+          ...baseUnitAnchors.filter((anchor) => anchor.ownerCode.toLowerCase() === ownerCode.toLowerCase()),
+          ...workingSectors
+            .filter((existing) => String(existing.ownerCode || "").toLowerCase() === ownerCode.toLowerCase())
+            .flatMap(tacticalLeaves),
+        ];
+        // A polity created in this same event may establish its first pocket at
+        // the exact place where a ground formation is spawned. Existing foreign
+        // polities cannot use a spawn to teleport a bridgehead behind the front.
+        if (newlyCreatedOwners.has(ownerCode.toLowerCase())) {
+          for (const unitOperation of normalizeArray(impacts?.unitOps)) {
+            if (unitOperation?.op !== "spawn") continue;
+            const unit = unitOperation.unit ?? unitOperation;
+            if (resolveOwner(unit?.ownerCode).toLowerCase() !== ownerCode.toLowerCase()) continue;
+            anchors.push({ center: { lng: Number(unit.lng), lat: Number(unit.lat) }, radiusKm: 2 });
+          }
+        }
+        if (!hasTacticalAnchor(leaves, anchors)) {
+          dropped.push({
+            path: `${path}.sectorOps[${index}]`,
+            reason: `controller "${ownerCode}" has no nearby unit or connected controlled cell; create the border bridgehead first`,
+          });
+          continue;
+        }
+      }
+
+      kept.push(resolvedOperation);
+      workingSectors = previewSectors;
     }
     impacts.sectorOps = kept;
   }
@@ -1365,7 +1516,7 @@ const resolveTerritoryOps = async (containers, world) => {
 
 const buildSectorFeedback = (dropped) => [
   ...dropped.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
-  "Use an exact active map region id/name, a known full polity name, and real finite center coordinates; partial control belongs in sectorOps, not regionTransfers.",
+  "Use an exact active region, keep every center inside it, connect neighboring leaf cells, and begin an external advance beside that controller's existing unit or controlled cell. Partial control belongs in sectorOps, not regionTransfers.",
 ].join("\n");
 
 const buildTerritoryFeedback = (dropped) => [
@@ -1521,6 +1672,46 @@ const validateChatOpener = (chatLike, path) => {
 // verbs, not war verbs) so a defensive battle that moved no borders — a
 // legitimate zero-transfer turn — never trips the reluctance guard below.
 const CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|annex\w*|conquer\w*|occup(?:y|ies|ied|ation)|overr[au]n|liberat\w*|retak\w*|retaken|recaptur\w*|cedes?|ceded|ceding|cession|fell to|falls? to)\b/i;
+const VIOLENT_CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|conquer\w*|occup(?:y|ies|ied|ation)|overr[au]n|retak\w*|retaken|recaptur\w*|fell to|falls? to)\b|(?:захват|оккуп|овлад|отбил|отбит|взял[аи]?|занял[аи]?|пал\s+под)/i;
+
+// A violent one/few-region transfer must be the culmination of the tactical
+// layer, not a shortcut around it. Large whole-country collapses are exempt:
+// they model political capitulation rather than every district being fought
+// through independently. Peaceful cessions and scripted GM edits are also
+// intentionally outside this guard.
+const enforceViolentTransferContinuity = (containers, world) => {
+  let sectors = normalizeWorldState(world).controlSectors;
+  const dropped = [];
+  for (const { event, impacts, path } of containers) {
+    if (!impacts) continue;
+    sectors = applySectorOps(sectors, impacts.sectorOps);
+    const transfers = normalizeArray(impacts.regionTransfers);
+    if (!event || transfers.length === 0 || transfers.length > 3) continue;
+    const narration = `${normalizeString(event.title)} ${normalizeString(event.description)}`;
+    if (!VIOLENT_CAPTURE_LANGUAGE.test(narration)) continue;
+    const kept = [];
+    for (let index = 0; index < transfers.length; index += 1) {
+      const transfer = transfers[index];
+      const regionId = normalizeString(transfer?.regionId);
+      const newOwner = toCountryName(normalizeString(transfer?.toCode)).toLowerCase();
+      const secured = sectors.some((sector) =>
+        normalizeString(sector.regionId) === regionId
+        && String(sector.ownerCode || "").toLowerCase() === newOwner
+        && Number(sector.control) >= 85
+        && sector.status === "held");
+      if (!secured) {
+        dropped.push({
+          path: `${path}.regionTransfers[${index}]`,
+          reason: `violent transfer of "${regionId}" has no connected ${transfer?.toCode || "attacker"} sector at 85%+ held control`,
+        });
+        continue;
+      }
+      kept.push(transfer);
+    }
+    impacts.regionTransfers = kept;
+  }
+  return dropped;
+};
 
 // Strict/salvage discipline, the same contract clampTimelineDates follows:
 // the FIRST attempt returns corrective errors so the model can fix its own
@@ -1531,7 +1722,7 @@ const CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|annex\w*|conquer\w*|occup(?:y|ies
 export const validateGeneratedWorldChanges = async (candidate, world, { strictTransfers = false } = {}) => {
   const strict = strictTransfers;
   const containers = Array.isArray(candidate?.events)
-    ? candidate.events.map((event, index) => ({ impacts: event?.impacts, path: `$.events[${index}].impacts` }))
+    ? candidate.events.map((event, index) => ({ event, impacts: event?.impacts, path: `$.events[${index}].impacts` }))
     : [{ impacts: candidate?.impacts, path: "$.impacts" }];
   if (candidate?.impacts && Array.isArray(candidate.events)) {
     containers.push({ impacts: candidate.impacts, path: "$.impacts" });
@@ -1550,6 +1741,13 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
   if (strict && droppedSectors.length > 0) {
     return buildSectorFeedback(droppedSectors);
   }
+  const droppedViolentTransfers = enforceViolentTransferContinuity(containers, world);
+  if (strict && droppedViolentTransfers.length > 0) {
+    return [
+      ...droppedViolentTransfers.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
+      "Advance through connected sectorOps first. Transfer the administrative region only after its tactical sector reaches at least 85% and status held.",
+    ].join("\n");
+  }
   const droppedTerritory = await resolveTerritoryOps(containers, world);
   if (strict && droppedTerritory.length > 0) {
     return buildTerritoryFeedback(droppedTerritory);
@@ -1564,15 +1762,18 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
   // finished turn. Only for event-shaped payloads: a $.impacts container has no
   // narration to check.
   if (strict && Array.isArray(candidate?.events)) {
-    const totalTransfers = containers.reduce(
-      (sum, { impacts }) => sum + normalizeArray(impacts?.regionTransfers).length,
+    const totalTerritorialChanges = containers.reduce(
+      (sum, { impacts }) => sum
+        + normalizeArray(impacts?.regionTransfers).length
+        + normalizeArray(impacts?.sectorOps).length
+        + normalizeArray(impacts?.territoryOps).length,
       0,
     );
-    if (totalTransfers === 0) {
+    if (totalTerritorialChanges === 0) {
       const captureEvent = candidate.events.find((event) =>
         CAPTURE_LANGUAGE.test(`${normalizeString(event?.title)} ${normalizeString(event?.description)}`));
       if (captureEvent) {
-        return `Your events describe territory changing hands (e.g. "${normalizeString(captureEvent.title) || "an event"}") but the payload contains ZERO impacts.regionTransfers. Territorial narration and the map must never disagree: add impacts.regionTransfers entries ({"regionId": exact id or the region's plain name, "toCode": the new owner}) to EVERY event whose text says a region was captured, seized, occupied, annexed, ceded, liberated, or retaken, covering each region it names or implies. If nothing genuinely changed hands in this period, remove the capture language from those events instead, and resend.`;
+        return `Your events describe territory changing hands (e.g. "${normalizeString(captureEvent.title) || "an event"}") but the payload contains no territorial impact. Keep narration and the map consistent: use sectorOps with connected cells for a city, road, bridgehead, salient, or other partial advance; use regionTransfers only when the complete administrative region changed owner; use territoryOps for a named cell-backed split. If nothing genuinely changed hands, remove the capture language and resend.`;
       }
     }
   }

@@ -983,7 +983,8 @@ export const loadCountryNames = async ({ force = false } = {}) => {
 
       const seen = new Map();
       for (let index = 0; index < layer.length; index += 1) {
-        const props = layer.feature(index).properties;
+        const vectorFeature = layer.feature(index);
+        const props = vectorFeature.properties;
         const code = props?.GID_0 || props?.gid_0 || props?.ISO_A3 || props?.iso_a3 || "";
         const name = resolveCountryDisplayName(
           props?.Country || props?.NAME || props?.name || props?.COUNTRY,
@@ -1075,9 +1076,18 @@ export const loadRegionCatalog = async ({ force = false } = {}) => {
 
         const key = String(id);
         if (!seen.has(key)) {
+          let geometry = null;
+          try {
+            // The z0 tile is the same complete, intentionally simplified world
+            // overview used for the catalog. Retaining its geometry lets the
+            // gameplay validator reject a tactical center outside the region it
+            // claims to belong to, without loading the full-resolution archive.
+            geometry = vectorFeature.toGeoJSON(0, 0, 0)?.geometry ?? null;
+          } catch { /* property-only vector decoders remain supported */ }
           seen.set(key, {
             country,
             countryCode,
+            geometry,
             id: key,
             name: String(name),
           });
@@ -1121,12 +1131,14 @@ export const loadRegionCatalog = async ({ force = false } = {}) => {
             // resolve against the name the world actually uses.
             if (name) existing.name = name;
             if (props.country) existing.country = String(props.country);
+            if (feature.geometry) existing.geometry = feature.geometry;
             continue;
           }
           const countryCode = props.gid0 ? String(props.gid0) : "";
           seen.set(id, {
             country: props.country ? String(props.country) : "",
             countryCode,
+            geometry: feature.geometry ?? null,
             id,
             name: name || id,
           });

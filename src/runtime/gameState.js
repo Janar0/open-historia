@@ -755,8 +755,10 @@ const roundCoordinate = (value) => Math.round(value * 1000000) / 1000000;
 
 const buildGeneratedControlCells = (sector) => {
   const safeLat = Math.max(-84, Math.min(84, sector.center.lat));
-  const offsetKm = Math.max(0.25, sector.radiusKm * 0.55);
-  const cellRadiusKm = Math.max(0.5, Math.min(20, sector.radiusKm * 0.42));
+  // Leave enough separation for the 3x3 grid to read as local ground instead
+  // of nine heavily-overlapping discs merging into one long capsule.
+  const offsetKm = Math.max(0.25, sector.radiusKm * 0.5);
+  const cellRadiusKm = Math.max(0.5, Math.min(20, sector.radiusKm * 0.3));
   const latStep = offsetKm / 111.32;
   const lngStep = offsetKm / (111.32 * Math.max(0.08, Math.cos((safeLat * Math.PI) / 180)));
   return TACTICAL_CELL_LAYOUT.map(([x, y], cellIndex) => ({
@@ -934,7 +936,27 @@ const normalizeControlSectorEntry = (entry, index = 0, { generateCells = true } 
   const cells = rawCells.length > 0
     ? rawCells.map((cell, cellIndex) => normalizeControlSectorCellEntry(cell, sector, cellIndex)).filter(Boolean)
     : generateCells ? buildGeneratedControlCells(sector) : [];
-  return { ...sector, cells: normalizeCellHierarchy(cells, sector.id) };
+  const normalizedCells = normalizeCellHierarchy(cells, sector.id);
+  const parentIds = new Set(normalizedCells.map((cell) => cell.parentCellId).filter(Boolean));
+  const leaves = normalizedCells.filter((cell) => !parentIds.has(cell.id));
+  // Individual leaf cells are authoritative. Recompute the sector summary after
+  // a cellOp so a captured approach immediately changes the displayed/prompted
+  // sector percentage even if the model repeated a stale parent value.
+  const weightTotal = leaves.reduce((sum, cell) => sum + Math.max(0.25, cell.radiusKm ** 2), 0);
+  const summarizedControl = weightTotal > 0
+    ? Math.round(leaves.reduce((sum, cell) => sum + cell.control * Math.max(0.25, cell.radiusKm ** 2), 0) / weightTotal)
+    : sector.control;
+  const hasContestedLeaf = leaves.some((cell) => cell.contestedBy || ["assault", "contested", "encircled"].includes(cell.status));
+  return {
+    ...sector,
+    control: summarizedControl,
+    status: ["withdrawn", "destroyed"].includes(sector.status)
+      ? sector.status
+      : hasContestedLeaf || summarizedControl < 100
+        ? ["assault", "encircled"].includes(sector.status) ? sector.status : "contested"
+        : "held",
+    cells: normalizedCells,
+  };
 };
 
 export const normalizeControlSectors = (sectors) =>

@@ -1,5 +1,6 @@
 /*! Open Historia — military reserves panel © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React, { useEffect, useMemo, useState } from "react";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 import { normalizeReserveSheet, readGameData } from "../../runtime/gameState.js";
 import { useWorldState } from "../Map/useWorldState.js";
 
@@ -81,6 +82,7 @@ const ResourceLedgerSection = ({ entries, owner }) => {
 };
 
 const ReservesPanel = ({ open = false, onToggle }) => {
+  const draggable = useDraggablePanel("oh-panel-position-reserves");
   const { worldState, militaryReserves, militaryIndustry, resourceLedger } = useWorldState();
   const [playerCode, setPlayerCode] = useState("");
 
@@ -119,8 +121,8 @@ const ReservesPanel = ({ open = false, onToggle }) => {
   if (!open) return null;
 
   return (
-    <div style={{ ...surface, position: "fixed", bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", width: "20rem", maxHeight: "68vh", overflowY: "auto", zIndex: 9999, padding: "13px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
+    <div ref={draggable.panelRef} style={{ ...surface, position: "fixed", bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", width: "20rem", maxHeight: "68vh", overflowY: "auto", zIndex: 9999, padding: "13px", ...(draggable.positionStyle || {}) }}>
+      <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
         <strong style={{ fontSize: "14px" }}>Military reserves</strong>
         <button type="button" aria-label="Close military reserves" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: "14px" }}>✕</button>
       </div>

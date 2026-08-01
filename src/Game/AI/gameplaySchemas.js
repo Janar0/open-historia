@@ -664,7 +664,7 @@ const controlSectorCellSchema = {
     depth: { type: "integer", minimum: 1, maximum: 2, description: "Cell hierarchy depth: 1 is the sector grid, 2 is the final micro-cell level. Never create depth 3." },
     ownerCode: nonEmptyTextSchema("Current cell controller's FULL country name, never a country code."),
     contestedBy: textSchema("Opposing polity's FULL country name when this cell is contested."),
-    control: { type: "integer", minimum: 0, maximum: 100, description: "Approximate control percentage held by ownerCode." },
+    control: { type: "integer", minimum: 0, maximum: 100, description: "Approximate share of this cell's ground physically controlled by ownerCode." },
     center: {
       type: "object",
       properties: {
@@ -718,7 +718,7 @@ const controlSectorSchema = {
     name: nonEmptyTextSchema("Human-readable tactical sector name."),
     ownerCode: nonEmptyTextSchema("Current tactical controller's FULL country name, never a country code."),
     contestedBy: textSchema("Opposing polity's FULL country name when the sector is contested."),
-    control: { type: "integer", minimum: 0, maximum: 100, description: "Approximate control percentage held by ownerCode." },
+    control: { type: "integer", minimum: 0, maximum: 100, description: "Area-weighted share of this tactical patch physically controlled by ownerCode." },
     center: {
       type: "object",
       properties: {
@@ -857,14 +857,14 @@ const impactsSchema = {
     regionTransfers: {
       type: "array",
       description:
-        "Map ownership changes. REQUIRED whenever the event text says territory was "
-        + "captured, occupied, annexed, ceded, liberated, or otherwise changed hands - "
-        + "one entry per affected region, or the map will not match the story.",
+        "Complete administrative-region ownership changes. REQUIRED when the whole named region was "
+        + "annexed, ceded, liberated, or decisively occupied. For a city, bridgehead, road, district, "
+        + "front advance, or any other partial capture inside the region, use sectorOps instead.",
       items: regionTransferSchema,
     },
     sectorOps: {
       type: "array",
-      description: "Partial tactical control changes inside a region. Use this for a contested front or a slow battle; use regionTransfers only when the whole administrative region changes hands.",
+      description: "Partial tactical control changes inside a region. Use connected cells for every local advance; control is occupied area, not visual opacity. Use regionTransfers only when the whole administrative region changes hands.",
       items: sectorOpSchema,
     },
     territoryOps: {

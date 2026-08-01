@@ -5,6 +5,7 @@ import polygonClipping from "polygon-clipping";
 import { getNationColors } from "../../runtime/assets.js";
 import { useWorldState } from "./useWorldState.js";
 import { hexagonPolygon, smoothClosedRing } from "./controlGeometry.js";
+import { clipRingToRegion, useRegionClipGeometry } from "./useRegionClipGeometry.js";
 
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 const FALLBACK_COLORS = ["#f59e0b", "#22c55e", "#38bdf8", "#e879f9", "#fb7185", "#a3e635"];
@@ -21,7 +22,7 @@ const colorForOwner = (ownerCode, colors) => {
   return FALLBACK_COLORS[hashString(ownerCode) % FALLBACK_COLORS.length];
 };
 
-const buildData = (fragments, sectors, colors) => {
+const buildData = (fragments, sectors, colors, regionClips) => {
   const cells = new Map();
   for (const sector of sectors) {
     for (const cell of sector.cells || []) {
@@ -39,10 +40,13 @@ const buildData = (fragments, sectors, colors) => {
   const borders = [];
   for (const fragment of fragments) {
     if (fragment.status === "dissolved") continue;
-    const polygons = fragment.cellRefs.map((ref) => {
+    const regionClip = regionClips.get(String(fragment.parentRegionId ?? ""));
+    const polygons = fragment.cellRefs.flatMap((ref) => {
       const cell = cells.get(ref);
-      return cell ? [hexagonPolygon(cell)] : null;
-    }).filter(Boolean);
+      if (!cell) return [];
+      return clipRingToRegion(smoothClosedRing(hexagonPolygon(cell), 0.08), regionClip)
+        .map((polygon) => [polygon]);
+    });
     if (!polygons.length) continue;
     let merged;
     try {
@@ -84,17 +88,22 @@ const buildData = (fragments, sectors, colors) => {
 const TerritoryFragments = () => {
   const { controlSectors, territoryFragments } = useWorldState();
   const [colors, setColors] = useState({});
+  const regionIds = useMemo(
+    () => territoryFragments.map((fragment) => fragment.parentRegionId),
+    [territoryFragments],
+  );
+  const regionClips = useRegionClipGeometry(regionIds);
 
   useEffect(() => {
     getNationColors().then(setColors).catch(() => {});
   }, []);
 
   const data = useMemo(
-    () => (territoryFragments.length ? buildData(territoryFragments, controlSectors, colors) : {
+    () => (territoryFragments.length ? buildData(territoryFragments, controlSectors, colors, regionClips) : {
       fills: EMPTY_FEATURE_COLLECTION,
       borders: EMPTY_FEATURE_COLLECTION,
     }),
-    [controlSectors, territoryFragments, colors],
+    [controlSectors, territoryFragments, colors, regionClips],
   );
 
   if (!data.fills.features.length) return null;

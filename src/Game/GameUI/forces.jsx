@@ -1,5 +1,6 @@
 /*! Open Historia — Forces panel © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React, { useCallback, useEffect, useState } from "react";
+import { useDraggablePanel } from "./useDraggablePanel.js";
 import {
   subscribeUnits,
   getUnits,
@@ -85,6 +86,7 @@ const UnitRow = ({ unit, dimmed, onClick }) => (
 // Controlled panel: the launcher button lives in the bottom toolbar (chat.jsx
 // Toolbar) alongside Chat and Actions; main.jsx owns the open state.
 export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle }) => {
+  const draggable = useDraggablePanel("oh-panel-position-forces");
   const setOpen = (next) => {
     const resolved = typeof next === "function" ? next(open) : next;
     if (resolved !== open) onToggle?.();
@@ -185,6 +187,7 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
 
       {open && (
         <div
+          ref={draggable.panelRef}
           style={{
             ...surface,
             position: "fixed",
@@ -196,9 +199,10 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
             flexDirection: "column",
             zIndex: 9999,
             padding: "12px",
+            ...(draggable.positionStyle || {}),
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+          <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
             <strong style={{ fontSize: "14px" }}>Forces</strong>
             <button
               type="button"
