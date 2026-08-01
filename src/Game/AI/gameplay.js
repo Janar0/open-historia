@@ -71,6 +71,7 @@ import { MAP_SETTING_KEYS, getMapSetting } from "../../runtime/mapSettings.js";
 import { evaluateFigureMeeting, normalizeMeetingMode } from "./figureRules.js";
 import {
   boundTacticalSectorEvolution,
+  deriveNextTacticalCell,
   deriveTacticalBorderSector,
   groundSpawnIsFriendly,
   hasTacticalAnchor,
@@ -1236,12 +1237,25 @@ const rewritePartialRegionTransfers = async (candidate, world, requestText) => {
     );
     const slug = normalizeString(region.id).replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()
       || `region-${index + 1}`;
+    const generatedSectorId = `gm-partial-${slug}`;
+    const existingSector = worldState.controlSectors.find((entry) => (
+      entry.id === generatedSectorId
+      || (
+        normalizeString(entry.regionId) === normalizeString(region.id)
+        && regionKey(entry.ownerCode) === regionKey(ownerCode)
+      )
+    ));
+    const nextCell = existingSector
+      ? deriveNextTacticalCell(existingSector, region.geometry, {
+        id: `${existingSector.id}-advance-${(existingSector.cells || []).length + 1}`,
+      })
+      : null;
     generatedSectorOps.push({
       op: "upsert",
       sector: {
-        id: `gm-partial-${slug}`,
+        id: existingSector?.id || generatedSectorId,
         regionId: region.id,
-        name: `${region.name} partial advance`,
+        name: existingSector?.name || `${region.name} partial advance`,
         ownerCode,
         ...(currentOwner ? { contestedBy: currentOwner } : {}),
         control: 24,
@@ -1249,6 +1263,11 @@ const rewritePartialRegionTransfers = async (candidate, world, requestText) => {
         radiusKm: 8,
         status: "assault",
         note: normalizeString(transfer?.note) || "Partial capture requested by the game master.",
+        ...(existingSector?.frontOrigin ? { frontOrigin: existingSector.frontOrigin } : {}),
+        ...(existingSector?.frontBearing !== undefined ? { frontBearing: existingSector.frontBearing } : {}),
+        ...(existingSector?.frontWidthKm !== undefined ? { frontWidthKm: existingSector.frontWidthKm } : {}),
+        ...(existingSector?.advanceDepthKm !== undefined ? { advanceDepthKm: existingSector.advanceDepthKm } : {}),
+        ...(nextCell ? { cells: [nextCell] } : {}),
       },
     });
     converted.add(index);

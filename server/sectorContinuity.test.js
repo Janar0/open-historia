@@ -3,6 +3,7 @@ import test from "node:test";
 import polygonClipping from "polygon-clipping";
 import {
   boundTacticalSectorEvolution,
+  deriveNextTacticalCell,
   deriveTacticalBorderSector,
   groundSpawnIsFriendly,
   hasTacticalAnchor,
@@ -266,6 +267,28 @@ test("a moved cell reused under its old id becomes the next connected piece", ()
   const advancedAgain = boundTacticalSectorEvolution(bounded, nextCandidate);
   assert.equal(advancedAgain.cells.some((entry) => entry.center.lng === 1.3), true);
   assert.equal(advancedAgain.cells.some((entry) => entry.center.lng === 1.45), true);
+});
+
+test("a repeated partial request gets a deterministic next cell when the model omits coordinates", () => {
+  const sector = {
+    id: "front-1",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 1, lat: 0 },
+    frontBearing: 90,
+    frontWidthKm: 10,
+    advanceDepthKm: 18,
+    control: 24,
+    cells: [{ ...cell(1.04, 0, 4), id: "front-cell", control: 24, status: "assault" }],
+  };
+  const region = {
+    type: "Polygon",
+    coordinates: [[[1, -1], [3, -1], [3, 1], [1, 1], [1, -1]]],
+  };
+  const next = deriveNextTacticalCell(sector, region, { id: "front-1-advance-2" });
+  assert.ok(next);
+  assert.equal(next.id, "front-1-advance-2");
+  assert.ok(next.center.lng > sector.cells[0].center.lng);
+  assert.equal(tacticalGeometryContainsPoint(region, next), true);
 });
 
 test("old tactical cells disappear only through an explicit remove", () => {

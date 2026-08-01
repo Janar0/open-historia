@@ -457,6 +457,44 @@ export const tacticalConnectedComponents = (cells) => {
 
 export const tacticalCellsAreConnected = (cells) => tacticalConnectedComponents(cells).length <= 1;
 
+// When a partial GM request is converted from a region transfer, the model may
+// return the same region again without supplying a new cell coordinate. Give
+// the persistent front one deterministic next step instead of replaying the
+// original entry strip forever.
+export const deriveNextTacticalCell = (sector, regionGeometry, { id } = {}) => {
+  const leaves = tacticalLeafCells(sector).filter((cell) => tacticalCoordinates(cell));
+  if (!leaves.length) return null;
+  const inferred = inferTacticalFrontGeometry(sector);
+  const frontOrigin = tacticalCoordinates(sector?.frontOrigin) || inferred?.frontOrigin;
+  const frontBearing = Number.isFinite(Number(sector?.frontBearing))
+    ? Number(sector.frontBearing)
+    : inferred?.frontBearing;
+  if (!frontOrigin || !Number.isFinite(frontBearing)) return null;
+
+  const projections = leaves
+    .map((cell) => tacticalProjectPoint(frontOrigin, cell, frontBearing))
+    .filter(Boolean);
+  if (!projections.length) return null;
+  const frontMostKm = Math.max(...projections.map((entry) => entry.forwardKm));
+  const averageRadiusKm = leaves.reduce((sum, cell) => sum + radius(cell), 0) / leaves.length;
+  const stepKm = Math.max(3, Math.min(10, averageRadiusKm * 1.35));
+  const candidate = tacticalOffsetPoint(frontOrigin, frontBearing, frontMostKm + stepKm);
+  if (!candidate || (regionGeometry && !tacticalGeometryContainsPoint(regionGeometry, candidate))) return null;
+  if (leaves.some((cell) => tacticalDistanceKm(cell, candidate) < Math.max(2, averageRadiusKm * 0.55))) return null;
+
+  return {
+    id: id || `${sector.id || "sector"}-advance-${leaves.length + 1}`,
+    depth: 1,
+    ownerCode: sector.ownerCode,
+    ...(sector.contestedBy ? { contestedBy: sector.contestedBy } : {}),
+    control: Math.max(5, Math.min(35, Math.round(Number(sector.control) || 20))),
+    center: { lng: candidate.lng, lat: candidate.lat },
+    radiusKm: Math.max(2.5, Math.min(8, averageRadiusKm)),
+    status: "assault",
+    ...(sector.note ? { note: sector.note } : {}),
+  };
+};
+
 export const hasTacticalAnchor = (cells, anchors) => {
   const targets = cells?.length ? cells : [];
   for (const target of targets) {
