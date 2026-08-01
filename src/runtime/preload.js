@@ -1,162 +1,31 @@
 import {
   JSON_URLS,
-  PMTILES_ARCHIVES,
-  TERRAIN_TILE_TEMPLATE,
-  buildTileUrl,
-  esriTileTemplate,
-  loadCountryNames,
-  readJson,
-  selectedBasemapId,
   warmJson,
-  warmPmtilesArchive,
-  warmRemoteResources,
 } from "./assets.js";
-import { warmCountryLabelCollections } from "./countryLabels.js";
 
 export const STARTUP_TIME_BUDGET_MS = 30_000;
-const INITIAL_VIEWPORT = {
-  latitude: 0,
-  longitude: 0,
-};
-
-const buildGlobalTextureUrls = (template, maxZoom) => {
-  const urls = [];
-
-  for (let z = 0; z <= maxZoom; z += 1) {
-    const dimension = 2 ** z;
-    for (let x = 0; x < dimension; x += 1) {
-      for (let y = 0; y < dimension; y += 1) {
-        urls.push(buildTileUrl(template, { x, y, z }));
-      }
-    }
-  }
-
-  return urls;
-};
-
-const lngLatToTile = (longitude, latitude, zoom) => {
-  const tilesPerAxis = 2 ** zoom;
-  const latRad = (latitude * Math.PI) / 180;
-  const rawX = ((longitude + 180) / 360) * tilesPerAxis;
-  const rawY =
-    ((1 -
-      Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) /
-      2) *
-    tilesPerAxis;
-
-  return {
-    x: Math.floor(rawX),
-    y: Math.max(0, Math.min(tilesPerAxis - 1, Math.floor(rawY))),
-  };
-};
-
-const buildInitialViewportTextureUrls = (
-  template,
-  { latitude, longitude } = INITIAL_VIEWPORT,
-) => {
-  const zoomWindows = [
-    { xRadius: 1, yRadius: 1, z: 3 },
-    { xRadius: 2, yRadius: 1, z: 4 },
-  ];
-
-  return zoomWindows.flatMap(({ xRadius, yRadius, z }) => {
-    const tilesPerAxis = 2 ** z;
-    const center = lngLatToTile(longitude, latitude, z);
-    const urls = [];
-
-    for (let dx = -xRadius; dx <= xRadius; dx += 1) {
-      for (let dy = -yRadius; dy <= yRadius; dy += 1) {
-        const x = (center.x + dx + tilesPerAxis) % tilesPerAxis;
-        const y = center.y + dy;
-
-        if (y < 0 || y >= tilesPerAxis) continue;
-
-        urls.push(buildTileUrl(template, { x, y, z }));
-      }
-    }
-
-    return urls;
-  });
-};
 
 const STARTUP_TASKS = [
   {
-    id: "state",
-    label: "Syncing saves and runtime state",
-    weight: 12,
+    id: "critical-state",
+    label: "Loading current game state",
+    weight: 1,
+    // Keep the startup path deliberately narrow. The map protocol can request
+    // PMTiles ranges as tiles enter the viewport, whereas warmPmtilesArchive
+    // downloads the *entire* archive into memory (countries + regions alone
+    // are roughly 160 MB). Chat, events, prompts and advisor data are likewise
+    // only needed after their respective panel/action opens. Fetching all of
+    // them here made the player wait for data that was never rendered.
+    //
+    // world and colors are the only small documents the first map render needs;
+    // game is needed by the first HUD render. Consumers share these cached
+    // requests, so this also prevents a burst of duplicate initial reads.
     run: ({ signal }) =>
       Promise.all([
         warmJson(JSON_URLS.game, { signal }),
-        warmJson(JSON_URLS.prompts, { signal }),
         warmJson(JSON_URLS.colors, { signal }),
-        warmJson(JSON_URLS.actions, { defaultValue: [], signal }),
-        warmJson(JSON_URLS.chat, { defaultValue: [], signal }),
-        warmJson(JSON_URLS.advisor, { defaultValue: [], signal }),
-        warmJson(JSON_URLS.events, { defaultValue: [], signal }),
         warmJson(JSON_URLS.world, { defaultValue: {}, signal }),
       ]),
-  },
-  {
-    id: "textures",
-    label: "Warming world textures",
-    weight: 20,
-    run: async ({ signal }) => {
-      // A custom map background replaces the ESRI basemap + terrain entirely, so
-      // for such scenarios the map never requests those tiles — don't warm them.
-      // world.json was already warmed into cache by the "state" task above.
-      const world = await readJson(JSON_URLS.world, { defaultValue: {} }).catch(() => ({}));
-      if (world?.background?.kind) return undefined;
-      return warmRemoteResources(
-        [
-          ...buildGlobalTextureUrls(esriTileTemplate(selectedBasemapId()), 2),
-          ...buildInitialViewportTextureUrls(esriTileTemplate(selectedBasemapId())),
-          ...buildGlobalTextureUrls(TERRAIN_TILE_TEMPLATE, 2),
-          ...buildInitialViewportTextureUrls(TERRAIN_TILE_TEMPLATE),
-        ],
-        { concurrency: 6, signal },
-      );
-    },
-  },
-  {
-    id: "countries",
-    label: "Caching country geometry",
-    weight: 26,
-    // NOT skipped on a custom map, unlike regions below. countries.pmtiles is
-    // not only rendered: loadCountryNames reads its z0 tile for the country index
-    // (assets.js) and warmCountryLabelCollections reads it for the labels
-    // (countryLabels.js), and both run for every map. Skipping the warm would not
-    // avoid the download — it would just make those tasks fetch the whole archive
-    // lazily, later, and serially. Strictly worse than warming it here.
-    run: ({ signal }) => warmPmtilesArchive(PMTILES_ARCHIVES.countries, { signal }),
-  },
-  {
-    id: "country-index",
-    label: "Building country index",
-    weight: 8,
-    run: () => loadCountryNames(),
-  },
-  {
-    id: "country-labels",
-    label: "Building country labels",
-    weight: 14,
-    run: () => warmCountryLabelCollections(),
-  },
-  {
-    id: "cities",
-    label: "Caching city layer",
-    weight: 10,
-    run: ({ signal }) => warmPmtilesArchive(PMTILES_ARCHIVES.cities, { signal }),
-  },
-  {
-    id: "regions",
-    // Warmed on EVERY world, custom included — this archive is what paints
-    // owners above z6.5 on a re-ownership scenario (Nations.jsx: regions-fill
-    // fades in as the seed's far layer fades out), so a custom map needs it
-    // just as much as a stock one. Skipping it here was the mistake the note
-    // at the top of this file warns about: skipping tiles we DO need.
-    label: "Caching regional borders",
-    weight: 24,
-    run: ({ signal }) => warmPmtilesArchive(PMTILES_ARCHIVES.regions, { signal }),
   },
 ];
 

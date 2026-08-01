@@ -20,24 +20,33 @@ import { DIFFICULTY_LEVELS, normalizeDifficulty } from "../../runtime/difficulty
 import { applyGameMasterCommand } from "../AI/gameplay.js";
 import { setRegionClickInterceptor } from "../Selection/Regions.jsx";
 import { useDraggablePanel } from "./useDraggablePanel.js";
+import { GameIcon } from "./Icon.jsx";
 
 const PANEL_TOP = "4.75rem";
 const EMPTY_FEATURES = { type: "FeatureCollection", features: [] };
+const DIFFICULTY_ICONS = {
+    "very-easy": "spark",
+    easy: "advisor",
+    medium: "command",
+    hard: "forces",
+    "very-hard": "layers",
+    impossible: "close",
+};
 
 const TOOLS = [
-    { id: "master-ai", title: "Master AI", subtitle: "Full control over the game with AI assistance" },
-    { id: "roll-back-turn", title: "Roll Back Turn", subtitle: "Restore the game to the start of an earlier turn" },
-    { id: "your-country", title: "Your Country", subtitle: "Change which country you're playing as" },
-    { id: "difficulty", title: "Difficulty", subtitle: "Adjust the game difficulty level" },
-    { id: "annex-country", title: "Annex Country", subtitle: "Click a country to annex it into another" },
-    { id: "annex-regions", title: "Annex Regions", subtitle: "Click individual regions to transfer them to a country" },
-    { id: "edit-country", title: "Edit Country", subtitle: "Modify existing country properties" },
-    { id: "add-country", title: "Add Country", subtitle: "Create a new country on the map" },
-    { id: "regions", title: "Regions", subtitle: "Edit region names, tags, and properties" },
-    { id: "edit-feature", title: "Edit Map Feature", subtitle: "Edit existing map features like cities and landmarks" },
-    { id: "add-feature", title: "Add Map Feature", subtitle: "Create new map features with custom properties" },
-    { id: "clear-features", title: "Clear Map Features", subtitle: "Clean up old and irrelevant features" },
-    { id: "events", title: "Events", subtitle: "Edit historical events and their descriptions" },
+    { id: "master-ai", icon: "advisor", title: "Master AI", subtitle: "Full control over the game with AI assistance" },
+    { id: "roll-back-turn", icon: "layers", title: "Roll Back Turn", subtitle: "Restore the game to the start of an earlier turn" },
+    { id: "your-country", icon: "command", title: "Your Country", subtitle: "Change which country you're playing as" },
+    { id: "difficulty", icon: "settings", title: "Difficulty", subtitle: "Adjust the game difficulty level" },
+    { id: "annex-country", icon: "forces", title: "Annex Country", subtitle: "Click a country to annex it into another" },
+    { id: "annex-regions", icon: "markers", title: "Annex Regions", subtitle: "Click individual regions to transfer them to a country" },
+    { id: "edit-country", icon: "settings", title: "Edit Country", subtitle: "Modify existing country properties" },
+    { id: "add-country", icon: "command", title: "Add Country", subtitle: "Create a new country on the map" },
+    { id: "regions", icon: "layers", title: "Regions", subtitle: "Edit region names, tags, and properties" },
+    { id: "edit-feature", icon: "markers", title: "Edit Map Feature", subtitle: "Edit existing map features like cities and landmarks" },
+    { id: "add-feature", icon: "markers", title: "Add Map Feature", subtitle: "Create new map features with custom properties" },
+    { id: "clear-features", icon: "close", title: "Clear Map Features", subtitle: "Clean up old and irrelevant features" },
+    { id: "events", icon: "message", title: "Events", subtitle: "Edit historical events and their descriptions" },
 ];
 
 const inputStyle = {
@@ -162,7 +171,7 @@ const PolitySelect = ({ polities, value, onChange, placeholder = "Pick a country
     </select>
 );
 
-const CheatsPanel = ({ open, onClose, onOpenForces }) => {
+const CheatsPanel = ({ open, initialTool = null, onClose, onOpenForces }) => {
     const draggable = useDraggablePanel("oh-panel-position-cheats");
     const [tool, setTool] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -190,12 +199,13 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
     useEffect(() => {
         if (open) {
             setStatus("");
+            setTool(initialTool || null);
             void refresh();
         } else {
-            setTool(null);
+            setTool(initialTool || null);
             setClickMode(null);
         }
-    }, [open]);
+    }, [initialTool, open]);
 
     useEffect(() => {
         if (!clickMode) {
@@ -241,12 +251,12 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
         <div style={{ alignItems: "center", display: "flex", gap: "0.45rem", minWidth: 0 }}>
         {tool && (
             <button type="button" onClick={() => { setTool(null); setStatus(""); }} style={{ ...buttonStyle, padding: "0.25rem 0.5rem" }}>
-            ←
+            <GameIcon name="close" size={15} className="oh-icon-rotate-back" />
             </button>
         )}
         <div style={{ fontSize: "1rem", fontWeight: 800 }}>{title}</div>
         </div>
-        <button type="button" onClick={onClose} style={{ ...buttonStyle, padding: "0.25rem 0.55rem" }}>✕</button>
+        <button type="button" aria-label="Close command center" onClick={onClose} style={{ ...buttonStyle, padding: "0.25rem 0.55rem" }}><GameIcon name="close" size={16} /></button>
         </div>
         {subtitle && <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.74rem", marginTop: "0.2rem" }}>{subtitle}</div>}
         </div>
@@ -262,6 +272,7 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
         )}
 
         <div
+        className="oh-command-panel"
         ref={draggable.panelRef}
         style={{
             background: "rgba(17, 24, 39, 0.96)",
@@ -296,7 +307,7 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
                 onClick={onOpenForces}
                 style={{ ...buttonStyle, alignItems: "flex-start", flexDirection: "column", gap: "0.1rem", textAlign: "left" }}
                 >
-                <span style={{ fontWeight: 700 }}>⚔️ Manual force deployment</span>
+                <span style={{ alignItems: "center", display: "flex", gap: "0.45rem", fontWeight: 700 }}><GameIcon name="forces" size={16} /> Manual force deployment</span>
                 <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.72rem", fontWeight: 500 }}>Open the Forces panel to spawn, move, and command units by hand.</span>
                 </button>
             )}
@@ -307,7 +318,7 @@ const CheatsPanel = ({ open, onClose, onOpenForces }) => {
                 onClick={() => { setTool(entry.id); setStatus(""); }}
                 style={{ ...buttonStyle, alignItems: "flex-start", flexDirection: "column", gap: "0.1rem", textAlign: "left" }}
                 >
-                <span style={{ fontWeight: 700 }}>{entry.title}</span>
+                <span style={{ alignItems: "center", display: "flex", gap: "0.45rem", fontWeight: 700 }}><GameIcon name={entry.icon} size={16} /> {entry.title}</span>
                 <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.72rem", fontWeight: 500 }}>{entry.subtitle}</span>
                 </button>
             ))}
@@ -530,7 +541,7 @@ const ToolView = ({ tool, header, busy, status, game, polities, refresh, runBusy
                     const nextGame = await readGameData({ force: true });
                     await writeGameData({ ...nextGame, difficulty: level.id });
                     await refresh();
-                    return `Difficulty set to ${level.label} ${level.emoji} — it steers the AI from the next turn on.`;
+                    return `Difficulty set to ${level.label} — it steers the AI from the next turn on.`;
                 })}
                 style={{
                     ...buttonStyle,
@@ -541,7 +552,7 @@ const ToolView = ({ tool, header, busy, status, game, polities, refresh, runBusy
                     padding: "0.65rem 0.4rem",
                 }}
                 >
-                <span style={{ fontSize: "1.45rem", lineHeight: 1 }}>{level.emoji}</span>
+                <GameIcon name={DIFFICULTY_ICONS[level.id] || "command"} size={22} />
                 <span>{level.label}</span>
                 </button>
             ))}

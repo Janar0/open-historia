@@ -4,10 +4,17 @@ import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
 import { point } from "@turf/helpers";
 import { normalizePromptPack } from "./gameplayPrompts.js";
 import { getGameplayTool, validateGameplayPayload } from "./gameplaySchemas.js";
+import {
+  compactRetryAnswer,
+  compactToolForRequest,
+  outputTokenBudgetForTask,
+  shouldUseTaskReasoning,
+} from "./tokenBudget.js";
 import { toCountryName } from "../../runtime/ownerNames.js";
 import {
   buildActionHistoryText,
   buildChatSummaryText,
+  buildConsolidatedHistoryText,
   buildDetailedChatHistoryText,
   buildEventHistoryText,
   buildPromptContext,
@@ -571,19 +578,23 @@ const runJsonTask = async (taskKey, {
   const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Date.now() + timeoutMs : null;
   const timeoutError = new Error(`AI task "${taskKey}" timed out.`);
   const timeoutId = deadline ? setTimeout(() => controller.abort(timeoutError), timeoutMs) : null;
-  const tool = getGameplayTool(taskKey);
+  // The full schema remains the local validator. Only the wire copy is compacted,
+  // and only when it is large enough for repeated prose descriptions to dominate
+  // the request (jump/game-master schemas are ~40-44k characters uncompressed).
+  const tool = compactToolForRequest(getGameplayTool(taskKey));
+  const maxTokens = outputTokenBudgetForTask(taskKey);
   const history = [{ role: "user", parts: [{ text: userMessage }] }];
   let failureReason = "The model did not return valid structured output.";
 
   try {
     for (let outputAttempt = 1; outputAttempt <= 2; outputAttempt += 1) {
       const response = await callAI(systemPrompt, history, {
-        // No output-token cap. A long/action-heavy turn's JSON must not be truncated
-        // mid-response — a cut-off response won't parse, so runJsonTask fell back to
-        // canned events that carry NO regionTransfers and NO diplomacy, which is why
-        // the map never changed and no chats opened. main.jsx now lets each provider
-        // use its own model maximum when no maxTokens is passed.
+        // Small fixed-shape tasks use a schema-sized output ceiling. Long/action-
+        // heavy jumps and game-master turns stay uncapped: truncating their JSON
+        // makes the whole response unparseable and loses map changes/diplomacy.
         deadline,
+        maxTokens,
+        reasoning: shouldUseTaskReasoning(taskKey),
         signal: controller.signal,
         tool,
       });
@@ -642,7 +653,10 @@ const runJsonTask = async (taskKey, {
       if (outputAttempt === 1 && !controller.signal.aborted) {
         history.push({
           role: "model",
-          parts: [{ text: rawText || JSON.stringify(parsed ?? null) }],
+          // A malformed generation can be tens of thousands of tokens. The
+          // validator error identifies what must change; retaining bounded start
+          // and end context is enough for repair without paying for it all again.
+          parts: [{ text: compactRetryAnswer(rawText || JSON.stringify(parsed ?? null)) }],
         });
         // A model that answered with a tool call is told to call it again; one
         // that answered in prose (local models without tool support) is told to
@@ -691,13 +705,22 @@ const CONSOLIDATION_SIZE_THRESHOLD = 48;
 const CONSOLIDATION_BATCH_SIZE = 60;
 
 const consolidateHistoryBatch = async (bundle, events, chats) => {
+  const priorEntries = normalizeWorldState(bundle.world).consolidatedHistory;
+  const priorHistory = priorEntries.length > 0 ? buildConsolidatedHistoryText(bundle.world) : "";
+  const eventsText = buildEventHistoryText(events, { limit: events.length || 1 });
   const variables = await buildTemplateVariables(bundle, {
     chatsToConsolidate: buildDetailedChatHistoryText(chats, { limit: chats.length || 1, messageLimit: 100 }),
-    eventsToConsolidate: buildEventHistoryText(events, { limit: events.length || 1 }),
+    // Make each stored entry cumulative. Long campaigns previously accumulated
+    // one independent summary every few rounds and resent all of them forever.
+    eventsToConsolidate: [
+      priorHistory ? `PRIOR CONSOLIDATED CAMPAIGN MEMORY:\n${priorHistory}` : "",
+      `NEW EVENTS TO MERGE:\n${eventsText}`,
+    ].filter(Boolean).join("\n\n"),
   });
   const { generation, payload } = await runJsonTask("eventConsolidator", {
     fallback: () => ({
       summary: [
+        priorHistory,
         events.map((event) => `${event.date || "undated"} ${event.title}: ${event.description}`).join("; "),
         buildChatSummaryText(chats, { limit: chats.length || 1 }),
       ].filter(Boolean).join("\n"),
@@ -732,13 +755,12 @@ const compactHistoryIfNeeded = async (bundle) => {
   return normalizeWorldState({
     ...world,
     consolidatedHistory: [
-      ...world.consolidatedHistory,
       {
-        chatIds: closedChats.map((chat) => chat.id),
+        chatIds: [...new Set([...priorChatIds, ...closedChats.map((chat) => chat.id)])],
         createdAt: new Date().toISOString(),
         source: generation.source,
         summary,
-        throughDate: throughEvent?.date || bundle.game.gameDate,
+        throughDate: throughEvent?.date || world.consolidatedHistory.at(-1)?.throughDate || bundle.game.gameDate,
         throughEventId: throughEvent?.id || world.consolidatedHistory.at(-1)?.throughEventId || "",
         throughRound: bundle.game.round,
       },
@@ -2760,7 +2782,7 @@ export const generateCountryStats = async ({ code, name } = {}) => {
     `Respond in ${variables.language || "English"} as 4-6 short bullet points, each prefixed with "- ". No preamble, no closing remarks.`;
   const raw = await callAI(system, [
     { role: "user", parts: [{ text: `Give me the intelligence briefing on ${target}.` }] },
-  ]);
+  ], { maxTokens: 1200, reasoning: false });
   return String(raw || "").trim();
 };
 

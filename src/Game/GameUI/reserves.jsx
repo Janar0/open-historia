@@ -3,13 +3,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useDraggablePanel } from "./useDraggablePanel.js";
 import { normalizeReserveSheet, readGameData } from "../../runtime/gameState.js";
 import { useWorldState } from "../Map/useWorldState.js";
+import { GameIcon } from "./Icon.jsx";
 
 const surface = {
-  backgroundColor: "rgba(17, 24, 39, 0.94)",
-  backdropFilter: "blur(7px)",
-  WebkitBackdropFilter: "blur(7px)",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: "12px",
+  background: "linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96))",
+  backdropFilter: "blur(18px) saturate(1.2)",
+  WebkitBackdropFilter: "blur(18px) saturate(1.2)",
+  border: "1px solid rgba(155, 190, 230, 0.16)",
+  borderRadius: "16px",
   color: "white",
   fontFamily: "sans-serif",
   boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
@@ -121,10 +122,10 @@ const ReservesPanel = ({ open = false, onToggle }) => {
   if (!open) return null;
 
   return (
-    <div ref={draggable.panelRef} style={{ ...surface, position: "fixed", bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", width: "20rem", maxHeight: "68vh", overflowY: "auto", zIndex: 9999, padding: "13px", ...(draggable.positionStyle || {}) }}>
+    <div className="oh-panel" ref={draggable.panelRef} style={{ ...surface, position: "fixed", bottom: "calc(4.75rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", width: "20rem", maxHeight: "68vh", overflowY: "auto", zIndex: 9999, padding: "13px", ...(draggable.positionStyle || {}) }}>
       <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
         <strong style={{ fontSize: "14px" }}>Military reserves</strong>
-        <button type="button" aria-label="Close military reserves" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: "14px" }}>✕</button>
+        <button type="button" aria-label="Close military reserves" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", display: "flex", padding: "0.2rem" }}><GameIcon name="close" size={16} /></button>
       </div>
       <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.48)", marginBottom: "11px" }}>{playerCode || "Player polity"}</div>
 

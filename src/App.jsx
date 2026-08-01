@@ -1,10 +1,13 @@
 /*! Open Historia — portions (standalone map-editor mode) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Map from "./Game/Map/World.jsx";
-import UI from "./Game/GameUI/main.jsx";
 
 // Lazy so OpenLayers is only fetched when the editor is actually opened.
 const MapEditor = lazy(() => import("./Editor/MapEditor.jsx"));
+// The HUD contains the library, timeline, chat and management panels. None is
+// needed to paint the first map frame, so keep that code off the initial JS
+// path and fetch it only after MapLibre has settled its first viewport.
+const GameUI = lazy(() => import("./Game/GameUI/main.jsx"));
 import StartupScreen from "./runtime/StartupScreen.jsx";
 import ErrorBoundary from "./runtime/ErrorBoundary.jsx";
 import AppUpdateBanner from "./runtime/AppUpdateBanner.jsx";
@@ -13,7 +16,7 @@ import {
   createInitialStartupState,
   runStartupPreload,
 } from "./runtime/preload.js";
-import { ensureLibraryCatalog, useLibraryState } from "./runtime/library.js";
+import { initializeRuntimeBootstrap, useLibraryState } from "./runtime/library.js";
 
 const WorldShell = {
   backgroundColor: "#000",
@@ -108,9 +111,9 @@ function GameApp() {
       stage: "Syncing games and scenarios",
     }));
 
-    ensureLibraryCatalog()
+    initializeRuntimeBootstrap()
       .catch((error) => {
-        console.warn("Failed to load library catalog before startup preload:", error);
+        console.warn("Failed to load runtime bootstrap before startup preload:", error);
       })
       .finally(() => {
         if (!isActive) return;
@@ -176,14 +179,16 @@ function GameApp() {
     <div style={Vignette} />
     </div>
     {isReady && (
-      <UI
-      key={`ui-${activeGameId || "default"}`}
-      isGlobeEnabled={isGlobeEnabled}
-      isTerrainEnabled={isTerrainEnabled}
-      mapRef={mapRef}
-      setIsGlobeEnabled={setIsGlobeEnabled}
-      setIsTerrainEnabled={setIsTerrainEnabled}
-      />
+      <Suspense fallback={null}>
+        <GameUI
+        key={`ui-${activeGameId || "default"}`}
+        isGlobeEnabled={isGlobeEnabled}
+        isTerrainEnabled={isTerrainEnabled}
+        mapRef={mapRef}
+        setIsGlobeEnabled={setIsGlobeEnabled}
+        setIsTerrainEnabled={setIsTerrainEnabled}
+        />
+      </Suspense>
     )}
     {!isReady && <StartupScreen {...startupOverlayState} />}
     </>

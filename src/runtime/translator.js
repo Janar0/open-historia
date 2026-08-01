@@ -320,7 +320,14 @@ const translateBatch = async (strings) => {
 
   const raw = await callAI(systemPrompt, [
     { role: "user", parts: [{ text: JSON.stringify(strings) }] },
-  ], { languageMode: "none" });
+  ], {
+    // Translation is deterministic transformation, so hidden reasoning is pure
+    // overhead. Scale the answer ceiling with the actual batch instead of using
+    // the provider's (potentially 64k) model maximum.
+    languageMode: "none",
+    maxTokens: Math.min(12000, Math.max(512, Math.ceil(JSON.stringify(strings).length / 1.5) + 256)),
+    reasoning: false,
+  });
   const translations = extractJsonArray(raw);
 
   if (!translations) {

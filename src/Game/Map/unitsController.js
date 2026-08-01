@@ -1,10 +1,10 @@
 /*! Open Historia — unit orders & deployment controller © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 // Shared troop interaction state + mutations.
 //
-// Holds the current unit list in memory (refreshed from world.json every 5s so
-// AI-spawned/moved units appear) and applies player mutations immediately for
-// snappy feedback, persisting them to world.json. A tiny pub/sub lets the map
-// layer, the selection popup and the Forces panel re-render on change.
+// Holds the current unit list in memory (from the shared world-state feed) and
+// applies player mutations immediately for snappy feedback, persisting them to
+// world.json. A tiny pub/sub lets the map layer, the selection popup and the
+// Forces panel re-render on change.
 //
 // Player deploy is purely local (you place your own pieces). Move and attack
 // write immediately AND queue a machine-readable order (as an action) so the AI
@@ -19,6 +19,7 @@ import {
   writeActionsState,
   normalizeUnitEntry,
 } from "../../runtime/gameState.js";
+import { subscribeToWorldState } from "./useWorldState.js";
 import { resolveClash, distanceKm, engagementRangeKm, moveLeashKm } from "./unitCombat.js";
 
 let units = [];
@@ -27,7 +28,8 @@ let round = 1;
 let gameDate = "";
 let allowedUnitTypes = null; // null = all types allowed; else the scenario's whitelist
 let interactionMode = { kind: "idle" }; // idle | deploy | move | attack
-let pollTimer = null;
+let gamePollTimer = null;
+let stopWorldSync = null;
 let busy = false; // suppress poll overwrite mid-commit
 
 const listeners = new Set();
@@ -67,33 +69,41 @@ export const setInteractionMode = (next) => {
 };
 export const clearInteractionMode = () => setInteractionMode({ kind: "idle" });
 
-const refresh = async () => {
+const applyWorldState = (world) => {
   if (busy) return;
+  units = world?.units ?? [];
+  allowedUnitTypes = Array.isArray(world?.allowedUnitTypes) && world.allowedUnitTypes.length
+    ? world.allowedUnitTypes
+    : null;
+  emit();
+};
+
+const refreshGame = async () => {
   try {
-    const [world, game] = await Promise.all([
-      readWorldState({ force: true }),
-      readGameData({ force: true }),
-    ]);
-    units = world.units ?? [];
+    const game = await readGameData({ force: true });
     playerCode = game.country ?? "";
     round = game.round ?? 1;
     gameDate = game.gameDate || game.startDate || "";
-    allowedUnitTypes = Array.isArray(world.allowedUnitTypes) && world.allowedUnitTypes.length
-      ? world.allowedUnitTypes
-      : null;
     emit();
   } catch (error) {
-    console.error("Failed to refresh units:", error);
+    console.error("Failed to refresh unit game state:", error);
   }
 };
 
+const refresh = async () => refreshGame();
+
 export const startUnitsSync = () => {
-  if (pollTimer) return () => {};
-  refresh();
-  pollTimer = setInterval(refresh, 5000);
+  if (gamePollTimer) return () => {};
+  stopWorldSync = subscribeToWorldState(applyWorldState);
+  refreshGame();
+  // world is already refreshed by useWorldState; only the small game document
+  // remains here because movement/combat range depends on its current date.
+  gamePollTimer = setInterval(refreshGame, 5000);
   return () => {
-    clearInterval(pollTimer);
-    pollTimer = null;
+    clearInterval(gamePollTimer);
+    gamePollTimer = null;
+    stopWorldSync?.();
+    stopWorldSync = null;
   };
 };
 

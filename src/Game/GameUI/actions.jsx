@@ -416,6 +416,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
 
     return (
         <div
+        className="oh-panel"
         ref={draggable.panelRef}
         style={{
             backdropFilter: "blur(8px)",

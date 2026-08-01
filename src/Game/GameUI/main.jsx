@@ -10,6 +10,7 @@ import { Search } from "./search";
 import { ForcesPanel } from "./forces";
 import { MarkersPanel } from "./markers";
 import { ReservesPanel } from "./reserves";
+import { GameIcon } from "./Icon.jsx";
 import {
   getStoredProvider,
   loadProviderSettingsFormState,
@@ -35,17 +36,17 @@ const readAdvisorWidth = () => {
 };
 const baseStyle = {
   position: "fixed",
-  backgroundColor: "rgba(8, 15, 27, 0.94)",
-  backdropFilter: "blur(10px) saturate(1.15)",
+  background: "linear-gradient(145deg, rgba(12, 22, 38, 0.96), rgba(5, 11, 22, 0.94))",
+  backdropFilter: "blur(18px) saturate(1.2)",
   zIndex: 9999,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   color: "white",
   fontFamily: "sans-serif",
-  borderRadius: "12px",
-  border: "1px solid rgba(148, 163, 184, 0.18)",
-  boxShadow: "0 10px 28px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06)",
+  borderRadius: "14px",
+  border: "1px solid rgba(155, 190, 230, 0.16)",
+  boxShadow: "0 18px 44px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08)",
 };
 
 const hudChromeStyle = {
@@ -167,7 +168,7 @@ const AdvisorButton = ({ isAdvisorOpen, rightShift, onToggle }) => (
     transition: "right 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
   }}
   >
-    <span aria-hidden="true">🧭</span>
+    <GameIcon name="advisor" size={21} />
   </button>
 );
 
@@ -181,6 +182,7 @@ const Main = ({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCheatsOpen, setIsCheatsOpen] = useState(false);
   const [shouldLoadCheats, setShouldLoadCheats] = useState(false);
+  const [cheatsInitialTool, setCheatsInitialTool] = useState(null);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [advisorWidth, setAdvisorWidth] = useState(readAdvisorWidth);
   const [activeBottomPanel, setActiveBottomPanel] = useState(null);
@@ -279,6 +281,13 @@ const Main = ({
     setIsAdvisorOpen(true);
   }, []);
 
+  const openCheats = useCallback((tool = null) => {
+    setCheatsInitialTool(tool);
+    setShouldLoadCheats(true);
+    setIsCheatsOpen(true);
+    setIsSettingsOpen(false);
+  }, []);
+
   // Called on every pointermove while the user drags the advisor's edge.
   const handleAdvisorResize = useCallback((px) => {
     setAdvisorWidth(() => {
@@ -320,6 +329,8 @@ const Main = ({
       <div role="group" aria-label="Game actions" style={{ display: "contents" }}>
         <Toolbar
           onOpenAdvisor={openAdvisor}
+          onOpenCheats={() => openCheats("master-ai")}
+          isCheatsOpen={isCheatsOpen}
           activePanel={activeBottomPanel}
           onTogglePanel={toggleBottomPanel}
         />
@@ -353,7 +364,7 @@ const Main = ({
       </Suspense>
       <Suspense fallback={null}>
         {shouldLoadCheats && (
-          <LazyCheatsPanel open={isCheatsOpen} onClose={() => setIsCheatsOpen(false)} onOpenForces={() => { setIsCheatsOpen(false); setActiveBottomPanel("forces"); }} />
+          <LazyCheatsPanel open={isCheatsOpen} initialTool={cheatsInitialTool} onClose={() => { setIsCheatsOpen(false); setCheatsInitialTool(null); }} onOpenForces={() => { setIsCheatsOpen(false); setCheatsInitialTool(null); setActiveBottomPanel("forces"); }} />
         )}
       </Suspense>
       <SettingsButton
@@ -366,11 +377,7 @@ const Main = ({
           discordUrl="https://discord.gg/C3AVwHacZ4"
           redditUrl="https://www.reddit.com/r/OpenHistoria"
           githubUrl="https://github.com/Open-Historia/open-historia"
-          onOpenCheats={() => {
-            setShouldLoadCheats(true);
-            setIsCheatsOpen(true);
-            setIsSettingsOpen(false);
-          }}
+          onOpenCheats={() => openCheats()}
           topOffset={TOP_BAR_OFFSET}
           isFullscreenEnabled={isFullscreenEnabled}
           isGlobeEnabled={isGlobeEnabled}

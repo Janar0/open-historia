@@ -18,6 +18,9 @@ export const WORLD_DEFAULTS = {
   actionSuggestions: [],
   activeCatalyst: null,
   consolidatedHistory: [],
+  // Durable per-country diplomatic memory. Unlike a chat-local transcript this
+  // survives closing or deleting a thread and follows the country into new talks.
+  diplomaticMemory: {},
   // Persistent named actors in the campaign. This is intentionally a small
   // factual layer; interpretation and prose stay in the event history.
   keyFigures: [],
@@ -497,6 +500,29 @@ const normalizeChatFigure = (entry) => {
   };
 };
 
+const normalizeChatMemories = (value) => Object.fromEntries(
+  Object.entries(value && typeof value === "object" && !Array.isArray(value) ? value : {})
+    .map(([country, memory]) => {
+      const identity = normalizeOptionalString(country);
+      if (!identity || !memory || typeof memory !== "object") return null;
+      const summary = normalizeOptionalString(memory.summary).slice(0, 3000);
+      const commitments = normalizeArray(memory.commitments)
+        .map((entry) => normalizeOptionalString(entry).slice(0, 500))
+        .filter(Boolean)
+        .slice(0, 12);
+      const stance = normalizeOptionalString(memory.stance).slice(0, 800);
+      if (!summary && commitments.length === 0 && !stance) return null;
+      return [identity, {
+        commitments,
+        stance,
+        summary,
+        throughMessageCount: Math.max(0, Number(memory.throughMessageCount) || 0),
+        updatedAt: normalizeOptionalString(memory.updatedAt),
+      }];
+    })
+    .filter(Boolean),
+);
+
 export const normalizeChatEntry = (entry, index = 0) => {
   if (!entry || typeof entry !== "object") {
     return null;
@@ -515,6 +541,7 @@ export const normalizeChatEntry = (entry, index = 0) => {
     figures,
     id: normalizeOptionalString(entry.id) || generateId(`chat-${index}`),
     linkedEventId: normalizeOptionalString(entry.linkedEventId || entry.eventId),
+    memories: normalizeChatMemories(entry.memories || entry.countryMemories),
     messages: normalizeArray(entry.messages)
       .map((message, messageIndex) => normalizeChatMessage(message, messageIndex))
       .filter(Boolean),
@@ -2227,6 +2254,7 @@ export const normalizeWorldState = (world) => {
     Object.entries(nextWorld.countryStats ?? {})
       .filter(([code, sheet]) => normalizeOptionalString(code) && sheet && typeof sheet === "object"),
   );
+  const diplomaticMemory = normalizeChatMemories(nextWorld.diplomaticMemory);
 
   return {
     ...WORLD_DEFAULTS,
@@ -2236,6 +2264,7 @@ export const normalizeWorldState = (world) => {
     actionSuggestions: normalizeActionSuggestions(nextWorld.actionSuggestions),
     activeCatalyst: normalizeCatalyst(nextWorld.activeCatalyst),
     consolidatedHistory: normalizeConsolidatedHistory(nextWorld.consolidatedHistory),
+    diplomaticMemory,
     internationalReputation,
     keyFigures: enforceKeyFigureBrainBudget(nextWorld.keyFigures),
     labelFont: normalizeOptionalString(nextWorld.labelFont),

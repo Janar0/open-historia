@@ -12,6 +12,7 @@ import {
 } from "../Map/unitsController.js";
 import { UNIT_TYPES } from "../../runtime/gameState.js";
 import { ensurePolityNames, polityDisplayName } from "../../runtime/polityNames.js";
+import { GameIcon } from "./Icon.jsx";
 
 const TYPE_LABEL = {
   infantry: "Infantry",
@@ -22,12 +23,12 @@ const TYPE_LABEL = {
   garrison: "Garrison",
 };
 const TYPE_GLYPH = {
-  infantry: "🛡",
-  armor: "⚙",
-  air: "✈",
-  naval: "⚓",
-  artillery: "💥",
-  garrison: "🏰",
+  infantry: "forces",
+  armor: "command",
+  air: "advisor",
+  naval: "layers",
+  artillery: "spark",
+  garrison: "home",
 };
 
 const MODE_HINT = {
@@ -37,11 +38,11 @@ const MODE_HINT = {
 };
 
 const surface = {
-  backgroundColor: "rgba(17, 24, 39, 0.92)",
-  backdropFilter: "blur(6px)",
-  WebkitBackdropFilter: "blur(6px)",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: "12px",
+  background: "linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96))",
+  backdropFilter: "blur(18px) saturate(1.2)",
+  WebkitBackdropFilter: "blur(18px) saturate(1.2)",
+  border: "1px solid rgba(155, 190, 230, 0.16)",
+  borderRadius: "16px",
   color: "white",
   fontFamily: "sans-serif",
   boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
@@ -68,7 +69,7 @@ const UnitRow = ({ unit, dimmed, onClick }) => (
       opacity: dimmed ? 0.65 : 1,
     }}
   >
-    <span style={{ fontSize: "1.1rem", lineHeight: 1 }}>{TYPE_GLYPH[unit.type] ?? "🛡"}</span>
+    <GameIcon name={TYPE_GLYPH[unit.type] ?? "forces"} size={17} />
     <div style={{ minWidth: 0, flex: 1 }}>
       <div style={{ fontSize: "12px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {unit.name}
@@ -151,6 +152,7 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
       {/* Mode banner — global instruction while deploying / moving / attacking. */}
       {mode.kind !== "idle" && (
         <div
+          className="oh-panel oh-panel-banner"
           style={{
             ...surface,
             position: "fixed",
@@ -187,6 +189,7 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
 
       {open && (
         <div
+          className="oh-panel"
           ref={draggable.panelRef}
           style={{
             ...surface,
@@ -209,9 +212,7 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
               aria-label="Close forces panel"
               onClick={() => setOpen(false)}
               style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: "14px" }}
-            >
-              ✕
-            </button>
+            ><GameIcon name="close" size={16} /></button>
           </div>
 
           {/* Deploy controls */}
@@ -252,7 +253,7 @@ export const ForcesPanel = ({ mapRef, topOffset = "0px", open = false, onToggle 
               onClick={startDeploy}
               style={{ width: "100%", background: "rgba(59,130,246,0.35)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "6px", color: "white", cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "6px 0" }}
             >
-              Place on map →
+              Place on map <GameIcon name="arrow-right" size={14} />
             </button>
           </div>
 

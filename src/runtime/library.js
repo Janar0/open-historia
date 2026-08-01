@@ -7,6 +7,7 @@ import {
 import { enqueueContentStrings } from "./translator.js";
 
 const LIBRARY_API_ROOT = "/api/library";
+const RUNTIME_BOOTSTRAP_API = "/api/runtime/bootstrap";
 const SCENARIOS_API_ROOT = "/api/scenarios";
 const GAMES_API_ROOT = "/api/games";
 
@@ -190,6 +191,32 @@ export const ensureLibraryCatalog = async () => {
   }
 
   return refreshLibraryCatalog();
+};
+
+// Initializes just enough shared state for the map to address the active
+// scenario's runtime resources. Unlike /api/library this does not enumerate
+// every save or read their histories; the complete catalog stays lazy for the
+// library menu.
+export const initializeRuntimeBootstrap = async () => {
+  const bootstrap = await requestJson(RUNTIME_BOOTSTRAP_API);
+  const activeGameId = bootstrap?.activeGameId ?? null;
+  const runtimeScenario =
+    bootstrap?.runtimeScenario && typeof bootstrap.runtimeScenario === "object"
+      ? bootstrap.runtimeScenario
+      : null;
+
+  setLibraryState({
+    ...libraryState,
+    activeGame: activeGameId
+      ? { id: activeGameId, scenarioId: runtimeScenario?.id ?? null }
+      : null,
+    activeGameId,
+    error: null,
+    runtimeScenario,
+    token: String(bootstrap?.token ?? ""),
+  });
+
+  return libraryState;
 };
 
 export const loadScenarioDetails = async (scenarioId) =>

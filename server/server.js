@@ -15,6 +15,7 @@ import {
   getGameCatalog,
   getGameDetails,
   getLibraryCatalog,
+  getRuntimeBootstrap,
   getScenarioCatalog,
   getScenarioDetails,
   importScenarioBundle,
@@ -421,6 +422,17 @@ app.get("/api/scenarios", (_req, res) => {
 app.get("/api/library", (_req, res) => {
   try {
     res.json(getLibraryCatalog());
+  } catch (error) {
+    sendError(res, 500, error);
+  }
+});
+
+// Minimal boot path for the map. The full library catalog is deliberately
+// deferred until its UI opens; it walks every save to calculate editor badges.
+app.get("/api/runtime/bootstrap", (_req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(getRuntimeBootstrap());
   } catch (error) {
     sendError(res, 500, error);
   }

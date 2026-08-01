@@ -42,6 +42,7 @@ import {
 } from "../../runtime/communityBasemaps.js";
 import { zipBundle, unzipBundle, looksLikeZip } from "../../runtime/bundleZip.js";
 import { openUserAccountPanel } from "../../runtime/auth.js";
+import { GameIcon } from "./Icon.jsx";
 
 const UNIT_TYPE_LABELS = {
   infantry: "Infantry",
@@ -50,6 +51,15 @@ const UNIT_TYPE_LABELS = {
   naval: "Naval",
   artillery: "Artillery",
   garrison: "Garrison",
+};
+
+const DIFFICULTY_ICONS = {
+  "very-easy": "spark",
+  easy: "advisor",
+  medium: "command",
+  hard: "forces",
+  "very-hard": "layers",
+  impossible: "close",
 };
 
 // Lazy so OpenLayers only loads when the in-game map editor is opened.
@@ -105,11 +115,11 @@ const TOP_BAR_OFFSET = "0.5rem";
 
 const surfaceStyle = {
   background:
-    "linear-gradient(180deg, rgba(8, 10, 17, 0.97) 0%, rgba(8, 10, 15, 0.94) 100%)",
-  border: "1px solid rgba(255,255,255,0.08)",
-  boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
-  backdropFilter: "blur(18px)",
-  WebkitBackdropFilter: "blur(18px)",
+    "radial-gradient(circle at 0 0, rgba(93,125,194,0.12), transparent 38%), linear-gradient(145deg, rgba(12,22,38,0.97), rgba(5,11,22,0.96))",
+  border: "1px solid rgba(155,190,230,0.16)",
+  boxShadow: "0 20px 50px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.07)",
+  backdropFilter: "blur(18px) saturate(1.2)",
+  WebkitBackdropFilter: "blur(18px) saturate(1.2)",
 };
 
 const actionButtonStyle = {
@@ -502,7 +512,7 @@ const ScenarioCard = ({ onClone, onEdit, onPlay, onSelect, onUpdate, scenario, s
                 : undefined}
               type="button"
             >
-              {updateAvailable ? "⬆ Update" : "New Game"}
+              {updateAvailable ? <><GameIcon name="upload" size={15} /> Update</> : "New Game"}
             </button>
             <button onClick={() => onEdit(scenario.id)} style={{ ...actionButtonStyle, flex: 1 }} type="button">
               Edit
@@ -623,6 +633,10 @@ const GameCard = ({ active, game, onActivate, onClone, onEdit }) => {
 
 // A netflix-style shelf on the main menu: a titled row of horizontally
 // scrolling cards. Rows that can be legitimately empty pass emptyText.
+const ShelfTitle = ({ icon, children }) => (
+  <span className="oh-shelf-title"><GameIcon name={icon} size={15} /><span>{children}</span></span>
+);
+
 const MenuRow = ({ children, emptyText, title }) => (
   <div style={{ marginBottom: "1.7rem" }}>
     <div style={{ color: "rgba(255,255,255,0.88)", fontSize: "1.02rem", fontWeight: 800, letterSpacing: "-0.01em", marginBottom: "0.7rem" }}>
@@ -2018,7 +2032,7 @@ const LibraryTopBar = () => {
             type="button"
             style={{ ...actionButtonStyle, ...surfaceStyle, borderRadius: "999px", fontSize: "0.74rem", minHeight: "0", padding: "0.5rem 0.85rem" }}
           >
-            ⌂ Exit Game
+            <GameIcon name="home" size={15} /> Exit Game
           </button>
           {/* Shut the server down (phones/Termux have no terminal handy). Hidden
               on the hosted website (web build) — there's no local server to stop
@@ -2041,7 +2055,7 @@ const LibraryTopBar = () => {
                 padding: "0.5rem 0.7rem",
               }}
             >
-              ⏻
+              <GameIcon name="power" size={15} />
             </button>
           )}
         </div>
@@ -2068,7 +2082,7 @@ const LibraryTopBar = () => {
             type="button"
             style={{ ...actionButtonStyle, ...surfaceStyle, borderRadius: "12px", fontSize: "1rem", height: "2.6rem", minHeight: "0", minWidth: "0", padding: 0, width: "2.6rem" }}
           >
-            ⌂
+            <GameIcon name="home" size={17} />
           </button>
           {!import.meta.env.VITE_OH_WEB && (
             <button
@@ -2090,7 +2104,7 @@ const LibraryTopBar = () => {
                 width: "2.6rem",
               }}
             >
-              ⏻
+              <GameIcon name="power" size={17} />
             </button>
           )}
         </div>
@@ -2114,7 +2128,7 @@ const LibraryTopBar = () => {
             zIndex: 20000,
           }}
         >
-          <div style={{ fontSize: "2.2rem" }}>⏻</div>
+          <GameIcon name="power" size={32} />
           <div style={{ fontSize: "1.2rem", fontWeight: 800 }}>Server stopped</div>
           <div style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.85rem", maxWidth: "22rem" }}>
             You can close this tab now. Run the launcher (or <code>node server/server.js</code>) to start it again.
@@ -2186,7 +2200,7 @@ const LibraryTopBar = () => {
                         padding: "0.75rem 0.5rem",
                       }}
                     >
-                      <span style={{ fontSize: "1.6rem", lineHeight: 1 }}>{level.emoji}</span>
+                      <GameIcon name={DIFFICULTY_ICONS[level.id] || "command"} size={24} />
                       <span style={{ fontWeight: 700 }}>{level.label}</span>
                       <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "0.68rem", textAlign: "center" }}>{level.blurb}</span>
                     </button>
@@ -2348,17 +2362,17 @@ const LibraryTopBar = () => {
             <div style={{ alignItems: "center", display: "flex", gap: "0.55rem", justifyContent: "flex-end" }}>
               {!import.meta.env.VITE_OH_WEB && (
                 <button onClick={openUserAccountPanel} style={actionButtonStyle} type="button">
-                  {isMobile ? "👤" : "Account"}
+                  {isMobile ? <GameIcon name="user" size={16} /> : "Account"}
                 </button>
               )}
               {activeTab !== "community" && (
                 <button onClick={() => refreshLibraryCatalog({ force: true }).catch(() => {})} style={actionButtonStyle} type="button">
-                  {isMobile ? "⟳" : "Refresh"}
+                  {isMobile ? <GameIcon name="refresh" size={16} /> : "Refresh"}
                 </button>
               )}
               {activeTab === "scenarios" && (
                 <button onClick={() => importScenarioInputRef.current?.click()} style={actionButtonStyle} type="button">
-                  {isMobile ? "⬆" : "Import JSON"}
+                  {isMobile ? <GameIcon name="upload" size={16} /> : "Import JSON"}
                 </button>
               )}
               {!import.meta.env.VITE_OH_WEB && (
@@ -2375,7 +2389,7 @@ const LibraryTopBar = () => {
                     padding: isMobile ? "0.55rem 0.7rem" : undefined,
                   }}
                 >
-                  ⏻
+                  <GameIcon name="power" size={15} />
                 </button>
               )}
             </div>
@@ -2419,7 +2433,7 @@ const LibraryTopBar = () => {
                 </div>
               ) : (
                 <>
-                  <MenuRow title="🕐 Last Played">
+                  <MenuRow title={<ShelfTitle icon="history">Last Played</ShelfTitle>}>
                     {lastPlayedGames.map((game) => (
                       <GameCard
                         key={game.id}
@@ -2431,7 +2445,7 @@ const LibraryTopBar = () => {
                       />
                     ))}
                   </MenuRow>
-                  <MenuRow title="🔥 Most Played">
+                  <MenuRow title={<ShelfTitle icon="spark">Most Played</ShelfTitle>}>
                     {mostPlayedGames.map((game) => (
                       <GameCard
                         key={game.id}
@@ -2447,7 +2461,7 @@ const LibraryTopBar = () => {
               )
             ) : (
               <>
-                <MenuRow title="🔥 Most Played" emptyText="No scenarios yet.">
+                <MenuRow title={<ShelfTitle icon="spark">Most Played</ShelfTitle>} emptyText="No scenarios yet.">
                   {mostPlayedScenarios.map((scenario) => (
                     <ScenarioCard
                       key={scenario.id}
@@ -2462,7 +2476,7 @@ const LibraryTopBar = () => {
                     />
                   ))}
                 </MenuRow>
-                <MenuRow title="🕐 Last Updated" emptyText="No scenarios yet.">
+                <MenuRow title={<ShelfTitle icon="refresh">Last Updated</ShelfTitle>} emptyText="No scenarios yet.">
                   {lastUpdatedScenarios.map((scenario) => (
                     <ScenarioCard
                       key={scenario.id}
@@ -2477,7 +2491,7 @@ const LibraryTopBar = () => {
                     />
                   ))}
                 </MenuRow>
-                <MenuRow title="✦ Your Scenarios">
+                <MenuRow title={<ShelfTitle icon="command">Your Scenarios</ShelfTitle>}>
                   <CreateScenarioTile busy={isBusy} onCreate={handleCreateScenario} />
                   {yourScenarios.map((scenario) => (
                     <ScenarioCard

@@ -13,9 +13,11 @@ import {
 } from "../../runtime/gameState.js";
 import { buildRegionOwnershipText } from "./regionVocab.js";
 import { buildCanonicalStateForPrompt } from "../../runtime/operationalState.js";
+import { clipTokenContext } from "./tokenBudget.js";
 
 const normalizeString = (value) => String(value ?? "").trim();
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
+const promptText = (value, maxChars = 900) => clipTokenContext(normalizeString(value), maxChars);
 
 export const renderTemplate = (template, variables) =>
   String(template ?? "").replace(/\$\{([^}]+)\}/g, (_match, key) => {
@@ -58,22 +60,22 @@ export const buildEventHistoryText = (events, { limit = 10, world = null } = {})
     .slice(-limit)
     .map((event) => {
       const date = normalizeString(event.date) || "undated";
-      const description = normalizeString(event.description);
+      const description = promptText(event.description, 900);
       const impactNotes = [];
 
       if (event.impacts.regionTransfers.length > 0) {
         impactNotes.push(
-          `Territorial shifts: ${event.impacts.regionTransfers
+          `Territorial shifts: ${event.impacts.regionTransfers.slice(0, 12)
             .map((entry) => `${entry.regionName || entry.regionId} -> ${entry.toCode}`)
-            .join(", ")}`,
+            .join(", ")}${event.impacts.regionTransfers.length > 12 ? ` (+${event.impacts.regionTransfers.length - 12} more)` : ""}`,
         );
       }
 
       if (event.impacts.polityChanges.length > 0) {
         impactNotes.push(
-          `Polity changes: ${event.impacts.polityChanges
+          `Polity changes: ${event.impacts.polityChanges.slice(0, 12)
             .map((entry) => `${entry.code}${entry.name ? ` renamed to ${entry.name}` : ""}${entry.color ? ` color ${entry.color}` : ""}`)
-            .join(", ")}`,
+            .join(", ")}${event.impacts.polityChanges.length > 12 ? ` (+${event.impacts.polityChanges.length - 12} more)` : ""}`,
         );
       }
 
@@ -90,8 +92,21 @@ export const buildConsolidatedHistoryText = (world) => {
   const entries = normalizeWorldState(world).consolidatedHistory;
   if (entries.length === 0) return "No earlier campaign history has been consolidated yet.";
 
-  return entries
-    .map((entry) => `Through ${entry.throughDate || "an earlier date"}: ${entry.summary}`)
+  // Preserve samples across the whole campaign, not just its beginning/end.
+  // New saves keep one rolling entry; this also bounds older multi-entry saves.
+  const selected = entries.length <= 12
+    ? entries.map((entry, index) => ({ entry, index }))
+    : Array.from({ length: 12 }, (_, slot) => {
+      const index = Math.round((slot * (entries.length - 1)) / 11);
+      return { entry: entries[index], index };
+    });
+  return selected
+    .map(({ entry, index }, selectedIndex) => {
+      const previousIndex = selectedIndex > 0 ? selected[selectedIndex - 1].index : -1;
+      const omitted = Math.max(0, index - previousIndex - 1);
+      const gap = omitted > 0 ? `[${omitted} intermediate history batches omitted]\n` : "";
+      return `${gap}Through ${entry.throughDate || "an earlier date"}: ${promptText(entry.summary, 1400)}`;
+    })
     .join("\n\n");
 };
 
@@ -110,7 +125,7 @@ export const buildChatSummaryText = (chats, { limit = 4 } = {}) => {
   return normalizedChats.slice(0, limit).map((chat) => {
     const participants = chat.countries.map((country) => country.name).join(", ");
     const lastMessage = chat.messages.at(-1);
-    return `- ${participants}: ${lastMessage ? `${lastMessage.speaker || lastMessage.role}: ${lastMessage.text}` : "no messages yet"}`;
+    return `- ${participants}: ${lastMessage ? `${lastMessage.speaker || lastMessage.role}: ${promptText(lastMessage.text, 500)}` : "no messages yet"}`;
   }).join("\n");
 };
 
@@ -121,7 +136,7 @@ export const buildDetailedChatHistoryText = (chats, { limit = 8, messageLimit = 
   return normalizedChats.slice(0, limit).map((chat, index) => {
     const header = `Chat ${index + 1}: ${chat.countries.map((country) => country.name).join(", ")}`;
     const body = chat.messages.length > 0
-      ? chat.messages.slice(-messageLimit).map((message) => `${message.speaker || message.role}: ${message.text}`).join("\n")
+      ? chat.messages.slice(-messageLimit).map((message) => `${message.speaker || message.role}: ${promptText(message.text, 700)}`).join("\n")
       : "No messages yet.";
     return `${header}\n${body}`;
   }).join("\n\n");
@@ -131,7 +146,7 @@ export const buildAdvisorHistoryText = (messages, { limit = 18 } = {}) => {
   const normalizedMessages = normalizeArray(messages).map((entry) => {
     if (!entry || typeof entry !== "object") return null;
     const role = normalizeString(entry.role || entry.speaker || "message");
-    const text = normalizeString(entry.text || entry.content || entry.message);
+    const text = promptText(entry.text || entry.content || entry.message, 900);
     return role && text ? `${role}: ${text}` : null;
   }).filter(Boolean);
 
@@ -140,7 +155,7 @@ export const buildAdvisorHistoryText = (messages, { limit = 18 } = {}) => {
     : "No advisor messages are currently recorded.";
 };
 
-export const buildActionHistoryText = (actions, { includeResolved = false } = {}) => {
+export const buildActionHistoryText = (actions, { includeResolved = false, limit = includeResolved ? 24 : 48 } = {}) => {
   const normalizedActions = normalizeActions(actions);
   const filteredActions = includeResolved
     ? normalizedActions
@@ -149,18 +164,25 @@ export const buildActionHistoryText = (actions, { includeResolved = false } = {}
     return includeResolved ? "No actions have been recorded yet." : "No planned actions are currently queued.";
   }
 
-  return filteredActions.map((action) => {
+  const planned = filteredActions.filter((action) => action.status === "planned");
+  const resolved = filteredActions.filter((action) => action.status !== "planned");
+  const selected = includeResolved
+    ? [...planned, ...resolved.slice(-Math.max(0, limit - planned.length))]
+    : filteredActions.slice(-limit);
+  const omitted = Math.max(0, filteredActions.length - selected.length);
+  return selected.map((action) => {
     const kindLabel = action.kind === "chat" ? "chat" : "action";
     const statusLabel = action.status !== "planned" ? ` [${action.status}]` : "";
-    return `- (${kindLabel}) ${action.title}${statusLabel}: ${buildActionDisplayText(action)}`;
-  }).join("\n");
+    return `- (${kindLabel}) ${promptText(action.title, 180)}${statusLabel}: ${promptText(buildActionDisplayText(action), 700)}`;
+  }).join("\n") + (omitted > 0 ? `\n(+${omitted} older resolved actions omitted)` : "");
 };
 
 export const formatActionsForPrompt = (actions) => normalizeArray(actions)
+  .slice(-48)
   .map((entry) => {
-    if (typeof entry === "string") return entry.trim();
+    if (typeof entry === "string") return promptText(entry, 700);
     const normalized = normalizeActionEntry(entry);
-    return normalized ? `- ${normalized.title}: ${buildActionDisplayText(normalized)}` : "";
+    return normalized ? `- ${promptText(normalized.title, 180)}: ${promptText(buildActionDisplayText(normalized), 700)}` : "";
   })
   .filter(Boolean)
   .join("\n");
@@ -299,13 +321,13 @@ export const buildKeyFiguresSummaryText = (world) => {
     const compact = [
       Array.isArray(figure.goals) && figure.goals.length > 0 ? `goals ${figure.goals.slice(0, 3).join(", ")}` : "",
       Array.isArray(figure.traits) && figure.traits.length > 0 ? `traits ${figure.traits.slice(0, 3).join(", ")}` : "",
-      figure.location ? `location ${figure.location}` : "",
+      figure.location ? `location ${promptText(figure.location, 240)}` : "",
     ].filter(Boolean);
     if (mode !== "full") return `- ${base.join("; ")}${compact.length ? `; ${compact.join("; ")}` : ""} (light dossier; do not call a personal brain)`;
 
     const privateState = [
       ...compact,
-      figure.thought ? `thought ${figure.thought}` : "",
+      figure.thought ? `thought ${promptText(figure.thought, 500)}` : "",
       Array.isArray(figure.achievements) && figure.achievements.length > 0 ? `achievements ${listText(figure.achievements.slice(-3))}` : "",
       Array.isArray(figure.projects) && figure.projects.length > 0 ? `projects ${listText(figure.projects)}` : "",
     ].filter(Boolean);
@@ -370,7 +392,7 @@ export const buildControlSectorsSummaryText = (world) => {
       return `${cell.id}=${cell.ownerCode} ${cell.control}% depth ${cell.depth || 1}${cellOpposition}${parent} ref ${sector.id}:${cell.id} ${cellCoords}`;
     }).join(", ");
     const cellSummary = cells ? `; cells: ${cells}` : "";
-    return `- ${sector.name} [id ${sector.id}] in region ${sector.regionId}: ${sector.ownerCode} controls ${sector.control}%${opposition}; status ${sector.status}; center ${coords}; radius ${sector.radiusKm} km${battle}${started}${cellSummary}${sector.note ? ` — ${sector.note}` : ""}`;
+    return `- ${sector.name} [id ${sector.id}] in region ${sector.regionId}: ${sector.ownerCode} controls ${sector.control}%${opposition}; status ${sector.status}; center ${coords}; radius ${sector.radiusKm} km${battle}${started}${cellSummary}${sector.note ? ` — ${promptText(sector.note, 400)}` : ""}`;
   }).join("\n");
   return "These are partial tactical-control patches inside administrative regions, not region ownership. Cell depth is limited to 2: depth 1 is the normal grid, depth 2 is the final micro-cell level. Reference a leaf cell as sectorId:cellId. Update them with sectorOps; use territoryOps for a named cell-backed subregion; use regionTransfers only for a complete administrative change.\n" + lines;
 };
@@ -379,7 +401,7 @@ export const buildTerritoryFragmentsSummaryText = (world) => {
   const fragments = normalizeWorldState(world).territoryFragments;
   if (fragments.length === 0) return "No named subregions, autonomous pockets, or secession fragments are currently recorded.";
   return fragments.slice(0, 60).map((fragment) =>
-    `- ${fragment.name} [id ${fragment.id}] (${fragment.kind}, ${fragment.status}, owner ${fragment.ownerCode}) inside region ${fragment.parentRegionId}; cells ${fragment.cellRefs.join(", ")}${fragment.note ? ` — ${fragment.note}` : ""}`,
+    `- ${fragment.name} [id ${fragment.id}] (${fragment.kind}, ${fragment.status}, owner ${fragment.ownerCode}) inside region ${fragment.parentRegionId}; cells ${fragment.cellRefs.slice(0, 64).join(", ")}${fragment.note ? ` — ${promptText(fragment.note, 400)}` : ""}`,
   ).join("\n");
 };
 
@@ -395,7 +417,7 @@ export const buildMarkersSummaryText = (world) => {
     const coords = Number.isFinite(lat) && Number.isFinite(lng)
       ? `lat ${lat.toFixed(2)}, lng ${lng.toFixed(2)}`
       : "unknown location";
-    return `- ${marker.name} [id ${marker.id}] (${marker.kind}${marker.ownerCode ? `, owner ${marker.ownerCode}` : ""}, source ${marker.source}, status ${marker.status}) at ${coords}${marker.note ? ` — ${marker.note}` : ""}`;
+    return `- ${marker.name} [id ${marker.id}] (${marker.kind}${marker.ownerCode ? `, owner ${marker.ownerCode}` : ""}, source ${marker.source}, status ${marker.status}) at ${coords}${marker.note ? ` — ${promptText(marker.note, 400)}` : ""}`;
   }).join("\n");
 };
 
@@ -525,7 +547,7 @@ export const buildWorldSummary = async (bundle, regionCatalog = null) => {
       // `note` is the polity's lore — the author's (or the faction creator's) own
       // description of who this power is. It was persisted but never reached the
       // model, so a player-written backstory did nothing. It steers the story now.
-      `- ${entry.code}: ${entry.name || entry.code}${entry.color ? ` (${entry.color})` : ""}${entry.aliases.length > 0 ? ` aliases ${entry.aliases.join(", ")}` : ""}${entry.note ? ` — ${entry.note}` : ""}`,
+      `- ${entry.code}: ${entry.name || entry.code}${entry.color ? ` (${entry.color})` : ""}${entry.aliases.length > 0 ? ` aliases ${entry.aliases.slice(0, 8).join(", ")}` : ""}${entry.note ? ` — ${promptText(entry.note, 700)}` : ""}`,
     ).join("\n");
 
   // What each country IS: the map-maker's tags with the AI's own changes layered
@@ -539,7 +561,7 @@ export const buildWorldSummary = async (bundle, regionCatalog = null) => {
   const taggedCodes = Object.keys(tagged);
   const tagSummary = taggedCodes.length === 0
     ? "No countries have defining tags."
-    : taggedCodes.slice(0, 40).map((code) => `- ${code}: ${tagged[code].join(", ")}`).join("\n")
+    : taggedCodes.slice(0, 40).map((code) => `- ${code}: ${tagged[code].slice(0, 12).join(", ")}`).join("\n")
       + (taggedCodes.length > 40 ? `\n(+${taggedCodes.length - 40} more tagged countries not listed)` : "");
   const playerTags = resolveCountryTags(baseTags, world, bundle.game.country);
 
@@ -586,8 +608,8 @@ export const buildWorldSummary = async (bundle, regionCatalog = null) => {
     `Current date: ${bundle.game.gameDate || "unknown"}`,
     `Language: ${world.language || bundle.game.language || "English"}`,
     `Difficulty: ${bundle.game.difficulty || "standard"}`,
-    `World before round one: ${world.startingTimelineText || "No world briefing provided."}`,
-    `Simulation rules: ${world.simulationRules || "No extra simulation rules were provided."}`,
+    `World before round one: ${promptText(world.startingTimelineText, 6000) || "No world briefing provided."}`,
+    `Simulation rules: ${promptText(world.simulationRules, 6000) || "No extra simulation rules were provided."}`,
     "",
     "Territorial changes from the base scenario:",
     territorySummary,
@@ -613,6 +635,7 @@ export const buildWorldSummary = async (bundle, regionCatalog = null) => {
 export const buildPromptContext = async (bundle, {
   actionInput = "",
   advisorLimit = 18,
+  canonicalStateOptions = {},
   catalystChoice = "",
   catalystHistory = "",
   catalystOpening = "",
@@ -622,6 +645,7 @@ export const buildPromptContext = async (bundle, {
   chatsToConsolidate = "",
   eventLimit = 10,
   eventsToConsolidate = "",
+  excludeCurrentChatFromLongHistory = false,
   gameMasterRequest = "",
   longEventLimit = 24,
   respondingPolityName = "",
@@ -647,6 +671,9 @@ export const buildPromptContext = async (bundle, {
     ...normalizeArray(currentChat?.countries).map((participant) => participant.name),
     ...normalizeArray(currentChat?.figures).map((participant) => participant.name),
   ].filter(Boolean);
+  const longHistoryChats = excludeCurrentChatFromLongHistory && currentChat
+    ? unconsolidatedChats.filter((entry) => entry.id !== currentChat.id)
+    : unconsolidatedChats;
 
   return {
     actionInput,
@@ -659,7 +686,7 @@ export const buildPromptContext = async (bundle, {
       game: bundle.game,
       playerPolity: bundle.game.country || "",
       world: bundle.world,
-    }),
+    }, canonicalStateOptions),
     catalystChoice,
     catalystDate: date,
     catalystHistory,
@@ -669,9 +696,9 @@ export const buildPromptContext = async (bundle, {
       : "0%",
     catalystPremise,
     citiesSummary,
-    chat: JSON.stringify(unconsolidatedChats),
-    chatHistory: currentChat?.messages?.map((message) => `${message.speaker || message.role}: ${message.text}`).join("\n") || "No chat history.",
-    chatHistoryLong: buildDetailedChatHistoryText(unconsolidatedChats, { limit: chatLimit }),
+    chat: clipTokenContext(JSON.stringify(unconsolidatedChats), 12000, { preserveEnds: true }),
+    chatHistory: currentChat?.messages?.slice(-20).map((message) => `${message.speaker || message.role}: ${promptText(message.text, 900)}`).join("\n") || "No chat history.",
+    chatHistoryLong: buildDetailedChatHistoryText(longHistoryChats, { limit: chatLimit }),
     chatParticipants: currentChatParticipants.join(", ") || "",
     chatSummary: buildChatSummaryText(unconsolidatedChats),
     chatsToConsolidate: chatsToConsolidate || buildDetailedChatHistoryText(unconsolidatedChats, { limit: 12, messageLimit: 50 }),
@@ -701,12 +728,12 @@ export const buildPromptContext = async (bundle, {
     recentRoundsWithDates: buildRecentRoundsWithDates(bundle),
     respondingPolityName: respondingPolityName || currentChatParticipants.find((name) => name !== bundle.game.country) || "",
     round: String(bundle.game.round || 1),
-    simulationRules: normalizeString(bundle.world.simulationRules) || "No extra simulation rules were provided.",
+    simulationRules: promptText(bundle.world.simulationRules, 6000) || "No extra simulation rules were provided.",
     startDate: bundle.game.startDate || "",
     targetDate: target,
     targetDateReadable: formatDateReadable(target),
     unitsSummary: buildUnitsSummaryText(bundle.world),
-    worldBeforeRoundOne: normalizeString(bundle.world.startingTimelineText) || "No pre-game world briefing was provided.",
+    worldBeforeRoundOne: promptText(bundle.world.startingTimelineText, 6000) || "No pre-game world briefing was provided.",
     worldSummary,
     worldSummaryNoCity: worldSummary,
   };

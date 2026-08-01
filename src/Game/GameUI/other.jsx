@@ -8,17 +8,17 @@ import { flagEmojiFromGid, flagImageUrlFromGid } from "../../runtime/countryFlag
 
 const baseStyle = {
     position: "fixed",
-    backgroundColor: "rgba(17, 24, 39, 0.9)",
-    backdropFilter: "blur(4px)",
+    background: "linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96))",
+    backdropFilter: "blur(18px) saturate(1.2)",
     zIndex: 9999,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     color: "white",
     fontFamily: "sans-serif",
-    borderRadius: "12px",
-    border: "1px solid rgba(255,255,255,0.1)",
-    boxShadow: "0 4px 6px -1px rgba(0,0,0,0.2)",
+    borderRadius: "14px",
+    border: "1px solid rgba(155, 190, 230, 0.16)",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08)",
 };
 
 // A GID_0 that isn't a real ISO country (custom scenario polities like "HRE",

@@ -2058,6 +2058,43 @@ const getActiveGameSummary = () => {
 
 const getActiveGameId = () => getGameCatalog().activeGameId;
 
+// The game map only needs the active ids, cache token and country-name overrides
+// to begin fetching its own range-addressable assets. Building the full library
+// catalog here would also read every save's actions/events just to find that one
+// game, delaying the first frame behind data used exclusively by the library UI.
+const getRuntimeBootstrap = () => {
+  ensureGameStore();
+  ensureScenarioStore();
+
+  const manifest = getGameManifest();
+  const orderedGameIds = resolveOrderedIds(manifest.order, GAMES_DIR, DEFAULT_GAME_ID);
+  const activeGameId =
+    orderedGameIds.includes(manifest.activeGameId) && fs.existsSync(getGameMetaPath(manifest.activeGameId))
+      ? manifest.activeGameId
+      : orderedGameIds.find((gameId) => fs.existsSync(getGameMetaPath(gameId))) ?? "";
+
+  if (!activeGameId) {
+    return {
+      activeGameId: null,
+      runtimeScenario: null,
+      token: "",
+    };
+  }
+
+  const game = readGameMeta(activeGameId);
+  const scenario = readScenarioMeta(game.scenarioId);
+  const scenarioToken = scenario.updatedAt || scenario.cacheToken || "";
+
+  return {
+    activeGameId,
+    runtimeScenario: {
+      countryNameOverrides: scenario.countryNameOverrides ?? {},
+      id: scenario.id,
+    },
+    token: `${activeGameId}-${game.updatedAt}-${scenarioToken}`,
+  };
+};
+
 const getActiveRuntimeScenarioSummary = () => {
   const activeGame = getActiveGameSummary();
   if (!activeGame) {
@@ -2687,6 +2724,7 @@ export {
   getGameCatalog,
   getGameDetails,
   getLibraryCatalog,
+  getRuntimeBootstrap,
   getScenarioCatalog,
   getScenarioDetails,
   getSelectedScenarioSummary,

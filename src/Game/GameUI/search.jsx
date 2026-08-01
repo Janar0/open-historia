@@ -1,6 +1,7 @@
 /*! Open Historia — portions (mobile search layout) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React, { memo, useEffect, useRef, useState } from "react";
 import { useIsMobile } from "../../runtime/useIsMobile.js";
+import { GameIcon } from "./Icon.jsx";
 
 const SEARCH_HEADERS = { "Accept-Language": "en, *;q=0.5" };
 const SEARCH_RESULT_CACHE = new Map();
@@ -276,6 +277,7 @@ const Search = memo(({ mapRef }) => {
 
   return (
     <div
+      className="oh-panel oh-search-panel"
       style={{
         position: "fixed",
         // Desktop: sits right of the bottom toolbar and expands rightward.
@@ -349,15 +351,9 @@ const Search = memo(({ mapRef }) => {
               </path>
             </svg>
           ) : expanded ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <GameIcon name="close" size={16} strokeWidth={2.5} />
           ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <circle cx="11" cy="11" r="7" />
-              <line x1="16.5" y1="16.5" x2="22" y2="22" />
-            </svg>
+            <GameIcon name="search" size={16} strokeWidth={2.5} />
           )}
         </button>
 
@@ -410,16 +406,14 @@ const Search = memo(({ mapRef }) => {
             }}
             title="Search for place"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="5" y1="12" x2="19" y2="12" />
-              <polyline points="12 5 19 12 12 19" />
-            </svg>
+            <GameIcon name="arrow-right" size={15} strokeWidth={2.5} />
           </button>
         )}
       </div>
 
       {hasSuggestions && (
         <div
+          className="oh-panel"
           id={SEARCH_RESULTS_ID}
           role="listbox"
           aria-label="Place search results"

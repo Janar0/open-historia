@@ -22,6 +22,14 @@ body {
   color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --oh-ink: #edf5ff;
+  --oh-muted: rgba(190, 209, 235, 0.62);
+  --oh-panel: rgba(7, 15, 28, 0.94);
+  --oh-panel-raised: rgba(14, 27, 47, 0.86);
+  --oh-line: rgba(151, 188, 232, 0.16);
+  --oh-blue: #62b7ff;
+  --oh-violet: #a78bfa;
+  --oh-teal: #50d4c1;
 }
 
 button,
@@ -81,6 +89,98 @@ textarea:focus-visible {
 
 .actions-composer::placeholder {
   color: rgba(201, 218, 242, 0.45);
+}
+
+.oh-toolbar {
+  position: fixed;
+  z-index: 9999;
+  left: 0.75rem;
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  width: min(22.4rem, calc(100vw - 1.5rem));
+  min-height: 4.25rem;
+  padding: 0.45rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  color: var(--oh-ink);
+  background:
+    linear-gradient(145deg, rgba(15, 30, 51, 0.9), rgba(5, 12, 23, 0.94)),
+    rgba(5, 12, 23, 0.9);
+  border: 1px solid var(--oh-line);
+  border-radius: 1.15rem;
+  box-shadow:
+    0 1.5rem 3rem rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(1.25);
+}
+
+.oh-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.oh-command-panel {
+  background:
+    radial-gradient(circle at 0 0, rgba(104, 82, 196, 0.14), transparent 35%),
+    linear-gradient(160deg, rgba(11, 24, 45, 0.98), rgba(5, 11, 22, 0.98)) !important;
+  border-color: rgba(168, 145, 255, 0.22) !important;
+  box-shadow:
+    0 1.5rem 4rem rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.oh-panel,
+.oh-date-widget {
+  background:
+    radial-gradient(circle at 0 0, rgba(93, 125, 194, 0.12), transparent 38%),
+    linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96)) !important;
+  border: 1px solid rgba(155, 190, 230, 0.16) !important;
+  border-radius: 1rem !important;
+  box-shadow:
+    0 1.5rem 4rem rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
+  backdrop-filter: blur(18px) saturate(1.2) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.2) !important;
+}
+
+.oh-panel-banner {
+  border-color: rgba(96, 165, 250, 0.28) !important;
+  border-radius: 0.8rem !important;
+}
+
+.oh-search-panel {
+  border-radius: 0.9rem !important;
+}
+
+.oh-shelf-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: rgba(235, 244, 255, 0.9);
+}
+
+.oh-shelf-title svg {
+  color: var(--oh-blue);
+}
+
+.oh-command-panel button {
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.oh-command-panel button:hover:not(:disabled) {
+  background: rgba(108, 139, 187, 0.16) !important;
+  border-color: rgba(144, 190, 242, 0.3) !important;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .oh-toolbar {
+    left: 0.5rem;
+    bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 1rem);
+    border-radius: 1rem;
+  }
 }
 
 @media (max-width: 640px) {

@@ -3,13 +3,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useDraggablePanel } from "./useDraggablePanel.js";
 import { subscribeMarkerMode, getMarkerInteractionMode, setMarkerInteractionMode, clearMarkerInteractionMode, placePlayerMarker, removePlayerMarker } from "../Map/markersController.js";
 import { useWorldState } from "../Map/useWorldState.js";
+import { GameIcon } from "./Icon.jsx";
 
 const surface = {
-  backgroundColor: "rgba(17, 24, 39, 0.94)",
-  backdropFilter: "blur(7px)",
-  WebkitBackdropFilter: "blur(7px)",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: "12px",
+  background: "linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96))",
+  backdropFilter: "blur(18px) saturate(1.2)",
+  WebkitBackdropFilter: "blur(18px) saturate(1.2)",
+  border: "1px solid rgba(155, 190, 230, 0.16)",
+  borderRadius: "16px",
   color: "white",
   fontFamily: "sans-serif",
   boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
@@ -56,6 +57,7 @@ const MarkersPanel = ({ mapRef, open = false, onToggle }) => {
     <>
       {mode.kind === "place" && (
         <div
+          className="oh-panel oh-panel-banner"
           role="status"
           style={{
             ...surface,
@@ -84,6 +86,7 @@ const MarkersPanel = ({ mapRef, open = false, onToggle }) => {
 
       {open && (
         <div
+          className="oh-panel"
           ref={draggable.panelRef}
           style={{
             ...surface,
@@ -101,7 +104,7 @@ const MarkersPanel = ({ mapRef, open = false, onToggle }) => {
         >
           <div {...draggable.dragHandleProps} style={{ ...draggable.dragHandleProps.style, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "9px" }}>
             <strong style={{ fontSize: "14px" }}>Map markers</strong>
-            <button type="button" aria-label="Close map markers" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: "14px" }}>✕</button>
+            <button type="button" aria-label="Close map markers" onClick={onToggle} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", display: "flex", padding: "0.2rem" }}><GameIcon name="close" size={16} /></button>
           </div>
 
           <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: "8px", padding: "8px", marginBottom: "10px" }}>

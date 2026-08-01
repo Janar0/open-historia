@@ -13,7 +13,8 @@ import {
     readJson,
 } from "../../runtime/assets.js";
 import { flagEmojiFromGid } from "../../runtime/countryFlags.js";
-import { readChatsState, readWorldState, writeChatsState } from "../../runtime/gameState.js";
+import { readChatsState, readWorldState, writeChatsState, writeWorldState } from "../../runtime/gameState.js";
+import { GameIcon } from "./Icon.jsx";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,22 @@ const loadAllChats = async ({ force = false } = {}) => {
     try {
         return await readChatsState({ force });
     } catch { return []; }
+};
+
+const saveCountryDiplomaticMemory = async (country, memory) => {
+    if (!country || !memory) return;
+    try {
+        const world = await readWorldState({ force: true });
+        await writeWorldState({
+            ...world,
+            diplomaticMemory: {
+                ...(world.diplomaticMemory ?? {}),
+                [country]: memory,
+            },
+        });
+    } catch (err) {
+        console.error("Failed to save diplomatic memory:", err);
+    }
 };
 
 // ── PMTiles country loader ────────────────────────────────────────────────────
@@ -527,6 +544,7 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
     const lastPlayerMessage = useRef("");
     const messagesEndRef    = useRef(null);
     const messagesRef       = useRef(chat.messages ?? []);
+    const memoriesRef       = useRef(chat.memories ?? {});
 
     useEffect(() => {
         participants.forEach(({ name, code }) => getCountryFlag({ code, name }));
@@ -534,6 +552,7 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
 
     useEffect(() => {
         const saved = chat.messages ?? [];
+        memoriesRef.current = chat.memories ?? {};
         if (saved.length > 0) loadDiplomaticHistory(saved);
         else startDiplomaticChat();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -543,10 +562,14 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
         }, [messages, isLoading, phase]);
 
-        const pushMessages = (updated) => {
+        const pushMessages = (updated, memoryUpdate = null) => {
+            const nextMemories = memoryUpdate
+                ? { ...memoriesRef.current, ...memoryUpdate }
+                : memoriesRef.current;
             messagesRef.current = updated;
+            memoriesRef.current = nextMemories;
             setMessages(updated);
-            onMessagesUpdate(chat.id, updated);
+            onMessagesUpdate(chat.id, updated, nextMemories);
         };
 
         const isPlayerCountry = (country) => !country?.figureId && countryMatchesIdentity(country, playerCountry);
@@ -563,8 +586,13 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
             try {
                 const result = country.figureId
                     ? await sendKeyFigureMessage(country.figureId, playerMessage, { ...chat, messages: messagesRef.current }, { playerCountry, gameDate })
-                    : await sendDiplomaticMessage(playerMessage, country.name, countries);
+                    : await sendDiplomaticMessage(playerMessage, country.name, countries, {
+                        chatId: chat.id,
+                        chat: { ...chat, messages: messagesRef.current, memories: memoriesRef.current },
+                    });
                 const { reply, reaction } = result;
+                const memoryUpdate = result.memory ? { [country.name]: result.memory } : null;
+                if (result.memory) await saveCountryDiplomaticMemory(country.name, result.memory);
 
                 if (reaction) {
                     const msgs = [...messagesRef.current];
@@ -574,12 +602,12 @@ const ConversationView = ({ chat, playerCountry, gameDate, onDelete, onBack, onM
                             ...msgs[lastUserIdx],
                             reactions: { ...(msgs[lastUserIdx].reactions ?? {}), [country.name]: { emoji: reaction, code: country.code } },
                         };
-                        pushMessages([...msgs, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }]);
+                        pushMessages([...msgs, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }], memoryUpdate);
                     } else {
-                        pushMessages([...msgs, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }]);
+                        pushMessages([...msgs, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }], memoryUpdate);
                     }
                 } else {
-                    pushMessages([...messagesRef.current, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }]);
+                    pushMessages([...messagesRef.current, { role: country.figureId ? "figure" : "leader", figureId: country.figureId, speaker: country.name, code: country.code, text: reply, time: gameDate, ...(result.ledger ? { ledger: result.ledger } : {}) }], memoryUpdate);
                 }
             } catch (err) {
                 pushMessages([...messagesRef.current, { role: "error", speaker: country.name, code: country.code, text: err.message, time: gameDate }]);
@@ -1004,11 +1032,15 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
                                        [countries, playerCountry]
     );
 
-    const handleMessagesUpdate = (chatId, newMessages) => {
+    const handleMessagesUpdate = (chatId, newMessages, newMemories = null) => {
         setChats(prev => {
-            const updated = prev.map(c => c.id === chatId ? { ...c, messages: newMessages } : c);
+            const updated = prev.map(c => c.id === chatId
+                ? { ...c, messages: newMessages, ...(newMemories ? { memories: newMemories } : {}) }
+                : c);
             saveAllChats(updated);
-            setActiveChat(ac => ac?.id === chatId ? { ...ac, messages: newMessages } : ac);
+            setActiveChat(ac => ac?.id === chatId
+                ? { ...ac, messages: newMessages, ...(newMemories ? { memories: newMemories } : {}) }
+                : ac);
             return updated;
         });
     };
@@ -1095,7 +1127,7 @@ const ChatPanel = ({ isOpen, onClose, requestedCountry, onConsumeRequest }) => {
         return (
             <>
             <MarkdownStyleInjector />
-            <div role="dialog" aria-label="Diplomatic chats" aria-hidden={!isOpen} style={{ position: "fixed", bottom: isOpen ? "calc(4.25rem + env(safe-area-inset-bottom, 0px))" : "calc(-40rem - env(safe-area-inset-bottom, 0px))", left: "0rem", width: "26.25rem", maxWidth: "calc(100vw - 1rem)", height: "min(calc(100dvh - 9rem - env(safe-area-inset-bottom, 0px)), max(calc(100dvh - 33rem), 30rem))", minHeight: "10rem", backgroundColor: "rgba(17,24,39,0.95)", backdropFilter: "blur(8px)", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "-4px 0 24px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.06)", zIndex: 9998, overflow: "hidden", transition: "bottom 0.35s cubic-bezier(0.4,0,0.2,1),opacity 0.35s ease", opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? "auto" : "none", fontFamily: "sans-serif", color: "white", display: "flex", flexDirection: "column" }}>
+            <div className="oh-panel" role="dialog" aria-label="Diplomatic chats" aria-hidden={!isOpen} style={{ position: "fixed", bottom: isOpen ? "calc(4.25rem + env(safe-area-inset-bottom, 0px))" : "calc(-40rem - env(safe-area-inset-bottom, 0px))", left: "0rem", width: "26.25rem", maxWidth: "calc(100vw - 1rem)", height: "min(calc(100dvh - 9rem - env(safe-area-inset-bottom, 0px)), max(calc(100dvh - 33rem), 30rem))", minHeight: "10rem", backgroundColor: "rgba(17,24,39,0.95)", backdropFilter: "blur(8px)", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "-4px 0 24px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.06)", zIndex: 9998, overflow: "hidden", transition: "bottom 0.35s cubic-bezier(0.4,0,0.2,1),opacity 0.35s ease", opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? "auto" : "none", fontFamily: "sans-serif", color: "white", display: "flex", flexDirection: "column" }}>
 
             {showSelector && <CountrySelectorModal countries={availableCountries} loading={loadingCountries} onStart={handleStartChat} onCancel={() => setShowSelector(false)} />}
             {showCouncil && <FigureSelectorModal figures={figures} loading={loadingFigures} playerCountry={playerCountry} gameDate={gameDate} onStart={handleStartCouncil} onCancel={() => setShowCouncil(false)} />}
@@ -1195,7 +1227,7 @@ const Chat = ({ hovered, setHovered, isOpen, onToggle }) => {
             onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
             onClick={() => setChatOpen(o => !o)}>
             <span style={{ position: "relative", display: "inline-flex" }}>
-                💬
+                <GameIcon name="message" size={20} />
                 {unseenCount > 0 && !isOpen && (
                     <span aria-hidden="true" style={{ position: "absolute", top: "-0.55rem", right: "-0.8rem", minWidth: "1.05rem", height: "1.05rem", padding: "0 0.2rem", borderRadius: "999px", background: "#dc2626", border: "1px solid rgba(255,255,255,0.35)", color: "white", fontSize: "0.62rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
                         {unseenCount > 9 ? "9+" : unseenCount}
@@ -1209,7 +1241,7 @@ const Chat = ({ hovered, setHovered, isOpen, onToggle }) => {
 
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 
-const PanelButton = ({ icon, label, hovered, setHovered, isOpen, onClick }) => (
+const PanelButton = ({ icon, label, hovered, setHovered, isOpen, onClick, accent = "blue" }) => (
     <button
         type="button"
         title={isOpen ? `Close ${label}` : label}
@@ -1220,30 +1252,32 @@ const PanelButton = ({ icon, label, hovered, setHovered, isOpen, onClick }) => (
         onClick={onClick}
         style={{
             width: "3.3rem", height: "3.3rem", borderRadius: "10px",
-            border: isOpen ? "1px solid rgba(59,130,246,0.65)" : hovered ? "1px solid rgba(255,255,255,0.2)" : "1px solid rgba(255,255,255,0.1)",
-            background: isOpen ? "linear-gradient(145deg,rgba(30,96,170,0.5),rgba(23,63,112,0.5))" : hovered ? "linear-gradient(145deg,rgba(40,55,80,0.95),rgba(20,30,50,0.95))" : "linear-gradient(145deg,rgba(30,42,65,0.95),rgba(15,22,40,0.95))",
+            border: isOpen ? `1px solid ${accent === "violet" ? "rgba(167,139,250,0.7)" : "rgba(96,165,250,0.7)"}` : hovered ? "1px solid rgba(255,255,255,0.2)" : "1px solid rgba(255,255,255,0.1)",
+            background: isOpen ? (accent === "violet" ? "linear-gradient(145deg,rgba(109,40,217,0.55),rgba(76,29,149,0.48))" : "linear-gradient(145deg,rgba(30,96,170,0.5),rgba(23,63,112,0.5))") : hovered ? "linear-gradient(145deg,rgba(40,55,80,0.95),rgba(20,30,50,0.95))" : "linear-gradient(145deg,rgba(30,42,65,0.95),rgba(15,22,40,0.95))",
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.12s ease",
             boxShadow: hovered ? "inset 0 1px 0 rgba(255,255,255,0.1),0 2px 8px rgba(0,0,0,0.4)" : "inset 0 1px 0 rgba(255,255,255,0.06),inset 0 -1px 0 rgba(0,0,0,0.3),0 2px 6px rgba(0,0,0,0.35)",
-            fontSize: "1.15rem", outline: "none", transform: hovered ? "translateY(-1px)" : "translateY(0)", color: "white", fontFamily: "sans-serif", flexShrink: 0,
+            fontSize: "1.15rem", outline: "none", transform: hovered ? "translateY(-1px)" : "translateY(0)", color: "rgba(235,244,255,0.92)", fontFamily: "sans-serif", flexShrink: 0,
         }}
     >
-        <span aria-hidden="true">{icon}</span>
+        <GameIcon name={icon} size={19} />
     </button>
 );
 
-const Toolbar = memo(({ onOpenAdvisor, activePanel, onTogglePanel }) => {
+const Toolbar = memo(({ onOpenAdvisor, onOpenCheats, isCheatsOpen, activePanel, onTogglePanel }) => {
     const [hoveredChat, setHoveredChat]       = useState(false);
     const [hoveredActions, setHoveredActions] = useState(false);
     const [hoveredForces, setHoveredForces] = useState(false);
     const [hoveredMarkers, setHoveredMarkers] = useState(false);
     const [hoveredReserves, setHoveredReserves] = useState(false);
+    const [hoveredCommand, setHoveredCommand] = useState(false);
     return (
-        <div role="toolbar" aria-label="Game panels toolbar" style={{ position: "fixed", bottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))", left: "0.5rem", height: "4rem", width: "17.4rem", gap: "0.15rem", padding: "0 0.1rem", backgroundColor: "rgba(17,24,39,0.9)", backdropFilter: "blur(4px)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontFamily: "sans-serif", borderRadius: "14px", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 8px 24px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+        <div className="oh-toolbar" role="toolbar" aria-label="Game panels toolbar">
         <Chat hovered={hoveredChat} setHovered={setHoveredChat} isOpen={activePanel === "chat"} onToggle={() => onTogglePanel("chat")} />
         <Actions onOpenAdvisor={onOpenAdvisor} hovered={hoveredActions} setHovered={setHoveredActions} isOpen={activePanel === "actions"} onToggle={() => onTogglePanel("actions")} />
-        <PanelButton icon="🪖" label="Forces" hovered={hoveredForces} setHovered={setHoveredForces} isOpen={activePanel === "forces"} onClick={() => onTogglePanel("forces")} />
-        <PanelButton icon="📍" label="Map markers" hovered={hoveredMarkers} setHovered={setHoveredMarkers} isOpen={activePanel === "markers"} onClick={() => onTogglePanel("markers")} />
-        <PanelButton icon="📦" label="Military reserves" hovered={hoveredReserves} setHovered={setHoveredReserves} isOpen={activePanel === "reserves"} onClick={() => onTogglePanel("reserves")} />
+        <PanelButton icon="forces" label="Forces" hovered={hoveredForces} setHovered={setHoveredForces} isOpen={activePanel === "forces"} onClick={() => onTogglePanel("forces")} />
+        <PanelButton icon="markers" label="Map markers" hovered={hoveredMarkers} setHovered={setHoveredMarkers} isOpen={activePanel === "markers"} onClick={() => onTogglePanel("markers")} />
+        <PanelButton icon="reserves" label="Military reserves" hovered={hoveredReserves} setHovered={setHoveredReserves} isOpen={activePanel === "reserves"} onClick={() => onTogglePanel("reserves")} />
+        <PanelButton icon="command" label="Command center and cheats" hovered={hoveredCommand} setHovered={setHoveredCommand} isOpen={isCheatsOpen} accent="violet" onClick={onOpenCheats} />
         </div>
     );
 });

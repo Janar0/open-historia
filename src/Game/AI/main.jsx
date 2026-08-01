@@ -16,6 +16,11 @@ import {
     renderTemplate,
     resolveHelperValues,
 } from "./promptContext.js";
+import { compactConversationHistory as compactHistoryForRequest } from "./tokenBudget.js";
+import {
+    buildCountryDiplomaticMemoryText,
+    parseDiplomaticResponse,
+} from "./diplomaticMemory.js";
 
 // main.jsx - AI chat module
 // Supports Gemini, OpenAI, Anthropic, and OpenAI-compatible endpoints
@@ -25,6 +30,11 @@ const GEMINI_DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const ANTHROPIC_DEFAULT_MODEL = "claude-haiku-4-5";
 const OPENAI_API_ENDPOINT = "https://api.openai.com/v1";
 const ANTHROPIC_API_ENDPOINT = "https://api.anthropic.com/v1";
+
+const resolveReasoningLevel = (requested) => {
+    if (!getReasoningEnabled() || requested === false || requested === "none") return "none";
+    return requested === "low" ? "low" : "medium";
+};
 
 const CHAT_MODEL_HINTS = [
     /^gpt/i,
@@ -539,8 +549,9 @@ async function resolveModel(provider, {
 
 async function callGemini(systemPrompt, history, {
     deadline,
-    maxTokens = 8192,
+    maxTokens,
     onChunk,
+    reasoning: reasoningRequested,
     retries = 3,
     retryDelay = 15000,
     signal,
@@ -560,6 +571,8 @@ async function callGemini(systemPrompt, history, {
     });
 
     const customParams = parseCustomParams(settings.customParams, "Gemini");
+    const reasoningLevel = resolveReasoningLevel(reasoningRequested);
+    const thinkingBudget = reasoningLevel === "low" ? 2048 : 8192;
 
     // Advisor/chat streaming: with an onChunk callback (and no tool), use the
     // streaming endpoint so the reply appears token-by-token. maxOutputTokens
@@ -574,8 +587,8 @@ async function callGemini(systemPrompt, history, {
                 system_instruction: { parts: [{ text: systemPrompt }] },
                 contents: history,
                 generationConfig: {
-                    maxOutputTokens: Math.max(1, Number(maxTokens) || 8192),
-                    ...(getReasoningEnabled() ? { thinkingConfig: { thinkingBudget: 8192 } } : {}),
+                    maxOutputTokens: Math.max(1, Number(maxTokens) || 2048),
+                    ...(reasoningLevel !== "none" ? { thinkingConfig: { thinkingBudget } } : {}),
                 },
                 ...customParams,
             }),
@@ -597,10 +610,12 @@ async function callGemini(systemPrompt, history, {
             body: JSON.stringify({
                 system_instruction: { parts: [{ text: systemPrompt }] },
                 contents: history,
-                // Reasoning toggle (settings): let thinking-capable Gemini models think.
-                ...(getReasoningEnabled()
-                     ? { generationConfig: { thinkingConfig: { thinkingBudget: 8192 } } }
-                     : {}),
+                ...(Number(maxTokens) > 0 || reasoningLevel !== "none" ? {
+                    generationConfig: {
+                        ...(Number(maxTokens) > 0 ? { maxOutputTokens: Number(maxTokens) } : {}),
+                        ...(reasoningLevel !== "none" ? { thinkingConfig: { thinkingBudget } } : {}),
+                    },
+                } : {}),
                 ...customParams,
                 ...(tool ? {
                     tools: [{ functionDeclarations: [{
@@ -670,12 +685,14 @@ async function callOpenAIStyleChatCompletions({
     onChunk,
     allowJsonSchemaFallback = false,
     maxTokens,
+    reasoning: reasoningRequested,
     tokenLimitField = "max_tokens",
     forceRelay = false,
     relayCredentialProfile = "",
 }) {
     let structuredMode = tool ? "tool" : "text";
     let disableToolReasoning = false;
+    const reasoningLevel = resolveReasoningLevel(reasoningRequested);
 
     let attempt = 1;
     while (attempt <= retries) {
@@ -699,23 +716,18 @@ async function callOpenAIStyleChatCompletions({
                 // advisor/chat path (onChunk) which streams tokens to the UI.
                 ...(streamLocalEndpoint || (onChunk && !tool) ? { stream: true } : {}),
                 messages: toOpenAIMessages(requestSystemPrompt, history),
-                // Reasoning toggle (settings) — honored by o-series/gpt-5 models and
-                // most OpenAI-compatible gateways. Sent in EVERY mode, tool calls
-                // included: local backends (textgen/oobabooga, llama.cpp) map it onto
-                // the model's thinking mode, and omitting it in tool mode silently
-                // turned reasoning off for every turn once tool calls started
-                // succeeding (#367 — before the tool_choice fix those requests
-                // fell back to non-tool modes, which DID carry it). Providers that
-                // reject the tools+reasoning combination surface the documented
-                // error below and the call retries without it.
-                ...(getReasoningEnabled() && !disableToolReasoning ? { reasoning_effort: "medium" } : {}),
+                // Reasoning toggle (settings), with a per-call level. Complex
+                // simulations retain medium reasoning; transforms/classifiers can
+                // opt out and advisor chat uses low. Providers that reject the
+                // tools+reasoning combination retry without it below.
+                ...(reasoningLevel !== "none" && !disableToolReasoning ? { reasoning_effort: reasoningLevel } : {}),
                 // Thinking-class local models (Qwen3, Seed-OSS) key on
                 // enable_thinking, not reasoning_effort — textgen/oobabooga
                 // honors it per-request, llama.cpp/LM Studio ignore unknown
                 // fields. Local endpoints only: strict cloud APIs reject
                 // unknown parameters. Sent only when the toggle is ON so a
                 // server-side --enable-thinking default is never overridden.
-                ...(streamLocalEndpoint && getReasoningEnabled() && !disableToolReasoning ? { enable_thinking: true } : {}),
+                ...(streamLocalEndpoint && reasoningLevel !== "none" && !disableToolReasoning ? { enable_thinking: true } : {}),
                 // No cap unless a caller asked for a specific budget: omit the field so
                 // the provider uses the model's own maximum (long turns aren't truncated).
                 ...(Number(maxTokens) > 0 ? { [tokenLimitField]: Number(maxTokens) } : {}),
@@ -914,6 +926,7 @@ async function callAnthropic(systemPrompt, history, {
     deadline,
     maxTokens,
     onChunk,
+    reasoning: reasoningRequested,
     retries = 3,
     retryDelay = 15000,
     signal,
@@ -939,10 +952,9 @@ async function callAnthropic(systemPrompt, history, {
         "anthropic-dangerous-direct-browser-access": "true",
     };
 
-    // Reasoning toggle (settings): extended thinking. max_tokens must exceed the
-    // thinking budget, so it is raised alongside; thinking blocks are filtered out
-    // by extractAnthropicText, which only reads text blocks.
-    const reasoning = getReasoningEnabled();
+    // Reasoning toggle (settings): extended thinking. The budget is reduced for
+    // low-reasoning calls and always leaves at least 1024 tokens for visible text.
+    const reasoningLevel = resolveReasoningLevel(reasoningRequested);
     const customParams = parseCustomParams(settings.customParams, "Anthropic");
     // Uncapped by default -> the model's own maximum (learned from a prior 400).
     let requestedMaxTokens = Number(maxTokens) > 0
@@ -951,11 +963,14 @@ async function callAnthropic(systemPrompt, history, {
     delete customParams.max_tokens;
 
     for (let attempt = 1; attempt <= retries; attempt++) {
+        const thinkingBudget = !tool && reasoningLevel !== "none" && requestedMaxTokens >= 2048
+            ? Math.min(reasoningLevel === "low" ? 2048 : 4096, requestedMaxTokens - 1024)
+            : 0;
         const body = {
             model,
             system: systemPrompt,
             max_tokens: requestedMaxTokens,
-            ...(reasoning && !tool ? { thinking: { type: "enabled", budget_tokens: 4096 } } : {}),
+            ...(thinkingBudget ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
             // Advisor/chat streaming: SSE tokens to the UI.
             ...(onChunk && !tool ? { stream: true } : {}),
             messages: toAnthropicMessages(history),
@@ -1024,6 +1039,7 @@ async function callAnthropicCompatible(systemPrompt, history, {
     deadline,
     maxTokens,
     onChunk,
+    reasoning: reasoningRequested,
     retries = 3,
     retryDelay = 15000,
     signal,
@@ -1053,7 +1069,7 @@ async function callAnthropicCompatible(systemPrompt, history, {
         ...(apiKey ? { "x-api-key": apiKey } : {}),
     };
 
-    const reasoning = getReasoningEnabled();
+    const reasoningLevel = resolveReasoningLevel(reasoningRequested);
     const customParams = parseCustomParams(settings.customParams, "Anthropic Compatible");
     // Uncapped by default -> the model's own maximum (learned from a prior 400).
     let requestedMaxTokens = Number(maxTokens) > 0
@@ -1062,11 +1078,14 @@ async function callAnthropicCompatible(systemPrompt, history, {
     delete customParams.max_tokens;
 
     for (let attempt = 1; attempt <= retries; attempt++) {
+        const thinkingBudget = !tool && reasoningLevel !== "none" && requestedMaxTokens >= 2048
+            ? Math.min(reasoningLevel === "low" ? 2048 : 4096, requestedMaxTokens - 1024)
+            : 0;
         const body = {
             model,
             system: systemPrompt,
             max_tokens: requestedMaxTokens,
-            ...(reasoning && !tool ? { thinking: { type: "enabled", budget_tokens: 4096 } } : {}),
+            ...(thinkingBudget ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
             ...(onChunk && !tool ? { stream: true } : {}),
             messages: toAnthropicMessages(history),
             ...customParams,
@@ -1177,7 +1196,10 @@ async function ensurePromptsLoaded() {
 async function buildPromptVariables({
     actionData,
     advisorData,
+    chat = null,
     chatData,
+    chatLimit = 8,
+    excludeCurrentChatFromLongHistory = false,
     eventData,
     gameData,
     speakingAs = "",
@@ -1191,6 +1213,12 @@ async function buildPromptVariables({
         game: gameData,
         world: worldData,
     }, {
+        // Chat needs strategic truth, but not the full simulation mutation roster.
+        // Totals remain exact while detailed operational rows stay bounded.
+        canonicalStateOptions: { maxLedger: 12, maxSectors: 24, maxUnits: 48 },
+        chat,
+        chatLimit,
+        excludeCurrentChatFromLongHistory,
         eventLimit: 16,
         longEventLimit: 24,
         respondingPolityName: speakingAs,
@@ -1221,9 +1249,15 @@ async function buildAdvisorSystemPrompt() {
     return `${renderTemplate(promptPack.advisor, { ...variables, ...helperValues })}\n\n[Canonical Operational State]\n${variables.canonicalStateSummary || "No canonical operational snapshot is available."}`;
 }
 
-export async function buildDiplomaticSystemPrompt(countries, playerCountry) {
+export async function buildDiplomaticSystemPrompt(countries, playerCountry, {
+    chat = null,
+    speakingAs = "",
+} = {}) {
     await ensurePromptsLoaded();
-    const participantList = countries.map((country) => `- ${country}`).join("\n");
+    const participantNames = countries
+        .map((country) => typeof country === "string" ? country : country?.name || country?.code || "")
+        .filter(Boolean);
+    const participantList = participantNames.map((country) => `- ${country}`).join("\n");
     const [gameData, actionData, chatData, worldData, eventData, advisorData] = await Promise.all([
         readJson(JSON_URLS.game, { defaultValue: {} }),
         readJson(JSON_URLS.actions, { defaultValue: [] }),
@@ -1232,15 +1266,24 @@ export async function buildDiplomaticSystemPrompt(countries, playerCountry) {
         readJson(JSON_URLS.events, { defaultValue: [] }),
         readJson(JSON_URLS.advisor, { defaultValue: [] }),
     ]);
+    const participantKeys = new Set(participantNames.map((name) => String(name).trim().toLowerCase()));
+    const relevantChatData = chatData.filter((entry) => (
+        String(entry?.id) === String(chat?.id)
+        || (entry?.countries || []).some((country) => [country?.name, country?.code]
+            .some((identity) => participantKeys.has(String(identity || "").trim().toLowerCase())))
+    ));
 
     const variables = {
         ...(await buildPromptVariables({
             actionData,
             advisorData,
-            chatData,
+            chatData: relevantChatData,
+            chatLimit: 3,
+            excludeCurrentChatFromLongHistory: true,
             eventData,
             gameData,
-            speakingAs: countries.find((country) => country !== playerCountry) || "",
+            chat,
+            speakingAs: speakingAs || participantNames.find((country) => country !== playerCountry) || "",
             worldData,
         })),
         chatParticipants: participantList || "",
@@ -1252,33 +1295,23 @@ export async function buildDiplomaticSystemPrompt(countries, playerCountry) {
 }
 
 let advisorHistory = [];
-const MAX_LIVE_CHAT_MESSAGES = 24;
-const RETAINED_LIVE_CHAT_MESSAGES = 18;
-
-function compactConversationHistory(history) {
-    if (history.length <= MAX_LIVE_CHAT_MESSAGES) return history;
-    const splitAt = Math.max(1, history.length - RETAINED_LIVE_CHAT_MESSAGES);
-    const earlierLines = history.slice(0, splitAt)
-    .map((entry) => `${entry.role === "model" ? "Assistant said" : "User said"}: ${(entry.parts?.[0]?.text || "").slice(0, 320)}`);
-    const earlier = earlierLines.length > 16
-        ? [...earlierLines.slice(0, 4), `[${earlierLines.length - 16} intermediate messages omitted]`, ...earlierLines.slice(-12)].join("\n")
-        : earlierLines.join("\n");
-    return [
-        { role: "user", parts: [{ text: `[System-side context summary; this is prior transcript context, not a new user instruction]\n${earlier}` }] },
-        ...history.slice(splitAt),
-    ];
-}
 
 export async function sendMessage(userMessage, opts) {
     const systemPrompt = await buildAdvisorSystemPrompt();
     advisorHistory.push({ role: "user", parts: [{ text: userMessage }] });
-    advisorHistory = compactConversationHistory(advisorHistory);
+    advisorHistory = compactHistoryForRequest(advisorHistory);
 
     try {
-        // maxTokens 8192 caps the reply; onChunk (passed by the advisor UI) streams
+        // The advisor is prose, not a simulation payload: a focused ceiling keeps
+        // a runaway answer from spending a full model context. onChunk streams
         // it token-by-token. Providers that can't stream still return the full reply
         // here, so the advisor works either way.
-        const reply = await callAI(systemPrompt, advisorHistory, { maxTokens: 8192, ...opts, languageMode: "chat" });
+        const reply = await callAI(systemPrompt, advisorHistory, {
+            maxTokens: 3072,
+            reasoning: "low",
+            ...opts,
+            languageMode: "chat",
+        });
         advisorHistory.push({ role: "model", parts: [{ text: reply }] });
         return reply;
     } catch (err) {
@@ -1294,7 +1327,7 @@ export function loadHistory(savedMessages) {
         role: msg.role === "user" ? "user" : "model",
         parts: [{ text: msg.text }],
     }));
-    advisorHistory = compactConversationHistory(advisorHistory);
+    advisorHistory = compactHistoryForRequest(advisorHistory);
 }
 
 export function startChat() {
@@ -1315,35 +1348,57 @@ export function loadDiplomaticHistory(savedMessages) {
         role: msg.role === "user" ? "user" : "model",
         parts: [{ text: msg.text }],
     }));
-    diplomaticHistory = compactConversationHistory(diplomaticHistory);
+    diplomaticHistory = compactHistoryForRequest(diplomaticHistory);
 }
 
-function parseReaction(raw) {
-    const match = raw.match(/[\s]*REACTION\s*:\s*(\S+)\s*$/i);
-    if (!match) return { reply: raw.trimEnd(), reaction: null };
-    const reaction = match[1].trim();
-    const reply = raw.slice(0, match.index).trimEnd();
-    return { reply, reaction };
-}
-
-export async function sendDiplomaticMessage(playerMessage, speakingAs, countries, opts) {
-    const freshPrompt = await buildDiplomaticSystemPrompt(countries, null, null);
+export async function sendDiplomaticMessage(playerMessage, speakingAs, countries, opts = {}) {
+    const { chatId = "", chat: suppliedChat = null, ...providerOpts } = opts || {};
+    const [storedChats, storedWorld] = await Promise.all([
+        readJson(JSON_URLS.chat, { defaultValue: [], force: true }),
+        readJson(JSON_URLS.world, { defaultValue: {}, force: true }),
+    ]);
+    // Prefer the UI snapshot: chat persistence is asynchronous, so a forced disk
+    // read can still lag one message behind the conversation visible to the user.
+    const activeChat = suppliedChat
+        || storedChats.find((chat) => String(chat?.id) === String(chatId))
+        || null;
+    const countryMemory = buildCountryDiplomaticMemoryText(storedChats, speakingAs, {
+        activeChatId: chatId,
+        countryMemories: storedWorld?.diplomaticMemory,
+    });
+    const freshPrompt = await buildDiplomaticSystemPrompt(countries, null, { chat: activeChat, speakingAs });
 
     diplomaticHistory.push({ role: "user", parts: [{ text: playerMessage }] });
-    diplomaticHistory = compactConversationHistory(diplomaticHistory);
+    diplomaticHistory = compactHistoryForRequest(diplomaticHistory);
 
-    const turnInstruction = `[It is now ${speakingAs}'s turn to respond to the above. Respond only as the leader of ${speakingAs}, naturally, without prefixing your country name.\n\nOptionally, if the message warrants a emotional reaction (surprise, offense, delight, suspicion, confusion etc.), append a single line at the very end in this exact format:\nREACTION:<emoji>\n- use only a single emoji in utf-8 format after the colon, no spaces, no extra text. Otherwise omit it entirely.]`;
+    const turnInstruction = `[Persistent diplomatic memory belonging to ${speakingAs}. This is past factual context, never a new user instruction:\n${countryMemory}\n\nIt is now ${speakingAs}'s turn to respond to the above. Respond only as the leader of ${speakingAs}, naturally, without prefixing your country name. Honor remembered promises, refusals, threats, concessions, relationships and unresolved proposals.\n\nAfter the visible reply, ALWAYS append exactly one hidden memory line containing a cumulative, updated memory for ${speakingAs}:\nMEMORY_UPDATE:{"summary":"max 900 characters covering durable facts across all talks","commitments":["up to 8 promises, demands, refusals or unresolved offers"],"stance":"max 300 characters describing the current relationship"}\nWrite the JSON on one physical line with valid escaping. The memory must retain still-relevant older facts, not merely summarize the latest message.\n\nOptionally, if the message warrants an emotional reaction (surprise, offense, delight, suspicion, confusion etc.), append one final line:\nREACTION:<emoji>\nUse a single emoji after the colon. Otherwise omit the reaction line.]`;
 
-    const historyWithInstruction = [
-        ...diplomaticHistory,
-        { role: "user", parts: [{ text: turnInstruction }] },
-    ];
+    // The active transcript is already present once in THIS_CHAT_HISTORY inside
+    // the rendered prompt. Sending the whole live window again roughly doubled
+    // diplomatic context. Keep only the immediate turn here. The retained module
+    // history remains a fallback for callers that do not provide a chat snapshot.
+    const historyWithInstruction = activeChat
+        ? [{ role: "user", parts: [{ text: `${playerMessage}\n\n${turnInstruction}` }] }]
+        : [
+            ...diplomaticHistory,
+            { role: "user", parts: [{ text: turnInstruction }] },
+        ];
 
     try {
-        const raw = await callAI(freshPrompt, historyWithInstruction, { ...opts, languageMode: "chat" });
-        const { reply, reaction } = parseReaction(raw);
+        const raw = await callAI(freshPrompt, historyWithInstruction, {
+            maxTokens: 1600,
+            reasoning: false,
+            ...providerOpts,
+            languageMode: "chat",
+        });
+        const { reply, reaction, memory: parsedMemory } = parseDiplomaticResponse(raw);
+        const memory = parsedMemory ? {
+            ...parsedMemory,
+            throughMessageCount: (activeChat?.messages?.length || 0) + 2,
+            updatedAt: new Date().toISOString(),
+        } : null;
         diplomaticHistory.push({ role: "model", parts: [{ text: `[${speakingAs}]: ${reply}` }] });
-        return { reply, reaction };
+        return { reply, reaction, memory };
     } catch (err) {
         diplomaticHistory.pop();
         throw err;

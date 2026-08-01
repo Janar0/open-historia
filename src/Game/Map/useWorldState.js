@@ -17,15 +17,38 @@ const subscribers = new Set();
 let overrideState = null;
 
 const effectiveState = () => overrideState ?? sharedState;
+const stateForSubscriber = (includeOverride) =>
+  includeOverride ? effectiveState() : sharedState;
+const notifySubscribers = () => {
+  for (const subscription of subscribers) {
+    subscription.handler(stateForSubscriber(subscription.includeOverride));
+  }
+};
 
 // The state the map is currently rendering (override during a staged reveal,
 // else the live polled world). Read-only peer of unitsController.getUnits.
 export const getWorldStateSnapshot = () => effectiveState();
 
+// Non-React consumers (the unit controller in particular) join the exact same
+// world feed as map layers instead of creating another five-second /world poll.
+// Keeping the subscription here also makes its lifetime follow all consumers,
+// not just whichever React component happened to mount first.
+export const subscribeToWorldState = (handler, { includeOverride = true } = {}) => {
+  startPolling();
+  const subscription = { handler, includeOverride };
+  subscribers.add(subscription);
+  const state = stateForSubscriber(includeOverride);
+  if (state) handler(state);
+
+  return () => {
+    subscribers.delete(subscription);
+    if (subscribers.size === 0) stopPolling();
+  };
+};
+
 export const setWorldStateOverride = (next) => {
   overrideState = next && typeof next === "object" ? next : null;
-  const state = effectiveState();
-  if (state) for (const fn of subscribers) fn(state);
+  notifySubscribers();
 };
 
 const poll = async () => {
@@ -34,7 +57,7 @@ const poll = async () => {
   } catch {
     sharedState = {};
   }
-  for (const fn of subscribers) fn(effectiveState());
+  notifySubscribers();
 };
 
 const startPolling = () => {
@@ -70,20 +93,13 @@ const areEqualShallow = (a, b) => {
   return true;
 };
 
-export function useWorldState() {
-  const [state, setState] = useState(() => effectiveState() || {});
+export function useWorldState({ includeOverride = true } = {}) {
+  const [state, setState] = useState(() => stateForSubscriber(includeOverride) || {});
   const prevRef = useRef(null);
 
   useEffect(() => {
-    startPolling();
-    const handler = (data) => setState(data);
-    subscribers.add(handler);
-    if (effectiveState()) setState(effectiveState());
-    return () => {
-      subscribers.delete(handler);
-      if (subscribers.size === 0) stopPolling();
-    };
-  }, []);
+    return subscribeToWorldState((data) => setState(data), { includeOverride });
+  }, [includeOverride]);
 
   const derived = {
     worldState: state,

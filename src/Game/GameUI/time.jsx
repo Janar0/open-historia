@@ -17,12 +17,12 @@ import {
     normalizeActions,
     readEventsState,
     readGameData,
-    readWorldState,
 } from "../../runtime/gameState.js";
-import { setWorldStateOverride } from "../Map/useWorldState.js";
+import { setWorldStateOverride, useWorldState } from "../Map/useWorldState.js";
 import { setUnitsOverride } from "../Map/unitsController.js";
 import { useIsMobile } from "../../runtime/useIsMobile.js";
 import { MAP_SETTING_KEYS, useMapSetting } from "../../runtime/mapSettings.js";
+import { GameIcon } from "./Icon.jsx";
 
 dayjs.extend(advancedFormat);
 
@@ -764,6 +764,7 @@ const PanelChrome = ({
 
     return (
         <div
+        className="oh-panel"
         style={{
             ...panelSurface,
             bottom: isOpen ? "4.9rem" : "-34rem",
@@ -1294,6 +1295,9 @@ const DateWidget = ({
     rightShift,
     topOffset = "0.5rem",
 }) => {
+    // The map already owns one shared world.json poll. Joining it here avoids a
+    // second full world download every five seconds just for timeline history.
+    const { worldState: liveWorldState } = useWorldState({ includeOverride: false });
     const [gameData, setGameData] = useState(null);
     const [events, setEvents] = useState([]);
     const [worldState, setWorldState] = useState(null);
@@ -1322,6 +1326,14 @@ const DateWidget = ({
     useEffect(() => {
         ensureTimelineStyles();
     }, []);
+
+    // Keep the timeline's local state current from the shared feed, while still
+    // allowing jump/undo to paint their returned world immediately below.
+    useEffect(() => {
+        if (liveWorldState && Object.keys(liveWorldState).length > 0) {
+            setWorldState(liveWorldState);
+        }
+    }, [liveWorldState]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1362,10 +1374,9 @@ const DateWidget = ({
 
         const loadState = async () => {
             try {
-                const [game, nextEvents, world] = await Promise.all([
+                const [game, nextEvents] = await Promise.all([
                     readGameData({ force: true }),
-                                                                    readEventsState({ force: true }),
-                                                                    readWorldState({ force: true }),
+                    readEventsState({ force: true }),
                 ]);
 
                 if (cancelled) {
@@ -1386,7 +1397,6 @@ const DateWidget = ({
 
                 setGameData(game);
                 setEvents(nextEvents);
-                setWorldState(world);
             } catch (loadError) {
                 if (!cancelled) {
                     console.error("Failed to load timeline state:", loadError);
@@ -1724,6 +1734,7 @@ const DateWidget = ({
         />
 
         <div
+        className="oh-date-widget"
         style={{
             ...widgetSurface,
             right: rightShift,
@@ -1759,7 +1770,7 @@ const DateWidget = ({
             }
         }}
         >
-        {"\u00AB"}
+        <GameIcon name="history" size={16} />
         </button>
 
         <div style={{ alignItems: "center", display: "flex", flex: 1, flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
@@ -1819,7 +1830,7 @@ const DateWidget = ({
             }
         }}
         >
-        {isLoading ? <SpinnerRing size={15} tone="rgba(196,165,255,0.95)" /> : "\u00BB"}
+        {isLoading ? <SpinnerRing size={15} tone="rgba(196,165,255,0.95)" /> : <GameIcon name="command" size={16} />}
         </button>
         </div>
         </>

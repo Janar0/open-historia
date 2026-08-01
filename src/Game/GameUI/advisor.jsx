@@ -6,6 +6,7 @@ import { sendMessage, startChat, loadHistory } from "../AI/main.jsx";
 import { JSON_URLS, readJson, writeJson } from "../../runtime/assets.js";
 import { chatLanguageDiffersFromUi, isRtlLanguage, resolveChatLanguage } from "../../runtime/i18n.js";
 import StatsPane from "./stats.jsx";
+import { GameIcon } from "./Icon.jsx";
 
 Chart.register(...registerables);
 
@@ -13,17 +14,17 @@ const ADVISOR_PANEL_WIDTH = "min(20rem, calc(100vw - 1rem))";
 
 const baseStyle = {
     position: "fixed",
-    backgroundColor: "rgba(17, 24, 39, 0.9)",
-    backdropFilter: "blur(4px)",
+    background: "linear-gradient(145deg, rgba(12, 22, 38, 0.97), rgba(5, 11, 22, 0.96))",
+    backdropFilter: "blur(18px) saturate(1.2)",
     zIndex: 9999,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     color: "white",
     fontFamily: "sans-serif",
-    borderRadius: "12px",
-    border: "1px solid rgba(255,255,255,0.1)",
-    boxShadow: "0 4px 6px -1px rgba(0,0,0,0.2)",
+    borderRadius: "14px",
+    border: "1px solid rgba(155, 190, 230, 0.16)",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08)",
 };
 
 const ThinkingDots = () => {
@@ -147,7 +148,7 @@ const AdvisorButton = ({ isAdvisorOpen, rightShift, onToggle }) => (
         height: "4rem", width: "4rem",
         cursor: "pointer", fontSize: "1.5rem",
         transition: "right 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
-    }}>🧭</button>
+    }}><GameIcon name="advisor" size={21} /></button>
 );
 
 const saveMessages = async (messages) => {
@@ -180,7 +181,7 @@ const TabButton = ({ icon, label, active, onClick }) => (
         padding: "0.9rem 0.85rem",
     }}
     >
-    <span style={{ fontSize: "1rem" }}>{icon}</span> {label}
+    <GameIcon name={icon} size={16} /> {label}
     </button>
 );
 
@@ -330,7 +331,7 @@ const AdvisorPanel = ({ isAdvisorOpen, onClose, width, onResize }) => {
     return (
         <>
         <MarkdownStyleInjector />
-        <div style={{
+        <div className="oh-panel" style={{
             position: "fixed", bottom: 0, right: 0,
             // Slide via transform: the old right: calc(-min(...) - 1rem) was
             // INVALID CSS (a min() can't be negated like that), so the closed
@@ -374,8 +375,8 @@ const AdvisorPanel = ({ isAdvisorOpen, onClose, width, onResize }) => {
         )}
         {/* Header: tabs to flip between the advisor chat and national stats. */}
         <div style={{ alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", display: "flex", padding: "0 0.75rem 0 0.35rem" }}>
-        <TabButton icon="🧭" label="Advisor" active={activeTab === "advisor"} onClick={() => setActiveTab("advisor")} />
-        <TabButton icon="📊" label="Stats" active={activeTab === "stats"} onClick={() => setActiveTab("stats")} />
+        <TabButton icon="advisor" label="Advisor" active={activeTab === "advisor"} onClick={() => setActiveTab("advisor")} />
+        <TabButton icon="layers" label="Stats" active={activeTab === "stats"} onClick={() => setActiveTab("stats")} />
         <div style={{ flex: 1 }} />
         {activeTab === "advisor" && (
             <button
