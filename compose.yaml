@@ -11,10 +11,18 @@ services:
       OH_HOST: 0.0.0.0
       OH_DATA_DIR: /data
       OH_SHARED_API_KEY_FILE: /run/secrets/open_historia_api_key
+      OH_USER_AUTH: ${OPEN_HISTORIA_USER_AUTH:-1}
+      OH_REGISTRATION_OPEN: ${OPEN_HISTORIA_REGISTRATION_OPEN:-1}
+      OH_SECURE_COOKIES: ${OPEN_HISTORIA_SECURE_COOKIES:-0}
     secrets:
       - open_historia_api_key
     volumes:
-      - open-historia-data:/data
+      # Human-visible host directory: accounts, games, scenarios and uploads
+      # survive image replacement and can be backed up with ordinary tools.
+      - ${OPEN_HISTORIA_DATA_DIR:-./open-historia-data}:/data
+      # Compatibility source for installations created by the previous compose
+      # file, which used this named volume. The entrypoint migrates it once.
+      - open-historia-data:/legacy-data:ro
 
 secrets:
   open_historia_api_key:

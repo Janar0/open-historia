@@ -133,7 +133,7 @@ Both `<Map>` and `<UI>` are keyed on `activeGameId` (not the library token) so a
 | `src/Game/GameUI/` | The HUD: `main.jsx` (shell), `libraryBar.jsx` (top bar + main menu), `time.jsx` (date/turn), `chat.jsx` (toolbar/inbox), `advisor.jsx`, `forces.jsx`, `settings.jsx`, `search.jsx`, `stats.jsx`, `scenarios.jsx`, `communityHub.jsx`, `actions.jsx`, `cheats.jsx`, `FactionCreator.jsx`, `CountryPickerMap.jsx`, `other.jsx` | [Game UI](game-ui.md) |
 | `src/Game/Selection/` | Click-target popups: `Regions.jsx`, `CountryPanel.jsx`, `Units.jsx`, `Features.jsx` | [Selection & popups](selection.md) |
 | `src/Game/AI/` | AI turn engine: `main.jsx` (provider chat), `gameplay.js`, `gameplayPrompts.js`, `gameplaySchemas.js`, `promptContext.js`, `providerConfig.js`, `defaultPrompts.json` | [AI system](ai-system.md) |
-| `src/runtime/` | Client "kernel": asset/endpoint layer, game/world state, library catalog, preload, i18n, startup UI | below |
+| `src/runtime/` | Client "kernel": asset/endpoint layer, game/world state, library catalog, preload, i18n, startup UI and self-host account gate | below |
 | `src/runtime/web/` | **Web-only** backend (dead-code-stripped from desktop): `index.js`, `router.js`, IndexedDB stores, accounts, sync, nodes, home page | [Web build & accounts](web-build.md) |
 | `src/Editor/` | OpenLayers map editor (author custom maps) | [Map editor](map-editor.md) |
 
@@ -200,13 +200,14 @@ The client **never** talks to storage directly. Every state read/write is a same
 | `/api/runtime/json/:key`, `/api/runtime/pmtiles/:key` | GET/PUT/HEAD | per-game runtime state + tiles |
 | `/api/mapeditor/documents…` | GET/POST/PUT/DELETE | `mapEditorStore.js` |
 | `/api/basemaps…`, `/api/flags…` | GET/POST/DELETE | `basemapStore.js`, `flagStore.js` |
+| `/api/auth/*` | GET/POST/PATCH | Server key probe, local user sessions and admin account management (`userAuth.js`) |
 | `/api/ui-settings`, `/api/lang/:code` | GET/PUT | shared UI language + accumulated translation packs |
 | `/api/ai/relay` | POST | Server-to-server relay to the player's OpenAI-compatible AI endpoint (defeats CORS) |
 | `/api/hub/file`, `/api/hub/import-log`, `/api/hub/import-counts` | GET/POST | Community hub GitHub proxy (SSRF-guarded to GitHub hosts) + self-hosted import counter |
 | `/api/server/shutdown` | POST | Exits the process (the ⏻ button) |
 | `/fmg/*`, `*splat` | GET | Vendored FMG static + SPA fallback (`index.html`) |
 
-**Security middleware**: the local server defaults to loopback, and an explicit non-loopback bind requires shared bearer-key auth (`OH_SHARED_API_KEY` or `OH_SHARED_API_KEY_FILE`). The client asks for the key once and adds it to same-origin API/PMTiles requests. The older Origin/loopback CSRF guard remains for unauthenticated local development; `OH_ALLOW_CROSS_ORIGIN=1` is a legacy override, not a public-server security setting. See [Server & security](server.md).
+**Security middleware**: the local server defaults to loopback, and an explicit non-loopback bind requires shared bearer-key auth (`OH_SHARED_API_KEY` or `OH_SHARED_API_KEY_FILE`). With `OH_USER_AUTH=1`, that key is the outer server gate and the client then requires a per-user session before game APIs are served. The older Origin/loopback CSRF guard remains for unauthenticated local development; `OH_ALLOW_CROSS_ORIGIN=1` is a legacy override, not a public-server security setting. See [Server & security](server.md).
 
 ### The three backends, one contract
 

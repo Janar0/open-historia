@@ -12,11 +12,12 @@ Open Historia ships with a small **Express** server (`server/server.js`) that is
 
 1. Builds the Express `app`, reads `PORT` (default `3000`) and `OH_HOST` (default `127.0.0.1`), and resolves `distDir = ../dist` (the Vite build output).
 2. Installs a **blanket CORS** middleware — `Access-Control-Allow-Origin: *`, all methods, `Authorization`, and the PMTiles range headers. `OPTIONS` short-circuits to `204`.
-3. Installs shared bearer-key auth (`server/auth.js`) before the API routes. When `OH_SHARED_API_KEY` or `OH_SHARED_API_KEY_FILE` is set, every `/api/*` route except `GET /api/auth/status` requires `Authorization: Bearer <key>`; static files remain reachable so the browser can show the access screen.
-4. Installs the **CSRF / cross-origin-write guard** (`server/security.js`). A valid bearer key bypasses this Origin-only guard; unauthenticated cross-origin writes remain blocked. See [Security guard](#security--path-safety).
-5. Calls `ensureScenarioStore()`, `ensureGameStore()`, `ensureMapEditorStore()`, `ensureBasemapStore()` — first-run seeding of `server/data/`.
-6. Registers all `/api/*` routes, then the `/fmg` static mount (if vendored), then `express.static(distDir)`, then the SPA catch-all.
-7. `app.listen(PORT, OH_HOST)`; an `EADDRINUSE` is caught and turned into a human message instead of a raw stack.
+3. Installs shared bearer-key auth (`server/auth.js`) before the API routes. When `OH_SHARED_API_KEY` or `OH_SHARED_API_KEY_FILE` is set, every API route except `GET /api/auth/status` requires `Authorization: Bearer <key>`; static files remain reachable so the browser can show the access screen.
+4. When `OH_USER_AUTH=1`, installs the per-user account layer (`server/userAuth.js`) after the key gate. Game APIs then require an account session; login, registration and logout remain available after the server key is accepted.
+5. Installs the **CSRF / cross-origin-write guard** (`server/security.js`). A valid bearer key bypasses this Origin-only guard; unauthenticated cross-origin writes remain blocked. See [Security guard](#security--path-safety).
+6. Calls `ensureScenarioStore()`, `ensureGameStore()`, `ensureMapEditorStore()`, `ensureBasemapStore()` — first-run seeding of `server/data/`.
+7. Registers all `/api/*` routes, then the `/fmg` static mount (if vendored), then `express.static(distDir)`, then the SPA catch-all.
+8. `app.listen(PORT, OH_HOST)`; an `EADDRINUSE` is caught and turned into a human message instead of a raw stack.
 
 Route ordering matters: `/fmg/*` and `express.static` are mounted **before** the `*splat` fallback so real files aren't swallowed by `index.html`.
 
@@ -27,6 +28,7 @@ Route ordering matters: `/fmg/*` and `express.static` are mounted **before** the
 | Owner-code → country-name schema-2 migration | `server/ownerMigration.js` | `resolveOwnerName` + record migrators |
 | Writable data-root resolution | `server/dataDir.js` | `DATA_DIR` |
 | Shared self-host auth | `server/auth.js` | API key loading, constant-time bearer check, LAN-bind guard |
+| Local user accounts | `server/userAuth.js` | `scrypt` password hashes, sessions, roles, registration and admin user management |
 | Path containment, CSRF guard, range parsing, hub host allowlist | `server/security.js` | Pure, unit-tested helpers |
 | Map-editor documents | `server/mapEditorStore.js` | `/api/mapeditor/*` |
 | User basemap library ("Your basemaps") | `server/basemapStore.js` | `/api/basemaps/*` |
@@ -48,19 +50,32 @@ chmod 600 open-historia-server.key
 OH_HOST=0.0.0.0 OH_SHARED_API_KEY_FILE=$PWD/open-historia-server.key node server/server.js
 ```
 
-`GET /api/auth/status` is the only unauthenticated API route and returns only
-`{ required, authenticated }`. The local client stores the key per browser and
-adds it as a Bearer header to same-origin API and PMTiles requests. Query-string
-keys are deliberately unsupported. A non-loopback `OH_HOST` without auth is
-refused at startup. The key is shared by all trusted players; it is not separate
-per-user identity or permissions.
+`GET /api/auth/status` is the public capability probe and never returns a key.
+With account auth it returns `{ required, authenticated, accountsRequired,
+accountAuthenticated, registrationOpen, user }`. The local client stores the
+server key per browser and adds it as a Bearer header to same-origin API and
+PMTiles requests; the account session is an `HttpOnly` cookie. Query-string keys
+are deliberately unsupported. A non-loopback `OH_HOST` without the server key
+is refused at startup.
+
+Set `OH_USER_AUTH=1` to require individual accounts. Registration is available
+only after the server-level key has passed when a key is configured. The first
+registered account receives the `admin` role; later accounts are `player`s.
+Admins can create, promote and disable accounts from the user menu. Passwords
+are stored in `<OH_DATA_DIR>/users.json` as `scrypt` hashes. Sessions are kept in
+memory and are intentionally invalidated by a server restart; the player simply
+logs in again. Set `OH_REGISTRATION_OPEN=0` after creating the accounts if you
+want admins to be the only way to add users. Behind HTTPS set
+`OH_SECURE_COOKIES=1`.
 
 ### Docker deployment
 
 The `Dockerfile` builds a production image with the Vite client, Express server,
 the built-in scenario, and checksum-verified map release assets. The
-`compose.yaml` stores mutable server data in the named `open-historia-data`
-volume and mounts the shared API key as a read-only Docker secret:
+`compose.yaml` stores mutable server data in the host-mounted
+`./open-historia-data/` directory and mounts the shared API key as a read-only
+Docker secret. The previous named volume remains mounted read-only as a one-time
+migration source:
 
 ```bash
 openssl rand -hex 32 > open-historia-server.key
@@ -78,7 +93,15 @@ requires a one-time `docker login ghcr.io` on the host.
 ### Client preferences & language packs
 | Method | Path | Purpose | Handler |
 | --- | --- | --- | --- |
-| GET | `/api/auth/status` | Public capability probe: `{ required, authenticated }`; never returns the key | `server/server.js` |
+| GET | `/api/auth/status` | Public capability probe; reports server-key and account-session state, never the key | `server/server.js` |
+| POST | `/api/auth/register` | Register the first/admin or a regular player account when registration is open | `server/server.js` |
+| POST | `/api/auth/login` | Create an HttpOnly account session after the server key passes | `server/server.js` |
+| GET | `/api/auth/session` | Read the current account session | `server/server.js` |
+| POST | `/api/auth/logout` | Clear the current account session | `server/server.js` |
+| POST | `/api/auth/password` | Change the current user's password | `server/server.js` |
+| GET | `/api/auth/admin/users` | List users; admin only | `server/server.js` |
+| POST | `/api/auth/admin/users` | Create a player or admin; admin only | `server/server.js` |
+| PATCH | `/api/auth/admin/users/:userId` | Change role, display name, password or enabled state; admin only | `server/server.js` |
 | GET | `/api/ui-settings` | Global shared UI settings (currently `language`) — every device sees the same choice | `server/server.js:171` |
 | PUT | `/api/ui-settings` | Set the shared UI language | `server/server.js:236` |
 | GET | `/api/lang/:code` | Merged language pack: shipped `dist|public/lang/<code>.json` **under** saved `data/lang/<code>.json` (saved wins) | `server/server.js:197` |
@@ -341,6 +364,11 @@ Every store imports this one constant, so a single env var relocates **all** wri
 | `OH_DATA_DIR` | `server/data` | Writable data root for every store (`server/dataDir.js`) |
 | `OH_SHARED_API_KEY` | unset | Shared bearer key; at least 16 characters |
 | `OH_SHARED_API_KEY_FILE` | unset | File containing the shared bearer key; recommended over putting it in the process environment |
+| `OH_USER_AUTH` | `0` | Enable individual username/password accounts |
+| `OH_REGISTRATION_OPEN` | `1` | Allow self-registration after the server key; first account is admin |
+| `OH_SECURE_COOKIES` | `0` | Add `Secure` to account cookies when served through HTTPS |
+| `OH_ADMIN_USERNAME` | `admin` | Optional bootstrap admin username when `OH_ADMIN_PASSWORD(_FILE)` is set |
+| `OH_ADMIN_PASSWORD` / `_FILE` | unset | Optional first-start admin password; never commit it |
 | `OH_ALLOW_CROSS_ORIGIN` | unset | `=1` disables the cross-origin-write guard (`server/server.js:111`) |
 | `OH_IMPORT_COUNTER_URL` | `https://oh-import-counter.…workers.dev` | Import-telemetry counter Worker; empty string disables pings (`server/server.js:653`) |
 

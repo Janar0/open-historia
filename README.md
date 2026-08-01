@@ -145,11 +145,16 @@ The key is sent only as `Authorization: Bearer …`; do not put it in the URL or
 commit the key file. `OH_HOST` defaults to `127.0.0.1`, and a non-loopback bind
 without a key is refused.
 
+For named user accounts on a self-hosted instance, add `OH_USER_AUTH=1`. The
+shared API key remains the server-level gate; after it, every player signs in
+with their own username and password. The first registered account becomes the
+administrator and can create or disable the other accounts.
+
 ### Docker (recommended for a server)
 
 The fork publishes a production image to GHCR. The image already contains the
-client, server, built-in scenario, and map assets; campaigns and imported data
-live in a named Docker volume.
+client, server, built-in scenario, and map assets; campaigns, accounts and
+imported data live in the host-mounted `open-historia-data/` folder.
 
 ```bash
 git clone https://github.com/Janar0/open-historia.git
@@ -168,12 +173,19 @@ docker compose pull
 docker compose up -d
 ```
 
-The `open-historia-data` volume is preserved across image updates. Do not use
-`docker compose down -v` unless you intentionally want to delete saved games
-and scenarios. By default the container publishes port `3000` on all interfaces
-and requires the shared key from `open-historia-server.key`; override
+The visible `open-historia-data/` folder survives image updates and can be
+backed up as one directory. The old `open-historia-data` named volume is mounted
+read-only only to migrate an installation made with the previous compose file.
+Do not delete the host data folder; `docker compose down -v` removes only that
+legacy migration volume. By default the container publishes port `3000` on all
+interfaces, requires the shared key from `open-historia-server.key`, and enables
+per-user accounts; override
 `OPEN_HISTORIA_PORT`, `OPEN_HISTORIA_BIND`, or `OPEN_HISTORIA_KEY_FILE` in `.env`
-if needed.
+if needed. Set `OPEN_HISTORIA_DATA_DIR` to store the data folder elsewhere.
+
+After the first start, enter the shared key and register the first account. Use
+the admin badge in the top-right corner to add the other players. Passwords are
+stored as `scrypt` hashes, never as plaintext.
 
 The image name is `ghcr.io/janar0/open-historia:main`. If the GHCR package is
 private, authenticate once on the server with `docker login ghcr.io`; after that
@@ -193,7 +205,9 @@ updates remain the same two `docker compose` commands.
 *Medieval — 1200 AD*, *Rome — 117 AD*, *Mongol World — 1300 AD*, *New World — 1650*, and
 *Bronze Age — 1200 BC* — live on the
 [**Scenario Hub**](https://github.com/Open-Historia/Open-historia-scenarios), pinned at the top of
-the in-game **Community** tab. Import any of them with one click, or publish your own.
+the in-game **Community** tab. These are shared community presets from the
+separate repository, not private account data. Import any of them with one click,
+or publish your own.
 
 To rebuild an official preset from source (specs live in `scripts/presets/`):
 

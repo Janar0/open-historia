@@ -59,6 +59,23 @@ import {
   apiAuthMiddleware,
   isLoopbackBindHost,
 } from "./auth.js";
+import {
+  USER_AUTH_REQUIRED,
+  changeOwnPassword,
+  clearSessionCookie,
+  createManagedUser,
+  ensureUserStore,
+  getUserAuthStatus,
+  getUserFromRequest,
+  listUsers,
+  loginUser,
+  registerUser,
+  requireAdmin,
+  requireUserAuth,
+  setSessionCookie,
+  toPublicUser,
+  updateManagedUser,
+} from "./userAuth.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 import { DATA_DIR } from "./dataDir.js";
@@ -109,6 +126,7 @@ ensureScenarioStore();
 ensureGameStore();
 ensureMapEditorStore();
 ensureBasemapStore();
+if (USER_AUTH_REQUIRED) ensureUserStore();
 
 const sendError = (res, statusCode, error) => {
   const message = error instanceof Error ? error.message : String(error);
@@ -144,6 +162,11 @@ app.use((req, res, next) => {
     new Error("Cross-origin write blocked. Use the server page or authenticate with its shared API key."),
   );
 });
+
+// The shared API key is the server-level gate. Once it passes, account auth
+// keeps individual identities and roles on top of it without exposing any
+// game/API data to a browser that only reached the public SPA shell.
+app.use(requireUserAuth);
 
 const streamBinaryFile = (req, res, sourcePath, contentType = "application/octet-stream") => {
   const stats = fs.statSync(sourcePath);
@@ -188,7 +211,95 @@ const readUiSettings = () => {
 
 app.get("/api/auth/status", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json({ required: AUTH_REQUIRED, authenticated: Boolean(req.apiKeyAuthenticated) });
+  res.json(getUserAuthStatus(req));
+});
+
+app.post("/api/auth/register", jsonParser, (req, res) => {
+  if (!USER_AUTH_REQUIRED) return sendError(res, 404, "User accounts are not enabled on this server.");
+  try {
+    const user = registerUser({
+      displayName: req.body?.displayName,
+      password: req.body?.password,
+      username: req.body?.username,
+    });
+    const login = loginUser(req, { password: req.body?.password, username: req.body?.username });
+    if (login.error) return sendError(res, login.error.statusCode || 401, login.error);
+    setSessionCookie(res, login.token);
+    return res.status(201).json({ user: toPublicUser(login.user || user) });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.post("/api/auth/login", jsonParser, (req, res) => {
+  if (!USER_AUTH_REQUIRED) return sendError(res, 404, "User accounts are not enabled on this server.");
+  const result = loginUser(req, {
+    password: req.body?.password,
+    username: req.body?.username,
+  });
+  if (result.error) {
+    if (result.error.statusCode === 429) res.setHeader("Retry-After", "900");
+    return sendError(res, result.error.statusCode || 401, result.error);
+  }
+  setSessionCookie(res, result.token);
+  return res.json({ user: toPublicUser(result.user) });
+});
+
+app.get("/api/auth/session", (req, res) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: "Account login required.", accountRequired: true });
+  return res.json({ user });
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  clearSessionCookie(res);
+  return res.json({ ok: true });
+});
+
+app.post("/api/auth/password", jsonParser, (req, res) => {
+  if (!USER_AUTH_REQUIRED) return sendError(res, 404, "User accounts are not enabled on this server.");
+  const user = getUserFromRequest(req);
+  if (!user) return sendError(res, 401, "Account login required.");
+  try {
+    const changed = changeOwnPassword(user.id, req.body?.currentPassword, req.body?.newPassword);
+    if (!changed) return sendError(res, 401, "Current password is incorrect.");
+    clearSessionCookie(res);
+    return res.json({ ok: true });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.get("/api/auth/admin/users", requireAdmin, (_req, res) => {
+  res.json({ users: listUsers() });
+});
+
+app.post("/api/auth/admin/users", jsonParser, requireAdmin, (req, res) => {
+  try {
+    const user = createManagedUser({
+      displayName: req.body?.displayName,
+      password: req.body?.password,
+      role: req.body?.role,
+      username: req.body?.username,
+    });
+    return res.status(201).json({ user: toPublicUser(user) });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.patch("/api/auth/admin/users/:userId", jsonParser, requireAdmin, (req, res) => {
+  try {
+    const user = updateManagedUser(req.params.userId, {
+      displayName: req.body?.displayName,
+      enabled: req.body?.enabled,
+      password: req.body?.password,
+      role: req.body?.role,
+    });
+    return res.json({ user: toPublicUser(user) });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
 });
 
 app.get("/api/ui-settings", (_req, res) => {

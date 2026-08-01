@@ -11,8 +11,9 @@ fmg
 *.key
 *.key.pem
 
-# Runtime data belongs in the named Docker volume. Keep only the built-in
-# scenario as the immutable seed copied into a fresh volume at first start.
+# Runtime data belongs in the host-mounted data directory. Keep only the
+# built-in scenario as the immutable seed copied into a fresh data directory.
+open-historia-data
 server/data/*
 !server/data/scenarios/
 !server/data/scenarios/default/
