@@ -62,7 +62,14 @@ const buildFeatureCollection = (sectors, colorMap) => ({
       return [{
         type: "Feature",
         id: cell.id || `${sector.id}-cell-${cellIndex + 1}`,
-        geometry: { type: "Polygon", coordinates: [hexagonPolygon({ lng, lat, radiusKm })] },
+        // A small amount of rounding keeps the cell readable while avoiding
+        // the rigid stamped-hex look. The authoritative center/radius remain
+        // untouched, and the larger smoothing pass is reserved for the
+        // merged front boundary below.
+        geometry: {
+          type: "Polygon",
+          coordinates: [smoothClosedRing(hexagonPolygon({ lng, lat, radiusKm }), 0.08)],
+        },
         properties: {
           fill,
           outline: contested ? "#f4f1de" : fill,
@@ -109,7 +116,7 @@ const buildBoundaryFeatureCollection = (sectors, colorMap) => ({
       id: `${sector.id}-boundary-${index + 1}`,
       geometry: {
         type: "MultiLineString",
-        coordinates: polygon.map((ring) => smoothClosedRing(ring)),
+        coordinates: polygon.map((ring) => smoothClosedRing(ring, 0.18, 2)),
       },
       properties: {
         fill,
@@ -156,11 +163,14 @@ const ControlSectors = () => {
           type="line"
           paint={{
             "line-color": ["get", "outline"],
-            "line-dasharray": [2, 1],
-            "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.18, 7, 0.4, 12, 0.72],
-            "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1, 7, 2.2, 12, 3],
-            "line-blur": ["interpolate", ["linear"], ["zoom"], 4, 0.55, 10, 0.12],
+            // The grid is a reference aid, not the visual border of the war.
+            // Keep it understated at world view and let the merged boundary
+            // carry the readable front line.
+            "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.08, 7, 0.18, 12, 0.42],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.5, 8, 1, 12, 1.6],
+            "line-blur": ["interpolate", ["linear"], ["zoom"], 4, 0.7, 10, 0.2],
           }}
+          layout={{ "line-cap": "round", "line-join": "round" }}
         />
         <Layer
           id="control-sectors-labels"
@@ -184,13 +194,24 @@ const ControlSectors = () => {
       {boundaryData.features.length > 0 && (
         <Source id="control-sector-boundaries-source" type="geojson" data={boundaryData}>
           <Layer
+            id="control-sector-boundaries-glow"
+            type="line"
+            paint={{
+              "line-color": ["get", "outline"],
+              "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.16, 7, 0.32, 12, 0.5],
+              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 3, 8, 5.5, 12, 8],
+              "line-blur": ["interpolate", ["linear"], ["zoom"], 4, 2.4, 8, 1, 12, 0.45],
+            }}
+            layout={{ "line-cap": "round", "line-join": "round" }}
+          />
+          <Layer
             id="control-sector-boundaries"
             type="line"
             paint={{
               "line-color": ["get", "outline"],
-              "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.48, 7, 0.78, 12, 0.96],
-              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.2, 8, 2.5, 12, 4],
-              "line-blur": ["interpolate", ["linear"], ["zoom"], 4, 1.3, 8, 0.5, 12, 0.15],
+              "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.34, 7, 0.62, 12, 0.88],
+              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 8, 1.6, 12, 2.6],
+              "line-blur": ["interpolate", ["linear"], ["zoom"], 4, 0.45, 8, 0.18, 12, 0.06],
             }}
             layout={{ "line-cap": "round", "line-join": "round" }}
           />

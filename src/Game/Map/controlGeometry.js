@@ -16,26 +16,32 @@ export const hexagonPolygon = ({ lng, lat, radiusKm }) => {
   return coordinates;
 };
 
-// One Chaikin pass only. It is deliberately visual: the exact control cells and
-// their references remain sharp in the state, while the boundary line feels less
-// like a computer-generated honeycomb on the map.
-export const smoothClosedRing = (ring, ratio = 0.14) => {
+// Chaikin smoothing is deliberately visual: the exact control cells and their
+// references remain sharp in the state, while their rendered edges stop looking
+// like a computer-generated honeycomb on the map. `passes` stays capped so a
+// malformed/very detailed ring cannot explode into a huge GeoJSON payload.
+export const smoothClosedRing = (ring, ratio = 0.14, passes = 1) => {
   if (!Array.isArray(ring) || ring.length < 4) return ring;
   const source = ring.slice(0, -1);
   const cut = Math.max(0.05, Math.min(0.24, ratio));
-  const output = [];
-  for (let index = 0; index < source.length; index += 1) {
-    const current = source[index];
-    const next = source[(index + 1) % source.length];
-    output.push([
-      current[0] + (next[0] - current[0]) * cut,
-      current[1] + (next[1] - current[1]) * cut,
-    ]);
-    output.push([
-      next[0] - (next[0] - current[0]) * cut,
-      next[1] - (next[1] - current[1]) * cut,
-    ]);
+  let points = source;
+  const iterations = Math.max(1, Math.min(2, Math.trunc(Number(passes) || 1)));
+  for (let pass = 0; pass < iterations; pass += 1) {
+    const output = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index];
+      const next = points[(index + 1) % points.length];
+      output.push([
+        current[0] + (next[0] - current[0]) * cut,
+        current[1] + (next[1] - current[1]) * cut,
+      ]);
+      output.push([
+        next[0] - (next[0] - current[0]) * cut,
+        next[1] - (next[1] - current[1]) * cut,
+      ]);
+    }
+    points = output;
   }
-  output.push(output[0]);
-  return output;
+  points.push(points[0]);
+  return points;
 };

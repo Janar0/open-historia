@@ -7,6 +7,7 @@ import React, { useEffect, useState } from "react";
 const LOADING_IMAGES = [
   "/loading_photo_1.jpg",
   "/loading_photo_2.jpg",
+  "/loading_photo_3.jpg",
 ];
 const IMAGE_ROTATE_MS = 4500;
 

@@ -58,10 +58,11 @@ const buildData = (fragments, sectors, colors) => {
       kind: fragment.kind,
       fragmentId: fragment.id,
     };
+    const softened = merged.map((polygon) => polygon.map((ring) => smoothClosedRing(ring, 0.1)));
     fills.push({
       type: "Feature",
       id: `${fragment.id}-fill`,
-      geometry: { type: "MultiPolygon", coordinates: merged },
+      geometry: { type: "MultiPolygon", coordinates: softened },
       properties: commonProperties,
     });
     borders.push({
@@ -69,7 +70,7 @@ const buildData = (fragments, sectors, colors) => {
       id: `${fragment.id}-border`,
       geometry: {
         type: "MultiLineString",
-        coordinates: merged.flatMap((polygon) => polygon.map((ring) => smoothClosedRing(ring))),
+        coordinates: merged.flatMap((polygon) => polygon.map((ring) => smoothClosedRing(ring, 0.18, 2))),
       },
       properties: commonProperties,
     });

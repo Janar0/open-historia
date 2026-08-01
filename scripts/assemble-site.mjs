@@ -33,7 +33,7 @@ const ROOT_PAGES = [
 // cosmetic 404, not a crawler-visible broken page, so it must not fail the build.
 const ROOT_ASSETS = [
   "logo.png",
-  "loading_photo_1.jpg", "loading_photo_2.jpg",
+  "loading_photo_1.jpg", "loading_photo_2.jpg", "loading_photo_3.jpg",
   "icon-192.png", "icon-512.png", "screenshot.png",
 ];
 
