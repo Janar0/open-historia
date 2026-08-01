@@ -253,12 +253,12 @@ const showAccountGate = ({ registrationOpen = false } = {}) => new Promise((reso
   password.type = "password";
   password.autocomplete = "current-password";
   password.required = true;
-  password.minLength = 12;
+  password.minLength = 6;
   const confirmLabel = make("label", "Повторите пароль");
   const confirm = document.createElement("input");
   confirm.type = "password";
   confirm.autocomplete = "new-password";
-  confirm.minLength = 12;
+  confirm.minLength = 6;
   const submit = make("button", "Войти");
   submit.type = "submit";
   const error = make("div", "", "oh-auth-error");
@@ -401,7 +401,7 @@ export const installUserAccountWidget = (user) => {
   currentPassword.placeholder = "Текущий пароль";
   const newPassword = document.createElement("input");
   newPassword.type = "password";
-  newPassword.placeholder = "Новый пароль (от 12 символов)";
+  newPassword.placeholder = "Новый пароль (от 6 символов)";
   const changePasswordButton = make("button", "Сохранить пароль");
   changePasswordButton.type = "button";
   changePasswordButton.addEventListener("click", async () => {
@@ -447,7 +447,7 @@ export const installUserAccountWidget = (user) => {
     createUsername.required = true;
     const createPassword = document.createElement("input");
     createPassword.type = "password";
-    createPassword.placeholder = "Пароль (от 12 символов)";
+    createPassword.placeholder = "Пароль (от 6 символов)";
     createPassword.required = true;
     const createRole = document.createElement("select");
     createRole.append(new Option("игрок", "player"), new Option("админ", "admin"));

@@ -8,7 +8,7 @@ import { DATA_DIR } from "./dataDir.js";
 
 const USERS_FILE_NAME = "users.json";
 const SESSION_COOKIE = "oh_session";
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 256;
 const USERNAME_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{2,31}$/u;
 const SCRYPT_OPTIONS = {

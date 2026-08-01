@@ -48,5 +48,6 @@ test("local user store hashes passwords and makes the first account admin", () =
 });
 
 test("password policy rejects short secrets", () => {
-  assert.throws(() => hashPassword("too short"), /at least 12/);
+  assert.throws(() => hashPassword("12345"), /at least 6/);
+  assert.doesNotThrow(() => hashPassword("123456"));
 });
