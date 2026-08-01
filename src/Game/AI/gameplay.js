@@ -63,14 +63,15 @@ import { difficultyDirective } from "../../runtime/difficulty.js";
 import { MAP_SETTING_KEYS, getMapSetting } from "../../runtime/mapSettings.js";
 import { evaluateFigureMeeting, normalizeMeetingMode } from "./figureRules.js";
 import {
+  boundTacticalSectorEvolution,
+  deriveTacticalBorderSector,
   groundSpawnIsFriendly,
   hasTacticalAnchor,
   hostileGroundMoveIsContinuous,
   tacticalCellsAreConnected,
   tacticalDistanceKm,
-  tacticalEntryPoint,
   tacticalNearestBoundaryPoint,
-  tacticalOffsetPoint,
+  tacticalRegionCoverageGate,
 } from "./sectorContinuity.js";
 
 const CHAT_HINT_PATTERNS = [
@@ -1173,7 +1174,8 @@ const sameTacticalFront = (existing, incoming, regionId, ownerCode) => {
   const existingBattle = regionKey(existing?.battleId);
   const incomingBattle = regionKey(incoming?.battleId);
   if (existingBattle && incomingBattle && existingBattle === incomingBattle) return true;
-  return regionKey(existing?.name) === regionKey(incoming?.name);
+  if (regionKey(existing?.name) === regionKey(incoming?.name)) return true;
+  return hasTacticalAnchor(tacticalLeaves(incoming), tacticalLeaves(existing));
 };
 
 // If the model invents a new id for the same named bridgehead, fold the new
@@ -1497,51 +1499,6 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
     return best;
   };
 
-  const rebuildInitialBorderSector = (operation, targetRegion, anchor) => {
-    const sector = operation.sector;
-    const rawRadius = Number(sector.radiusKm) || 9;
-    const cellRadiusKm = Math.max(2.5, Math.min(5, rawRadius * 0.38));
-    const entry = tacticalEntryPoint(anchor, targetRegion.geometry, cellRadiusKm * 0.9 + 1);
-    if (!entry || !geometryContainsTacticalPoint(targetRegion.geometry, entry)) return null;
-    const tangentBearing = entry.bearingDeg + 90;
-    const offsets = [-1, 0, 1];
-    let centers = offsets
-      .map((offset) => tacticalOffsetPoint(entry, tangentBearing, offset * cellRadiusKm * 1.25))
-      .filter((center) => center && geometryContainsTacticalPoint(targetRegion.geometry, center));
-    if (centers.length < 2) centers = [entry];
-    // A first contact is a shallow bridgehead, not 58% of a province-sized
-    // bubble. Later cellOps can widen/deepen this same stable front.
-    const control = Math.max(12, Math.min(35, Number(sector.control) || 24));
-    const cells = centers.map((center, index) => ({
-      id: `${sector.id}-entry-${index + 1}`,
-      depth: 1,
-      ownerCode: sector.ownerCode,
-      ...(sector.contestedBy ? { contestedBy: sector.contestedBy } : {}),
-      control,
-      center: { lng: center.lng, lat: center.lat },
-      radiusKm: cellRadiusKm,
-      status: "assault",
-      note: sector.note,
-    }));
-    const center = {
-      lng: cells.reduce((sum, cell) => sum + cell.center.lng, 0) / cells.length,
-      lat: cells.reduce((sum, cell) => sum + cell.center.lat, 0) / cells.length,
-    };
-    return {
-      op: "upsert",
-      sector: {
-        ...sector,
-        regionId: targetRegion.id,
-        center,
-        frontBearing: ((entry.bearingDeg % 360) + 360) % 360,
-        radiusKm: cellRadiusKm * 2,
-        control,
-        status: "assault",
-        cells,
-      },
-    };
-  };
-
   const dropped = [];
   for (const { event, impacts, path } of containers) {
     if (!impacts || !Array.isArray(impacts.sectorOps)) continue;
@@ -1579,6 +1536,17 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
         && ADVANCE_NARRATION.test(narration)
       ) {
         const opponent = contestedBy[0]?.toLowerCase() || "";
+        const internalOpponent = opponent && workingSectors.find((existing) => (
+          normalizeString(existing.regionId) === regionId
+          && String(existing.ownerCode || "").toLowerCase() === opponent
+        ));
+        if (internalOpponent) {
+          dropped.push({
+            path: `${path}.sectorOps[${index}]`,
+            reason: `counterattack inside "${regionId}" must update opposing sector "${internalOpponent.id}" instead of stacking a second ownership layer`,
+          });
+          continue;
+        }
         const opponentRegions = catalog.filter((region) => (
           region.geometry
           && administrativeOwner(region.id)
@@ -1586,10 +1554,15 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
           && (!opponent || administrativeOwner(region.id).toLowerCase() === opponent)
         ));
         const crossing = nearestEntry(anchorsForOwner(ownerCode), opponentRegions);
-        if (crossing && crossing.boundary.distanceKm <= 45) {
-          regionId = crossing.region.id;
-          if (contestedBy.length === 0) contestedBy = [administrativeOwner(regionId)];
+        if (!crossing || crossing.boundary.distanceKm > 45) {
+          dropped.push({
+            path: `${path}.sectorOps[${index}]`,
+            reason: `the event describes an advance but its sector remains inside ${ownerCode}; no reachable opposing border was found`,
+          });
+          continue;
         }
+        regionId = crossing.region.id;
+        if (contestedBy.length === 0) contestedBy = [administrativeOwner(regionId)];
       }
       const cells = (sector.cells || []).map((cell) => {
         const cellOwnerCode = resolveOwner(cell.ownerCode) || ownerCode;
@@ -1639,13 +1612,20 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
         },
         ...(cellOps.length > 0 ? { cellOps } : {}),
       };
-      const stableFront = workingSectors.find((existing) => sameTacticalFront(existing, sector, regionId, ownerCode));
+      let stableFront = workingSectors.find((existing) => sameTacticalFront(existing, sector, regionId, ownerCode));
       const existingFront = workingSectors.find((existing) => existing.id === sector.id) || stableFront;
       const targetRegion = byId.get(regionId);
       const targetOwner = administrativeOwner(regionId);
       const externalAdvance = targetOwner && targetOwner.toLowerCase() !== ownerCode.toLowerCase();
       let borderEntryValidated = false;
-      if (externalAdvance && !existingFront && !createdOwners.has(ownerCode.toLowerCase()) && targetRegion?.geometry) {
+      if (externalAdvance && !existingFront && !createdOwners.has(ownerCode.toLowerCase())) {
+        if (!targetRegion?.geometry) {
+          dropped.push({
+            path: `${path}.sectorOps[${index}]`,
+            reason: `the real geometry for "${regionId}" is unavailable; refusing to guess an external front`,
+          });
+          continue;
+        }
         const crossing = nearestEntry(anchorsForOwner(ownerCode), [targetRegion]);
         if (!crossing || crossing.boundary.distanceKm > 45) {
           dropped.push({
@@ -1654,16 +1634,25 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
           });
           continue;
         }
-        const rebuilt = rebuildInitialBorderSector(resolvedOperation, targetRegion, crossing.anchor);
-        if (!rebuilt) {
+        const rebuiltSector = deriveTacticalBorderSector({
+          sector: resolvedOperation.sector,
+          targetRegion,
+          anchor: crossing.anchor,
+        });
+        if (!rebuiltSector) {
           dropped.push({ path: `${path}.sectorOps[${index}]`, reason: `could not construct a valid entry strip inside "${regionId}"` });
           continue;
         }
-        resolvedOperation = rebuilt;
+        resolvedOperation = { op: "upsert", sector: rebuiltSector };
         // The source formation may start a short march behind its own frontier.
         // Reaching the actual border was already bounded above; do not demand
         // that its old map icon overlap the newly constructed enemy-side cell.
         borderEntryValidated = true;
+      }
+      if (!stableFront) {
+        stableFront = workingSectors.find((existing) => (
+          sameTacticalFront(existing, resolvedOperation.sector, regionId, ownerCode)
+        ));
       }
       if (stableFront) {
         const merged = mergeTacticalFrontAlias(stableFront, resolvedOperation.sector, resolvedOperation.cellOps);
@@ -1673,11 +1662,21 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
           ...(merged.cellOps.length > 0 ? { cellOps: merged.cellOps } : {}),
         };
       }
-      const previewSectors = applySectorOps(workingSectors, [resolvedOperation]);
-      const candidateSector = previewSectors.find((candidate) => candidate.id === resolvedOperation.sector.id);
+      let previewSectors = applySectorOps(workingSectors, [resolvedOperation]);
+      let candidateSector = previewSectors.find((candidate) => candidate.id === resolvedOperation.sector.id);
       if (!candidateSector) {
         dropped.push({ path: `${path}.sectorOps[${index}]`, reason: "the resulting tactical sector is invalid" });
         continue;
+      }
+      const persistentFront = workingSectors.find((existing) => existing.id === candidateSector.id);
+      if (persistentFront && !["withdrawn", "destroyed"].includes(candidateSector.status)) {
+        const removedCellIds = normalizeArray(resolvedOperation.cellOps)
+          .filter((cellOp) => cellOp?.op === "remove")
+          .map((cellOp) => cellOp.id);
+        const boundedSector = boundTacticalSectorEvolution(persistentFront, candidateSector, { removedCellIds });
+        resolvedOperation = { op: "upsert", sector: boundedSector };
+        previewSectors = applySectorOps(workingSectors, [resolvedOperation]);
+        candidateSector = previewSectors.find((candidate) => candidate.id === boundedSector.id);
       }
       const leaves = tacticalLeaves(candidateSector);
       const regionGeometry = byId.get(regionId)?.geometry;
@@ -2014,36 +2013,44 @@ const validateChatOpener = (chatLike, path) => {
 // legitimate zero-transfer turn — never trips the reluctance guard below.
 const CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|annex\w*|conquer\w*|occup(?:y|ies|ied|ation)|overr[au]n|liberat\w*|retak\w*|retaken|recaptur\w*|cedes?|ceded|ceding|cession|fell to|falls? to)\b/i;
 const VIOLENT_CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|conquer\w*|occup(?:y|ies|ied|ation)|overr[au]n|retak\w*|retaken|recaptur\w*|fell to|falls? to)\b|(?:захват|оккуп|овлад|отбил|отбит|взял[аи]?|занял[аи]?|пал\s+под)/i;
+const CAPITULATION_LANGUAGE = /\b(capitulat|surrender|armistice|peace treaty|government collapse)\w*\b|(?:капитул|сдался|сдалась|перемир|мирный\s+договор|крах\s+правительств)/i;
 
 // A violent one/few-region transfer must be the culmination of the tactical
-// layer, not a shortcut around it. Large whole-country collapses are exempt:
-// they model political capitulation rather than every district being fought
-// through independently. Peaceful cessions and scripted GM edits are also
-// intentionally outside this guard.
-const enforceViolentTransferContinuity = (containers, world) => {
+// layer, not a shortcut around it. Explicit capitulations model political
+// surrender rather than every district being fought through independently.
+// Peaceful cessions and scripted GM edits are intentionally outside this guard.
+const enforceViolentTransferContinuity = async (containers, world) => {
+  const catalog = await loadRegionCatalog().catch(() => []);
+  const regionGeometry = new Map(catalog.map((region) => [normalizeString(region.id), region.geometry]));
   let sectors = normalizeWorldState(world).controlSectors;
   const dropped = [];
   for (const { event, impacts, path } of containers) {
     if (!impacts) continue;
     sectors = applySectorOps(sectors, impacts.sectorOps);
     const transfers = normalizeArray(impacts.regionTransfers);
-    if (!event || transfers.length === 0 || transfers.length > 3) continue;
+    if (!event || transfers.length === 0) continue;
     const narration = `${normalizeString(event.title)} ${normalizeString(event.description)}`;
-    if (!VIOLENT_CAPTURE_LANGUAGE.test(narration)) continue;
+    if (!VIOLENT_CAPTURE_LANGUAGE.test(narration) || CAPITULATION_LANGUAGE.test(narration)) continue;
     const kept = [];
     for (let index = 0; index < transfers.length; index += 1) {
       const transfer = transfers[index];
       const regionId = normalizeString(transfer?.regionId);
       const newOwner = toCountryName(normalizeString(transfer?.toCode)).toLowerCase();
-      const secured = sectors.some((sector) =>
+      const attackerSector = sectors.find((sector) => (
         normalizeString(sector.regionId) === regionId
         && String(sector.ownerCode || "").toLowerCase() === newOwner
-        && Number(sector.control) >= 85
-        && sector.status === "held");
-      if (!secured) {
+      ));
+      const coverage = tacticalRegionCoverageGate(attackerSector, regionGeometry.get(regionId));
+      const activeOpposition = sectors.some((sector) => (
+        normalizeString(sector.regionId) === regionId
+        && String(sector.ownerCode || "").toLowerCase() !== newOwner
+        && !["withdrawn", "destroyed"].includes(sector.status)
+        && Number(sector.control) > 15
+      ));
+      if (!coverage.secured || activeOpposition) {
         dropped.push({
           path: `${path}.regionTransfers[${index}]`,
-          reason: `violent transfer of "${regionId}" has no connected ${transfer?.toCode || "attacker"} sector at 85%+ held control`,
+          reason: `violent transfer of "${regionId}" is premature: ${coverage.cellCount}/${coverage.requiredCells} cells, ${Math.round(coverage.frontSpanKm)}/${Math.round(coverage.requiredSpanKm)} km operational spread${activeOpposition ? ", active opposing sector remains" : ""}`,
         });
         continue;
       }
@@ -2100,11 +2107,11 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
       "Ground units may redeploy freely inside friendly territory. Inside hostile territory they must end beside their connected tactical front and advance no more than 120 km per event; long marches through friendly territory remain valid.",
     ].join("\n");
   }
-  const droppedViolentTransfers = enforceViolentTransferContinuity(containers, world);
+  const droppedViolentTransfers = await enforceViolentTransferContinuity(containers, world);
   if (strict && droppedViolentTransfers.length > 0) {
     return [
       ...droppedViolentTransfers.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
-      "Advance through connected sectorOps first. Transfer the administrative region only after its tactical sector reaches at least 85% and status held.",
+      "Advance through connected sectorOps first. Transfer the administrative region only after a held 85%+ front has enough connected cells and operational spread for that region, with no active opposing sector.",
     ].join("\n");
   }
   const droppedTerritory = await resolveTerritoryOps(containers, world);

@@ -1,4 +1,6 @@
 /*! Open Historia — tactical-front continuity checks © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
+import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
+import { point } from "@turf/helpers";
 
 const EARTH_RADIUS_KM = 6371.0088;
 
@@ -82,6 +84,225 @@ export const tacticalEntryPoint = (anchor, targetGeometry, insetKm = 2) => {
   if (!boundary) return null;
   const point = tacticalOffsetPoint(boundary, boundary.bearingDeg, Math.max(0.5, Number(insetKm) || 2));
   return point ? { ...point, boundary, bearingDeg: boundary.bearingDeg } : null;
+};
+
+export const tacticalGeometryContainsPoint = (geometry, candidate) => {
+  const coordinates = tacticalCoordinates(candidate);
+  if (!geometry || !coordinates) return false;
+  try {
+    return booleanPointInPolygon(point([coordinates.lng, coordinates.lat]), geometry, { ignoreBoundary: false });
+  } catch {
+    return false;
+  }
+};
+
+export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor }) => {
+  if (!sector?.id || !targetRegion?.id || !targetRegion?.geometry) return null;
+  const rawRadius = Number(sector.radiusKm) || 9;
+  const cellRadiusKm = Math.max(2.5, Math.min(5, rawRadius * 0.38));
+  const entry = tacticalEntryPoint(anchor, targetRegion.geometry, cellRadiusKm * 0.9 + 1);
+  if (!entry || !tacticalGeometryContainsPoint(targetRegion.geometry, entry)) return null;
+  const tangentBearing = entry.bearingDeg + 90;
+  let centers = [-1, 0, 1]
+    .map((offset) => tacticalOffsetPoint(entry, tangentBearing, offset * cellRadiusKm * 1.25))
+    .filter((center) => center && tacticalGeometryContainsPoint(targetRegion.geometry, center));
+  if (centers.length < 2) centers = [entry];
+  const control = Math.max(12, Math.min(35, Number(sector.control) || 24));
+  const cells = centers.map((center, index) => ({
+    id: `${sector.id}-entry-${index + 1}`,
+    depth: 1,
+    ownerCode: sector.ownerCode,
+    ...(sector.contestedBy ? { contestedBy: sector.contestedBy } : {}),
+    control,
+    center: { lng: center.lng, lat: center.lat },
+    radiusKm: cellRadiusKm,
+    status: "assault",
+    note: sector.note,
+  }));
+  return {
+    ...sector,
+    regionId: targetRegion.id,
+    center: {
+      lng: cells.reduce((sum, cell) => sum + cell.center.lng, 0) / cells.length,
+      lat: cells.reduce((sum, cell) => sum + cell.center.lat, 0) / cells.length,
+    },
+    frontBearing: ((entry.bearingDeg % 360) + 360) % 360,
+    radiusKm: cellRadiusKm * 2,
+    control,
+    status: "assault",
+    cells,
+  };
+};
+
+const tacticalLeafCells = (sector) => {
+  const cells = Array.isArray(sector?.cells) ? sector.cells : [];
+  const parentIds = new Set(cells.map((cell) => cell?.parentCellId).filter(Boolean));
+  return cells.filter((cell) => cell?.id && !parentIds.has(cell.id));
+};
+
+const clampControlChange = (before, after, delta) => {
+  const previous = Math.max(0, Math.min(100, Number(before) || 0));
+  const requested = Math.max(0, Math.min(100, Number(after) || 0));
+  return Math.round(Math.max(previous - delta, Math.min(previous + delta, requested)));
+};
+
+// Reconcile a model-authored snapshot with the persistent front. Existing map
+// cells are physical places: their ids cannot teleport, disappear without an
+// explicit remove, or flip from 20% to 100% in one event. New ground is admitted
+// only as a small number of cells immediately beside the previous footprint.
+export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
+  maxControlDelta = 18,
+  maxNewCells = 3,
+  maxAdvanceKm = 28,
+  removedCellIds = [],
+} = {}) => {
+  const previousCells = Array.isArray(previousSector?.cells) ? previousSector.cells : [];
+  const candidateCells = Array.isArray(candidateSector?.cells) ? candidateSector.cells : [];
+  if (!previousCells.length || !candidateCells.length) return candidateSector;
+
+  const explicitlyRemoved = new Set(removedCellIds.map(String));
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const cell of previousCells) {
+      if (cell?.parentCellId && explicitlyRemoved.has(String(cell.parentCellId)) && !explicitlyRemoved.has(String(cell.id))) {
+        explicitlyRemoved.add(String(cell.id));
+        expanded = true;
+      }
+    }
+  }
+
+  const previousById = new Map(previousCells.map((cell) => [String(cell.id), cell]));
+  const admitted = [];
+  const admittedIds = new Set();
+  const existingLeaves = tacticalLeafCells(previousSector);
+  const averageRadius = existingLeaves.length
+    ? existingLeaves.reduce((sum, cell) => sum + Math.max(0.5, Number(cell.radiusKm) || 0.5), 0) / existingLeaves.length
+    : 5;
+  const newRadiusLimit = Math.max(2.5, Math.min(8, averageRadius * 1.2));
+  let newCellCount = 0;
+
+  for (const requested of candidateCells) {
+    if (!requested?.id || explicitlyRemoved.has(String(requested.id)) || admittedIds.has(String(requested.id))) continue;
+    const previous = previousById.get(String(requested.id));
+    if (previous) {
+      const control = clampControlChange(previous.control, requested.control, maxControlDelta);
+      const contestedBy = control < 75
+        ? requested.contestedBy ?? previous.contestedBy ?? candidateSector.contestedBy
+        : requested.contestedBy;
+      admitted.push({
+        ...requested,
+        id: previous.id,
+        center: previous.center,
+        radiusKm: previous.radiusKm,
+        depth: previous.depth,
+        ...(previous.parentCellId ? { parentCellId: previous.parentCellId } : { parentCellId: undefined }),
+        control,
+        ...(contestedBy ? { contestedBy } : { contestedBy: undefined }),
+        status: control < 75
+          ? requested.status === "assault" ? "assault" : "contested"
+          : requested.status,
+      });
+      admittedIds.add(String(previous.id));
+      continue;
+    }
+    if (newCellCount >= maxNewCells) continue;
+    const bounded = {
+      ...requested,
+      radiusKm: Math.min(newRadiusLimit, Math.max(2.5, Number(requested.radiusKm) || newRadiusLimit)),
+      control: Math.min(35, Math.max(5, Math.round(Number(requested.control) || 20))),
+      ...(requested.contestedBy ?? candidateSector.contestedBy
+        ? { contestedBy: requested.contestedBy ?? candidateSector.contestedBy }
+        : {}),
+      status: "assault",
+    };
+    const reachesOldFront = existingLeaves.some((oldCell) => (
+      tacticalDistanceKm(oldCell, bounded)
+      <= maxAdvanceKm + radius(oldCell) + radius(bounded)
+    ));
+    if (!reachesOldFront) continue;
+    admitted.push(bounded);
+    admittedIds.add(String(bounded.id));
+    newCellCount += 1;
+  }
+
+  for (const previous of previousCells) {
+    if (explicitlyRemoved.has(String(previous.id)) || admittedIds.has(String(previous.id))) continue;
+    admitted.push(previous);
+    admittedIds.add(String(previous.id));
+  }
+  if (!admitted.length) return candidateSector;
+  const leaves = tacticalLeafCells({ cells: admitted });
+  const weighted = leaves.map((cell) => ({ cell, weight: Math.max(0.25, radius(cell) ** 2) }));
+  const totalWeight = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  const center = totalWeight > 0 ? {
+    lng: weighted.reduce((sum, entry) => sum + Number(entry.cell.center?.lng) * entry.weight, 0) / totalWeight,
+    lat: weighted.reduce((sum, entry) => sum + Number(entry.cell.center?.lat) * entry.weight, 0) / totalWeight,
+  } : previousSector.center;
+  return {
+    ...candidateSector,
+    id: previousSector.id,
+    name: previousSector.name,
+    ownerCode: previousSector.ownerCode,
+    battleId: previousSector.battleId || candidateSector.battleId,
+    startedAt: previousSector.startedAt || candidateSector.startedAt,
+    frontBearing: previousSector.frontBearing ?? candidateSector.frontBearing,
+    center,
+    cells: admitted,
+  };
+};
+
+export const tacticalGeometrySpanKm = (geometry) => {
+  const coordinates = geometryRings(geometry).flat();
+  const usable = coordinates
+    .map(([lng, lat]) => ({ lng: Number(lng), lat: Number(lat) }))
+    .filter(({ lng, lat }) => Number.isFinite(lng) && Number.isFinite(lat));
+  if (!usable.length) return 0;
+  const lngs = usable.map(({ lng }) => lng);
+  const lats = usable.map(({ lat }) => lat);
+  return tacticalDistanceKm(
+    { lng: Math.min(...lngs), lat: Math.min(...lats) },
+    { lng: Math.max(...lngs), lat: Math.max(...lats) },
+  );
+};
+
+export const tacticalFrontSpanKm = (cells) => {
+  const usable = (cells || []).filter((cell) => tacticalCoordinates(cell));
+  let span = 0;
+  for (let left = 0; left < usable.length; left += 1) {
+    for (let right = left + 1; right < usable.length; right += 1) {
+      span = Math.max(span, tacticalDistanceKm(usable[left], usable[right]));
+    }
+  }
+  return span;
+};
+
+export const tacticalRegionCoverageGate = (sector, regionGeometry) => {
+  const leaves = tacticalLeafCells(sector);
+  const regionSpanKm = tacticalGeometrySpanKm(regionGeometry);
+  const frontSpanKm = tacticalFrontSpanKm(leaves);
+  const averageRadiusKm = leaves.length
+    ? leaves.reduce((sum, cell) => sum + radius(cell), 0) / leaves.length
+    : 0;
+  const requiredSpanKm = Math.min(120, Math.max(12, regionSpanKm * 0.22));
+  const requiredCells = Math.min(9, Math.max(3, Math.ceil(requiredSpanKm / Math.max(5, averageRadiusKm * 2))));
+  const securedCells = leaves.filter((cell) => Number(cell.control) >= 75 && cell.status === "held").length;
+  const requiredSecuredCells = Math.max(2, Math.ceil(leaves.length * 0.7));
+  return {
+    secured: Boolean(regionSpanKm)
+      && Number(sector?.control) >= 85
+      && sector?.status === "held"
+      && leaves.length >= requiredCells
+      && securedCells >= requiredSecuredCells
+      && frontSpanKm + averageRadiusKm * 2 >= requiredSpanKm,
+    cellCount: leaves.length,
+    securedCells,
+    requiredCells,
+    requiredSecuredCells,
+    frontSpanKm,
+    requiredSpanKm,
+    regionSpanKm,
+  };
 };
 
 export const tacticalConnectionLimitKm = (left, right) => Math.min(
