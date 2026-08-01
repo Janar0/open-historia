@@ -62,3 +62,18 @@ export const hasTacticalAnchor = (cells, anchors) => {
   }
   return false;
 };
+
+export const groundSpawnIsFriendly = ({
+  ownerCode,
+  locationOwnerCode,
+  hasRegionCatalog = true,
+  isNewPolity = false,
+}) => isNewPolity
+  || !hasRegionCatalog
+  || (String(ownerCode || "").trim().toLowerCase()
+    === String(locationOwnerCode || "").trim().toLowerCase()
+    && Boolean(String(locationOwnerCode || "").trim()));
+
+export const hostileGroundMoveIsContinuous = (unit, destination, controlledCells, maxDistanceKm = 120) =>
+  tacticalDistanceKm(unit, destination) <= maxDistanceKm
+  && hasTacticalAnchor([destination], controlledCells);

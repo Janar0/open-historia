@@ -244,7 +244,7 @@ const unitSchema = {
 };
 
 const unitOpSchema = {
-  description: "A unit mutation. Use op spawn, move, strength, or remove and fill the fields that op needs.",
+  description: "A unit mutation. Ground spawn means mobilisation on friendly-controlled territory, never deployment at a hostile objective. Use move for travel and advance through connected tactical sectors.",
   anyOf: [
     {
       type: "object",

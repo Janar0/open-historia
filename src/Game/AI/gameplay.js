@@ -62,7 +62,13 @@ import { dedupeGeneratedEvents } from "../../runtime/eventDedup.js";
 import { difficultyDirective } from "../../runtime/difficulty.js";
 import { MAP_SETTING_KEYS, getMapSetting } from "../../runtime/mapSettings.js";
 import { evaluateFigureMeeting, normalizeMeetingMode } from "./figureRules.js";
-import { hasTacticalAnchor, tacticalCellsAreConnected, tacticalDistanceKm } from "./sectorContinuity.js";
+import {
+  groundSpawnIsFriendly,
+  hasTacticalAnchor,
+  hostileGroundMoveIsContinuous,
+  tacticalCellsAreConnected,
+  tacticalDistanceKm,
+} from "./sectorContinuity.js";
 
 const CHAT_HINT_PATTERNS = [
   /\bchat\b/i,
@@ -348,6 +354,7 @@ const buildMilitaryFeasibilityText = (world, actionsText) => {
     "MILITARY FEASIBILITY — test every deploy request, move/attack order and your own unitOps against the era and the unit's type before honoring it:",
     "- Era reach: before ~1500, armies march on foot or horse and cross water only by coastal shipping — intercontinental operations are impossible. ~1500–1850 (age of sail): overseas action needs fleets and friendly ports and takes months. 1850–1945: rail and steamships speed logistics; aircraft stay short-ranged until the 1940s. After 1945: global power projection belongs only to major powers with bases, carriers or allies along the route.",
     "- Unit type: air units are fastest but need airbases or carriers within range and cannot hold ground; naval units move only by sea; infantry, armor and artillery crawl overland and need supply lines; garrisons do not travel.",
+    "- Ground spawn means mobilisation: place a new infantry, armor, artillery or garrison unit only inside territory already controlled by its owner. Never spawn it at a hostile objective; move it from friendly ground through a connected front.",
     "- Distance: compare the unit's coordinates with the target's. An order beyond plausible reach or pace is NOT executed as given — reject it, or convert it into a partial advance with an event explaining the delay, the transport it would need, or why it failed.",
     "- Never teleport units: each move op may only cover what that unit could actually travel in the elapsed time; long campaigns should progress across several turns.",
   ].join("\n");
@@ -1231,7 +1238,154 @@ const geometryContainsTacticalPoint = (geometry, candidate) => {
   }
 };
 
-const resolveControlSectorOps = async (containers, world) => {
+const GROUND_UNIT_TYPES = new Set(["infantry", "armor", "artillery", "garrison"]);
+const isGroundUnit = (unit) => GROUND_UNIT_TYPES.has(normalizeString(unit?.type).toLowerCase());
+
+const buildTacticalLocationContext = async (world, containers) => {
+  const catalog = await loadRegionCatalog().catch(() => []);
+  const worldState = normalizeWorldState(world);
+  const byId = new Map(catalog.map((region) => [normalizeString(region.id), region]));
+  const ownerOfRegion = (region) => toCountryName(normalizeString(
+    worldState.regionOwnershipOverrides?.[region?.id]
+      ?? region?.country
+      ?? region?.countryCode,
+  ));
+  const ownerAt = (candidate, preferredRegionId = "") => {
+    const preferred = byId.get(normalizeString(preferredRegionId));
+    if (preferred && geometryContainsTacticalPoint(preferred.geometry, candidate)) {
+      return { regionId: preferred.id, ownerCode: ownerOfRegion(preferred) };
+    }
+    const containing = catalog.find((region) => region?.geometry && geometryContainsTacticalPoint(region.geometry, candidate));
+    if (containing) return { regionId: containing.id, ownerCode: ownerOfRegion(containing) };
+    // Custom maps may expose ownership without overview geometry. In that case
+    // a declared active region is the best available non-destructive fallback.
+    if (preferred) return { regionId: preferred.id, ownerCode: ownerOfRegion(preferred) };
+    return { regionId: "", ownerCode: "" };
+  };
+  const createdOwners = new Set();
+  for (const { impacts } of containers) {
+    for (const change of normalizeArray(impacts?.polityChanges)) {
+      const owner = toCountryName(normalizeString(change?.name || change?.code));
+      if (owner) createdOwners.add(owner.toLowerCase());
+    }
+  }
+  return { catalog, createdOwners, ownerAt, worldState };
+};
+
+// A formation is created where it mobilises, not at the objective. Ground
+// spawns in hostile territory were the loophole that put a Ukrainian unit in
+// Rostov on turn one; on the following turn that teleported unit then legitimised
+// an equally isolated sector around Bataysk.
+const resolveGroundUnitSpawns = async (containers, world) => {
+  const context = await buildTacticalLocationContext(world, containers);
+  const dropped = [];
+  const approvedSpawnAnchors = [];
+  const existingSectors = context.worldState.controlSectors;
+  const legitimateUnitAnchors = [];
+
+  for (const unit of context.worldState.units) {
+    if (!isGroundUnit(unit) || unit.status === "defeated" || Number(unit.strength) <= 0) continue;
+    const owner = toCountryName(normalizeString(unit.ownerCode));
+    const location = context.ownerAt(unit, unit.regionId);
+    const friendlyGround = location.ownerCode && location.ownerCode.toLowerCase() === owner.toLowerCase();
+    const supportedFront = existingSectors
+      .filter((sector) => String(sector.ownerCode || "").toLowerCase() === owner.toLowerCase())
+      .flatMap(tacticalLeaves);
+    if (friendlyGround || hasTacticalAnchor([{ center: { lng: unit.lng, lat: unit.lat }, radiusKm: 2 }], supportedFront)) {
+      legitimateUnitAnchors.push({ ownerCode: owner, center: { lng: unit.lng, lat: unit.lat }, radiusKm: 2 });
+    }
+  }
+
+  for (const { impacts, path } of containers) {
+    if (!Array.isArray(impacts?.unitOps)) continue;
+    const kept = [];
+    for (let index = 0; index < impacts.unitOps.length; index += 1) {
+      const operation = impacts.unitOps[index];
+      if (operation?.op !== "spawn" || !isGroundUnit(operation.unit)) {
+        kept.push(operation);
+        continue;
+      }
+      const unit = operation.unit;
+      const owner = toCountryName(normalizeString(unit.ownerCode));
+      const location = context.ownerAt(unit, unit.regionId);
+      const isNewPolity = context.createdOwners.has(owner.toLowerCase());
+      if (!groundSpawnIsFriendly({
+        ownerCode: owner,
+        locationOwnerCode: location.ownerCode,
+        hasRegionCatalog: context.catalog.length > 0,
+        isNewPolity,
+      })) {
+        dropped.push({
+          path: `${path}.unitOps[${index}]`,
+          reason: `ground unit "${unit.name || unit.id || "unit"}" spawns in ${location.ownerCode || "unknown/hostile territory"}; spawn it inside ${owner} and move it through a connected front`,
+        });
+        continue;
+      }
+      kept.push(operation);
+      approvedSpawnAnchors.push({ ownerCode: owner, center: { lng: Number(unit.lng), lat: Number(unit.lat) }, radiusKm: 2 });
+    }
+    impacts.unitOps = kept;
+  }
+  return { ...context, approvedSpawnAnchors, dropped, legitimateUnitAnchors };
+};
+
+const HOSTILE_GROUND_MOVE_LIMIT_KM = 120;
+
+const resolveGroundUnitMoves = (containers, world, locationContext) => {
+  let units = normalizeWorldState(world).units;
+  let sectors = normalizeWorldState(world).controlSectors;
+  const dropped = [];
+  for (const { impacts, path } of containers) {
+    if (!impacts) continue;
+    sectors = applySectorOps(sectors, impacts.sectorOps);
+    if (!Array.isArray(impacts.unitOps)) continue;
+    const kept = [];
+    for (let index = 0; index < impacts.unitOps.length; index += 1) {
+      const operation = impacts.unitOps[index];
+      if (operation?.op !== "move") {
+        kept.push(operation);
+        units = applyUnitOps(units, [operation]);
+        continue;
+      }
+      const unit = units.find((candidate) => candidate.id === operation.unitId);
+      if (!unit || !isGroundUnit(unit)) {
+        kept.push(operation);
+        continue;
+      }
+      const destination = { center: { lng: Number(operation.toLng), lat: Number(operation.toLat) }, radiusKm: 2 };
+      const location = locationContext.ownerAt(destination, operation.regionId);
+      const owner = toCountryName(normalizeString(unit.ownerCode));
+      const hostileDestination = locationContext.catalog.length > 0
+        && (!location.ownerCode || location.ownerCode.toLowerCase() !== owner.toLowerCase());
+      if (hostileDestination) {
+        const controlledFront = sectors
+          .filter((sector) => String(sector.ownerCode || "").toLowerCase() === owner.toLowerCase())
+          .flatMap(tacticalLeaves);
+        const distance = tacticalDistanceKm(unit, destination);
+        if (!hasTacticalAnchor([destination], controlledFront)) {
+          dropped.push({
+            path: `${path}.unitOps[${index}]`,
+            reason: `ground move ends in ${location.ownerCode || "hostile territory"} without touching a connected ${owner} tactical sector`,
+          });
+          continue;
+        }
+        if (!hostileGroundMoveIsContinuous(unit, destination, controlledFront, HOSTILE_GROUND_MOVE_LIMIT_KM)) {
+          dropped.push({
+            path: `${path}.unitOps[${index}]`,
+            reason: `hostile ground move jumps ${Math.round(distance)} km in one event (limit ${HOSTILE_GROUND_MOVE_LIMIT_KM} km); advance the unit and front over several events`,
+          });
+          continue;
+        }
+      }
+      kept.push(operation);
+      units = applyUnitOps(units, [operation]);
+    }
+    impacts.unitOps = kept;
+  }
+  return dropped;
+};
+
+const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
   const catalog = await loadRegionCatalog().catch(() => []);
   const worldState = normalizeWorldState(world);
   const byId = new Map(catalog.map((region) => [normalizeString(region.id), region]));
@@ -1289,17 +1443,9 @@ const resolveControlSectorOps = async (containers, world) => {
   };
 
   let workingSectors = worldState.controlSectors;
-  const baseUnitAnchors = worldState.units
-    .filter((unit) => unit.status !== "defeated" && Number(unit.strength) > 0)
-    .map((unit) => ({ ownerCode: resolveOwner(unit.ownerCode), center: { lng: unit.lng, lat: unit.lat }, radiusKm: 2 }));
-  const newlyCreatedOwners = new Set();
-  for (const { impacts } of containers) {
-    for (const change of normalizeArray(impacts?.polityChanges)) {
-      const owner = resolveOwner(change?.name || change?.code);
-      if (owner) newlyCreatedOwners.add(owner.toLowerCase());
-    }
-  }
-
+  const baseUnitAnchors = unitAnchors
+    .map((anchor) => ({ ...anchor, ownerCode: resolveOwner(anchor.ownerCode) }))
+    .filter((anchor) => anchor.ownerCode);
   const administrativeOwner = (regionId) => {
     const override = worldState.regionOwnershipOverrides?.[regionId];
     if (override !== undefined) return resolveOwner(override);
@@ -1459,17 +1605,9 @@ const resolveControlSectorOps = async (containers, world) => {
             .filter((existing) => String(existing.ownerCode || "").toLowerCase() === ownerCode.toLowerCase())
             .flatMap(tacticalLeaves),
         ];
-        // A polity created in this same event may establish its first pocket at
-        // the exact place where a ground formation is spawned. Existing foreign
-        // polities cannot use a spawn to teleport a bridgehead behind the front.
-        if (newlyCreatedOwners.has(ownerCode.toLowerCase())) {
-          for (const unitOperation of normalizeArray(impacts?.unitOps)) {
-            if (unitOperation?.op !== "spawn") continue;
-            const unit = unitOperation.unit ?? unitOperation;
-            if (resolveOwner(unit?.ownerCode).toLowerCase() !== ownerCode.toLowerCase()) continue;
-            anchors.push({ center: { lng: Number(unit.lng), lat: Number(unit.lat) }, radiusKm: 2 });
-          }
-        }
+        // Spawns reach this list only after deployment validation: ordinary
+        // polities mobilise on friendly ground; a newly-created polity may use
+        // its first local formation to establish a pocket.
         if (!hasTacticalAnchor(leaves, anchors)) {
           dropped.push({
             path: `${path}.sectorOps[${index}]`,
@@ -1806,9 +1944,27 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
   if (strict && unresolvedTransfers.length > 0) {
     return buildTransferFeedback(unresolvedTransfers);
   }
-  const droppedSectors = await resolveControlSectorOps(containers, world);
+  const deployment = await resolveGroundUnitSpawns(containers, world);
+  if (strict && deployment.dropped.length > 0) {
+    return [
+      ...deployment.dropped.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
+      "Ground formations spawn on friendly-controlled territory. For an invasion, spawn or use the formation on its own side of the border, move it toward the frontier, and create only an adjacent connected sector across the border.",
+    ].join("\n");
+  }
+  const droppedSectors = await resolveControlSectorOps(
+    containers,
+    world,
+    [...deployment.legitimateUnitAnchors, ...deployment.approvedSpawnAnchors],
+  );
   if (strict && droppedSectors.length > 0) {
     return buildSectorFeedback(droppedSectors);
+  }
+  const droppedMoves = resolveGroundUnitMoves(containers, world, deployment);
+  if (strict && droppedMoves.length > 0) {
+    return [
+      ...droppedMoves.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
+      "Ground units may redeploy freely inside friendly territory. Inside hostile territory they must end beside their connected tactical front and advance no more than 120 km per event; long marches through friendly territory remain valid.",
+    ].join("\n");
   }
   const droppedViolentTransfers = enforceViolentTransferContinuity(containers, world);
   if (strict && droppedViolentTransfers.length > 0) {

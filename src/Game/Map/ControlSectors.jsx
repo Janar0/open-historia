@@ -149,7 +149,12 @@ const buildData = (sectors, colorMap, regionClips) => {
       if (!geometry) continue;
       const control = cellControl(cell, sector);
       const cellIsContested = isContested(cell, sector);
-      const displayGeometry = { ...geometry, radiusKm: geometry.radiusKm * 1.14 };
+      const displayGeometry = {
+        ...geometry,
+        radiusKm: geometry.radiusKm * 1.14,
+        bearingDeg: bearing,
+        ...(cells.length === 1 ? { depthScale: 0.68, frontScale: 1.65 } : {}),
+      };
       const fullRing = smoothClosedRing(tacticalAreaPolygon(displayGeometry, cell.id || `${sector.id}-${cellIndex}`), 0.1);
       const clipped = clipRingToRegion(fullRing, regionClip);
       if (clipped.length) {

@@ -20,7 +20,14 @@ export const hexagonPolygon = ({ lng, lat, radiusKm }) => {
 // Rendering cells as literal hexes exposed the simulation grid and made a
 // front look like a board game.  This deterministic, slightly uneven ring is
 // used only for presentation; authoritative centers/radii remain unchanged.
-export const tacticalAreaPolygon = ({ lng, lat, radiusKm }, seed = "") => {
+export const tacticalAreaPolygon = ({
+  lng,
+  lat,
+  radiusKm,
+  bearingDeg = 0,
+  depthScale = 1,
+  frontScale = 1,
+}, seed = "") => {
   const safeLat = Math.max(-84, Math.min(84, Number(lat)));
   const safeRadius = Math.max(0.05, Number(radiusKm) || 0.05);
   const latRadius = safeRadius / 111.32;
@@ -32,15 +39,24 @@ export const tacticalAreaPolygon = ({ lng, lat, radiusKm }, seed = "") => {
   }
   const coordinates = [];
   const vertices = 20;
+  const bearing = ((Number(bearingDeg) || 0) * Math.PI) / 180;
+  const normal = [Math.sin(bearing), Math.cos(bearing)];
+  const tangent = [Math.cos(bearing), -Math.sin(bearing)];
+  const safeDepth = Math.max(0.45, Math.min(1.4, Number(depthScale) || 1));
+  const safeFront = Math.max(0.7, Math.min(2.2, Number(frontScale) || 1));
   for (let index = 0; index <= vertices; index += 1) {
     const angle = (index / vertices) * Math.PI * 2;
     // Two low-frequency waves keep adjacent vertices smooth while preventing
     // the perfect-circle "bubble" look.
     const phase = ((hash % 360) * Math.PI) / 180;
     const wobble = 1 + Math.sin(angle * 3 + phase) * 0.045 + Math.cos(angle * 5 - phase * 0.7) * 0.025;
+    const alongFront = Math.cos(angle) * safeFront;
+    const throughFront = Math.sin(angle) * safeDepth;
+    const east = tangent[0] * alongFront + normal[0] * throughFront;
+    const north = tangent[1] * alongFront + normal[1] * throughFront;
     coordinates.push([
-      Math.max(-180, Math.min(180, Number(lng) + lngRadius * wobble * Math.cos(angle))),
-      Math.max(-84, Math.min(84, safeLat + latRadius * wobble * Math.sin(angle))),
+      Math.max(-180, Math.min(180, Number(lng) + lngRadius * wobble * east)),
+      Math.max(-84, Math.min(84, safeLat + latRadius * wobble * north)),
     ]);
   }
   return coordinates;

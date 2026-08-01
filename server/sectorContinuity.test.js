@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import polygonClipping from "polygon-clipping";
 import {
+  groundSpawnIsFriendly,
   hasTacticalAnchor,
+  hostileGroundMoveIsContinuous,
   tacticalCellsAreConnected,
   tacticalConnectedComponents,
   tacticalConnectionLimitKm,
@@ -53,4 +55,17 @@ test("partial control is cut from the merged footprint without reopening the cel
   assert.equal(footprint.length, 1);
   assert.equal(controlled.length, 1);
   assert.ok(controlled[0][0].length > 8);
+});
+
+test("ground formations cannot spawn at a hostile objective", () => {
+  assert.equal(groundSpawnIsFriendly({ ownerCode: "Ukraine", locationOwnerCode: "Russia" }), false);
+  assert.equal(groundSpawnIsFriendly({ ownerCode: "Ukraine", locationOwnerCode: "Ukraine" }), true);
+  assert.equal(groundSpawnIsFriendly({ ownerCode: "Rebels", locationOwnerCode: "Russia", isNewPolity: true }), true);
+});
+
+test("hostile ground movement must remain beside the connected front", () => {
+  const unit = cell(39.20, 47.05, 2);
+  const borderFront = [cell(39.35, 47.08, 7)];
+  assert.equal(hostileGroundMoveIsContinuous(unit, cell(39.36, 47.08, 2), borderFront), true);
+  assert.equal(hostileGroundMoveIsContinuous(unit, cell(39.72, 47.23, 2), borderFront), false);
 });
