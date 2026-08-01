@@ -1,5 +1,6 @@
 /*! Open Historia — portions (panel sizing on small screens) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React from "react";
+import ReactDOM from "react-dom";
 import dayjs from "dayjs";
 import advancedFormat from "dayjs/plugin/advancedFormat";
 import { JSON_URLS, readJson } from "../../runtime/assets.js";
@@ -730,11 +731,14 @@ const Actions = ({ onOpenAdvisor, hovered, setHovered, isOpen, onToggle }) => {
     return (
         <>
         {hasOpened && (
-            <ActionsPanel
-            isOpen={isOpen}
-            onClose={onToggle}
-            onOpenAdvisor={onOpenAdvisor}
-            />
+            ReactDOM.createPortal(
+                <ActionsPanel
+                isOpen={isOpen}
+                onClose={onToggle}
+                onOpenAdvisor={onOpenAdvisor}
+                />,
+                document.body,
+            )
         )}
         <button
         type="button"

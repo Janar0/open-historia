@@ -500,7 +500,7 @@ const runJsonTask = async (taskKey, {
     // campaigns carry frozen prompts, so a defaultPrompts.json rule never
     // reaches them. This also disarms an over-cautious reading of the agency
     // rule above ("don't act for the player") as "don't move the map".
-    systemPrompt = `${systemPrompt}\n\n[Map Truth]\nTerritorial narration and the map must never disagree. If an event's title or description says territory was captured, seized, occupied, annexed, ceded, liberated, retaken, or otherwise changed hands, that SAME event MUST carry impacts.regionTransfers entries covering every region it names or implies — a capture claim with no regionTransfers is invalid output that breaks the map. When you do not know a region's exact id, put its plain name in regionId and the engine will resolve it; emit one entry per affected region. Resolving ${playerName}'s own ordered military operations into their territorial outcomes is REQUIRED and is never a player-agency violation: the agency rule restricts unprompted decisions, not the map consequences of offensives the player actually ordered. In an active war, sustained successful offensives normally transfer regions every jump. If nothing genuinely changed hands this period, keep capture language out of the event text.`;
+    systemPrompt = `${systemPrompt}\n\n[Map Truth]\nTerritorial narration and the map must never disagree. If an event's title or description says a COMPLETE administrative region was captured, seized, occupied, annexed, ceded, liberated, or retaken, that SAME event MUST carry an impacts.regionTransfers entry for that region. If it describes only a city, district, road, border strip, bridgehead, salient, or advancing front, use impacts.sectorOps with connected cells and keep the parent region owner unchanged. When you do not know a region's exact id, put its plain name in regionId and the engine will resolve it; emit one entry per affected region or sector. Resolving ${playerName}'s own ordered military operations into their territorial outcomes is REQUIRED and is never a player-agency violation: the agency rule restricts unprompted decisions, not the map consequences of offensives the player actually ordered. In an active war, sustained successful offensives normally extend sectorOps in small connected pieces; transfer the region only after effective control of the whole administrative region. If nothing genuinely changed hands this period, keep capture language out of the event text.`;
     // No restating: the model is shown the recent timeline as context and, left
     // unchecked, re-narrates events it already reported — each restatement gets a
     // fresh id, so the same event stacks up and shows turn after turn. A content-key
@@ -1174,6 +1174,94 @@ const resolveRegionTransfers = async (containers, world) => {
     impacts.regionTransfers = resolved;
   }
   return unresolved;
+};
+
+// Direct GM requests are often phrased as "take this region piece by piece".
+// Older/frozen GM prompts only exposed regionTransfers, so the model could return
+// a valid whole-region transfer even when the player explicitly asked for a local
+// advance. Convert that narrow request into the tactical layer before validation;
+// resolveControlSectorOps will then derive the first connected border cells from
+// the real geometry and the player's existing formations.
+const PARTIAL_CAPTURE_REQUEST = /(?:кусоч|част(?:ями|ями)?|поэтап|постеп|плацдарм|участ(?:ок|ками)?|район|округ|пригранич|коридор|сектор|город|partial|piece(?:s)?|incremental|step[- ]by[- ]step|district|border\s+(?:strip|advance)|bridgehead|salient|city)/i;
+
+export const isPartialCaptureRequest = (value) => PARTIAL_CAPTURE_REQUEST.test(normalizeString(value));
+
+const geometryCenter = (geometryLike) => {
+  const geometry = geometryLike?.type === "Feature" ? geometryLike.geometry : geometryLike;
+  const coordinates = [];
+  const collect = (value) => {
+    if (!Array.isArray(value)) return;
+    if (value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
+      coordinates.push([Number(value[0]), Number(value[1])]);
+      return;
+    }
+    value.forEach(collect);
+  };
+  collect(geometry?.coordinates);
+  if (!coordinates.length) return null;
+  const lngs = coordinates.map(([lng]) => lng);
+  const lats = coordinates.map(([, lat]) => lat);
+  return {
+    lng: (Math.min(...lngs) + Math.max(...lngs)) / 2,
+    lat: (Math.min(...lats) + Math.max(...lats)) / 2,
+  };
+};
+
+const rewritePartialRegionTransfers = async (candidate, world, requestText) => {
+  if (!isPartialCaptureRequest(requestText) || !candidate?.impacts) return;
+  const impacts = candidate.impacts;
+  const transfers = normalizeArray(impacts.regionTransfers);
+  if (!transfers.length) return;
+
+  const catalog = await loadRegionCatalog().catch(() => []);
+  const byId = new Map(catalog.map((region) => [normalizeString(region.id), region]));
+  const byName = new Map(catalog.map((region) => [regionKey(region.name), region]));
+  const worldState = normalizeWorldState(world);
+  const generatedSectorOps = [];
+  const converted = new Set();
+
+  for (let index = 0; index < transfers.length; index += 1) {
+    const transfer = transfers[index];
+    const regionId = normalizeString(transfer?.regionId);
+    const region = byId.get(regionId) || byName.get(regionKey(transfer?.regionName || regionId));
+    const center = geometryCenter(region?.geometry);
+    const ownerCode = normalizeString(transfer?.toCode);
+    if (!region || !center || !ownerCode) continue;
+
+    const currentOwner = normalizeString(
+      worldState.regionOwnershipOverrides?.[region.id]
+        ?? region.country
+        ?? region.countryCode
+        ?? transfer?.fromCode,
+    );
+    const slug = normalizeString(region.id).replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()
+      || `region-${index + 1}`;
+    generatedSectorOps.push({
+      op: "upsert",
+      sector: {
+        id: `gm-partial-${slug}`,
+        regionId: region.id,
+        name: `${region.name} partial advance`,
+        ownerCode,
+        ...(currentOwner ? { contestedBy: currentOwner } : {}),
+        control: 24,
+        center,
+        radiusKm: 8,
+        status: "assault",
+        note: normalizeString(transfer?.note) || "Partial capture requested by the game master.",
+      },
+    });
+    converted.add(index);
+  }
+
+  // A partial request must never fall back to a whole-region map flip. Entries
+  // that could not be resolved are dropped rather than silently violating the
+  // player's requested granularity; a later retry can name the exact region.
+  impacts.regionTransfers = [];
+  impacts.sectorOps = [...normalizeArray(impacts.sectorOps), ...generatedSectorOps];
+  if (converted.size !== transfers.length) {
+    console.warn(`[ai] partial GM capture converted ${converted.size}/${transfers.length} region transfer(s) into tactical sectors.`);
+  }
 };
 
 // Sector coordinates and owner strings are normalized locally first, then the
@@ -2095,7 +2183,11 @@ const enforceViolentTransferContinuity = async (containers, world) => {
 // ops are DROPPED in place instead ("$.events[4].impacts.unitOps[0].unitId
 // does not identify an existing unit" used to trash whole good turns to the
 // canned fallback over one stale id).
-export const validateGeneratedWorldChanges = async (candidate, world, { strictTransfers = false } = {}) => {
+export const validateGeneratedWorldChanges = async (candidate, world, {
+  strictTransfers = false,
+  partialCaptureRequest = "",
+} = {}) => {
+  await rewritePartialRegionTransfers(candidate, world, partialCaptureRequest);
   const strict = strictTransfers;
   const containers = Array.isArray(candidate?.events)
     ? candidate.events.map((event, index) => ({ event, impacts: event?.impacts, path: `$.events[${index}].impacts` }))
@@ -3308,7 +3400,10 @@ export const applyGameMasterCommand = async (requestText) => {
     }),
     userMessage: "Apply the GM request as JSON only.",
     validatePayload: (candidate, { finalAttempt } = {}) =>
-      validateGeneratedWorldChanges(candidate, bundle.world, { strictTransfers: !finalAttempt }),
+      validateGeneratedWorldChanges(candidate, bundle.world, {
+        strictTransfers: !finalAttempt,
+        partialCaptureRequest: requestText,
+      }),
     variables,
   });
 
