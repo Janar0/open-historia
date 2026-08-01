@@ -920,6 +920,9 @@ const normalizeControlSectorEntry = (entry, index = 0, { generateCells = true } 
     ...(contestedBy.length > 0 ? { contestedBy: contestedBy.length === 1 ? contestedBy[0] : contestedBy } : {}),
     control,
     center: { lng, lat },
+    frontBearing: Number.isFinite(Number(entry.frontBearing ?? entry.bearingDeg))
+      ? ((Number(entry.frontBearing ?? entry.bearingDeg) % 360) + 360) % 360
+      : undefined,
     radiusKm: Math.round(radiusKm * 10) / 10,
     status: CONTROL_SECTOR_STATUS_SET.has(rawStatus)
       ? rawStatus

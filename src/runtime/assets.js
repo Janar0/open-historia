@@ -1057,7 +1057,8 @@ export const loadRegionCatalog = async ({ force = false } = {}) => {
 
       const seen = new Map();
       for (let index = 0; index < layer.length; index += 1) {
-        const props = layer.feature(index).properties;
+        const vectorFeature = layer.feature(index);
+        const props = vectorFeature.properties;
         const id = props?.GID_1 || props?.gid_1 || props?.HASC_1 || props?.fid;
         // A few GADM regions carry the literal placeholder "NA" as their name (England
         // among them). Correct the known ones and treat the rest as nameless, so the

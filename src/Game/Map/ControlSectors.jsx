@@ -96,6 +96,7 @@ const prepareDisplaySectors = (sectors) => {
 // cells). A stable id-derived bearing keeps single-cell/flat sectors from
 // changing shape between renders.
 const sectorBearing = (sector, cells) => {
+  if (Number.isFinite(Number(sector.frontBearing))) return Number(sector.frontBearing);
   const usable = cells.map((cell) => ({ cell, geometry: cellGeometry(cell, sector), control: cellControl(cell, sector) }))
     .filter((entry) => entry.geometry);
   if (usable.length > 1) {

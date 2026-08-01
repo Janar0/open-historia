@@ -9,6 +9,8 @@ import {
   tacticalConnectedComponents,
   tacticalConnectionLimitKm,
   tacticalDistanceKm,
+  tacticalEntryPoint,
+  tacticalNearestBoundaryPoint,
 } from "../src/Game/AI/sectorContinuity.js";
 import {
   controlSliceMultiPolygon,
@@ -68,4 +70,18 @@ test("hostile ground movement must remain beside the connected front", () => {
   const borderFront = [cell(39.35, 47.08, 7)];
   assert.equal(hostileGroundMoveIsContinuous(unit, cell(39.36, 47.08, 2), borderFront), true);
   assert.equal(hostileGroundMoveIsContinuous(unit, cell(39.72, 47.23, 2), borderFront), false);
+});
+
+test("the engine derives first contact just across the real target boundary", () => {
+  const target = {
+    type: "Polygon",
+    coordinates: [[[1, -1], [3, -1], [3, 1], [1, 1], [1, -1]]],
+  };
+  const anchor = cell(0.9, 0, 2);
+  const boundary = tacticalNearestBoundaryPoint(anchor, target);
+  const entry = tacticalEntryPoint(anchor, target, 2);
+  assert.ok(boundary.distanceKm > 10 && boundary.distanceKm < 12);
+  assert.ok(boundary.bearingDeg > 89 && boundary.bearingDeg < 91);
+  assert.ok(entry.lng > 1);
+  assert.ok(Math.abs(entry.lat) < 0.001);
 });

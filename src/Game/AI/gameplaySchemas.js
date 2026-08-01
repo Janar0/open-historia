@@ -728,6 +728,7 @@ const controlSectorSchema = {
       required: ["lng", "lat"],
       additionalProperties: false,
     },
+    frontBearing: { type: "number", minimum: 0, maximum: 360, description: "Engine-derived direction of advance in degrees clockwise from north. Preserve it on later updates when present." },
     radiusKm: { type: "number", minimum: 0.5, maximum: 80, description: "Approximate radius of the tactical patch in kilometres." },
     status: {
       type: "string",
