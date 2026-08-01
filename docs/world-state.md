@@ -87,12 +87,23 @@ Stored in world so they share every read/write/poll/normalize path with no serve
 
 | Field | Type | Default | Element shape (normalizer) |
 |---|---|---|---|
-| `units` | `Unit[]` | `[]` | `normalizeUnitEntry` (`:475`): `{id,name,type,ownerCode,strength,lng,lat,regionId,status,note,source,orderId,createdAt,updatedAt}`. |
+| `units` | `Unit[]` | `[]` | `normalizeUnitEntry`: `{id,name,type,ownerCode,strength,lng,lat,regionId,sectorId,status,note,source,orderId,createdAt,updatedAt}`. `sectorId` links a formation to a tactical front without making the front an administrative region. |
 | `markers` | `Marker[]` | `[]` | `normalizeMarkerEntry` (`:518`): built structures — `{id,name,kind,ownerCode,lng,lat,note,foundedAt,createdAt}`. |
 
 `Unit` enums (`:60`–`:64`): `type ∈ {infantry,armor,air,naval,artillery,garrison}` (default `infantry`); `status ∈ {idle,moving,engaged,defeated,pending}` (default `idle`; `pending` = a player deploy awaiting AI resolution, rendered translucent); `source ∈ {player,ai,scenario}` (default `scenario`). `strength` is clamped to `[0,1000]` by `clampUnitStrength` (`:71`). `marker.kind` is free-form (lowercased for stable styling), default `landmark`.
 
-### 2f. Turn machinery & narrative history
+### 2f. Tactical state and logistics
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `controlSectors` | `ControlSector[]` | `[]` | Partial control patches inside administrative regions. Each sector has stable cells; cell depth is capped at 2 and leaf references use `sectorId:cellId`. |
+| `territoryFragments` | `Fragment[]` | `[]` | Named subregions, occupation pockets, autonomies or new states backed by leaf-cell references. They do not rewrite the parent region geometry. |
+| `militaryReserves` | `{ owner: ReserveSheet }` | `{}` | Absolute reported stockpiles. `reported` flags distinguish an omitted field (UNKNOWN) from a known zero. |
+| `resourceLedger` | `ResourceTransaction[]` | `[]` | Applied, checked production/consumption transactions with signed amounts. It is append-only and capped by the writer. |
+
+The AI receives a generated `CANONICAL WORLD STATE v1` snapshot for operational calls. It contains exact force totals, the current roster (with a prompt-size cap noted in the text), reserve provenance, industry records, tactical cells, and planned order ids. `forceOps` expands a scoped withdrawal/redeployment over the full roster; `resourceOps` is accepted only when a starting balance is known and sufficient.
+
+### 2g. Turn machinery & narrative history
 
 | Field | Type | Default | Meaning (normalizer) |
 |---|---|---|---|
@@ -137,6 +148,10 @@ Every event may carry an `impacts` object (`normalizeEventImpacts`, `src/runtime
 | `regionTransfers` | `normalizeRegionTransfer` (`:420`) → `{regionId,toCode,fromCode,regionName,note}` | inline loop (`:1048`) | `regionOwnershipOverrides[regionId] = toCode`. |
 | `polityChanges` | `normalizePolityChange` (`:442`) → `{code,name,color,aliases[],note,reputation,tags}` | inline loop (`:1052`) | Upserts `polityOverrides[code]`; also writes `colors[code]` (§7), `internationalReputation[code]`, `countryTags[code]`. |
 | `unitOps` | `normalizeUnitOp` (`:592`) → `spawn\|move\|strength\|remove` | `applyUnitOps` (`:638`) | Rewrites `world.units`. |
+| `forceOps` | `normalizeForceOp` → `withdraw\|redeploy` with `all`, `unitIds`, `regionIds` or `sectorIds` | `applyForceOps` | Expands one quantified order across every matching formation, marking all of them moving and optionally moving them to a rear destination. |
+| `reserveOps` | `normalizeReserveOps` → absolute reserve sheets | `applyReserveOps` | Replaces a polity's authoritative reported stockpile; omitted fields remain UNKNOWN through `reported`. |
+| `resourceOps` | `normalizeResourceOps` → checked `consume\|produce\|set` transactions | `applyResourceOps` | Changes only a known, sufficient balance and appends the applied transaction to `resourceLedger`; unknown/insufficient operations are rejected. |
+| `sectorOps` / `territoryOps` | tactical-sector and leaf-cell normalizers | `applySectorOps` / `applyTerritoryOps` | Moves local control or creates a cell-backed fragment without transferring the parent administrative region. |
 | `markerOps` | `normalizeMarkerOp` (`:549`) → `build\|remove` | `applyMarkerOps` (`:575`) | Rewrites `world.markers`. |
 | `createdChats` | `normalizeChats` (`:415`) | turn writer (`gameplay.js:1364`) | New diplomacy threads pushed into `chat.json` (not `world`). |
 | `actionIds` | string list (`:683`) | turn writer | Which queued actions this event resolves. |
@@ -181,7 +196,7 @@ Colors live in a separate asset (`code → [r,g,b]`), not inside `world.json`. `
 
 ## 8. `applyEventImpactsToWorld` — folding impacts into state
 
-`applyEventImpactsToWorld({ colors, events, world })` (`src/runtime/gameState.js:1043`) is a **pure** function returning `{ colors, world }`. It clones the inputs, normalizes the world and the events, then for each event applies (in order): region transfers → polity changes (name/color/reputation/tags + palette) → unit ops → marker ops. It does NOT persist — the caller writes. Two callers:
+`applyEventImpactsToWorld({ colors, events, world })` is a **pure** function returning `{ colors, world }`. It clones the inputs, normalizes the world and the events, then for each event applies region transfers → polity changes → sector/fragment changes → industry → individual unitOps → reserveOps → scoped forceOps → checked resourceOps → markers. It does NOT persist — the caller writes. Two callers:
 
 1. **The turn writer** — `applySimulationResult` (`src/Game/AI/gameplay.js:1305`). It builds the next world (merging `activeCatalyst`, `lastJump*`, and the new `simulationHistory` head), calls `applyEventImpactsToWorld` with the generated events (`:1333`), optionally compacts history, then persists everything in one `Promise.all`: `writeActionsState`, `writeChatsState`, `writeEventsState`, `writeGameData`, `writeJson(colors)`, `writeWorldState` (`:1397`). It then captures a rollback snapshot of the pre-jump state (`captureRollbackSnapshot`, `:1407`).
 2. **The staged reveal** — `src/Game/GameUI/time.jsx:1617`. As a turn's events are revealed one at a time, it re-applies impacts up to the last revealed event onto `stagedBase.world` and calls `setWorldStateOverride(stagedWorld)` / `setUnitsOverride(...)` so the map shows the world as of that event. It passes `colors: {}` because it only needs the world, not the palette. When staging ends (or on unmount) both overrides are cleared to `null` (`:1612`, `:1629`).

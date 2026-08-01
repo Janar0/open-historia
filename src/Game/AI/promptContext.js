@@ -12,6 +12,7 @@ import {
   normalizeWorldState,
 } from "../../runtime/gameState.js";
 import { buildRegionOwnershipText } from "./regionVocab.js";
+import { buildCanonicalStateForPrompt } from "../../runtime/operationalState.js";
 
 const normalizeString = (value) => String(value ?? "").trim();
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
@@ -402,12 +403,14 @@ export const buildMilitaryReservesSummaryText = (world) => {
   const reserves = normalizeWorldState(world).militaryReserves;
   const entries = Object.entries(reserves);
   if (entries.length === 0) return "No military reserve sheets are currently reported. Do not assume zero; logistics data has not been supplied yet.";
-  const formatMap = (value) => {
+  const formatValue = (sheet, field, value) => sheet?.reported?.[field] === false ? "UNKNOWN" : value;
+  const formatMap = (sheet, field, value) => {
+    if (sheet?.reported?.[field] === false) return "UNKNOWN";
     const pairs = Object.entries(value || {}).map(([key, amount]) => `${key} ${amount}`);
     return pairs.length ? pairs.join(", ") : "none reported";
   };
   return entries.slice(0, 40).map(([owner, sheet]) =>
-    `- ${owner}: manpower reserve ${sheet.manpower}, committed ${sheet.manpowerCommitted}; equipment [${formatMap(sheet.equipment)}]; munitions [${formatMap(sheet.munitions)}]; fuel ${sheet.fuel}; supplies ${sheet.supplies}; maintenance ${sheet.maintenance}${sheet.note ? ` — ${sheet.note}` : ""}`,
+    `- ${owner}: manpower reserve ${formatValue(sheet, "manpower", sheet.manpower)}, committed ${formatValue(sheet, "manpowerCommitted", sheet.manpowerCommitted)}; equipment [${formatMap(sheet, "equipment", sheet.equipment)}]; munitions [${formatMap(sheet, "munitions", sheet.munitions)}]; fuel ${formatValue(sheet, "fuel", sheet.fuel)}; supplies ${formatValue(sheet, "supplies", sheet.supplies)}; maintenance ${formatValue(sheet, "maintenance", sheet.maintenance)}${sheet.note ? ` — ${sheet.note}` : ""}`,
   ).join("\n");
 };
 
@@ -650,6 +653,13 @@ export const buildPromptContext = async (bundle, {
     actions: actionText,
     advisorMessages: buildAdvisorHistoryText(bundle.advisor || [], { limit: advisorLimit }),
     allActions,
+    canonicalStateSummary: buildCanonicalStateForPrompt({
+      actions: bundle.actions,
+      events: bundle.events,
+      game: bundle.game,
+      playerPolity: bundle.game.country || "",
+      world: bundle.world,
+    }),
     catalystChoice,
     catalystDate: date,
     catalystHistory,

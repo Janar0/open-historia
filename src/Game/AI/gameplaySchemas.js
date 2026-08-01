@@ -231,6 +231,7 @@ const unitSchema = {
       maximum: 90,
     },
     regionId: textSchema("Map region identifier, when known."),
+    sectorId: textSchema("Tactical sector identifier, when the unit is assigned to a front cell."),
     status: {
       type: "string",
       description: "Optional unit status.",
@@ -262,6 +263,7 @@ const unitOpSchema = {
         toLng: { type: "number", minimum: -180, maximum: 180 },
         toLat: { type: "number", minimum: -90, maximum: 90 },
         regionId: textSchema("Destination region identifier, when known."),
+        sectorId: textSchema("Destination tactical sector identifier, when known."),
         note: textSchema("Brief explanation of the operation."),
       },
       required: ["op", "unitId", "toLng", "toLat"],
@@ -339,6 +341,65 @@ const reserveOpSchema = {
       required: ["op", "ownerCode"],
       additionalProperties: false,
     },
+  ],
+};
+
+const resourceOpSchema = {
+  type: "object",
+  description:
+    "A checked incremental logistics transaction. Use only when the starting reserve field is reported; missing data is unknown, not zero.",
+  properties: {
+    id: textSchema("Stable transaction identifier."),
+    op: { type: "string", enum: ["consume", "produce", "set"] },
+    ownerCode: nonEmptyTextSchema("Polity whose stock changes, as a FULL country name."),
+    resource: {
+      type: "string",
+      enum: ["manpower", "manpowerCommitted", "equipment", "munitions", "fuel", "supplies", "maintenance"],
+    },
+    item: textSchema("Named equipment or munition item, required for equipment and munitions."),
+    amount: { type: "integer", minimum: 0 },
+    date: textSchema("In-game date of the transaction."),
+    note: textSchema("Concrete accounting note, for example the units and reason spent."),
+  },
+  required: ["op", "ownerCode", "resource", "amount"],
+  additionalProperties: false,
+};
+
+const forceDestinationSchema = {
+  type: "object",
+  description: "Optional rear-area destination. Omit it to keep units at their current coordinates while marking the withdrawal in progress.",
+  properties: {
+    lng: { type: "number", minimum: -180, maximum: 180 },
+    lat: { type: "number", minimum: -90, maximum: 90 },
+    regionId: textSchema("Destination region identifier."),
+    sectorId: textSchema("Destination tactical sector identifier."),
+  },
+  required: ["lng", "lat"],
+  additionalProperties: false,
+};
+
+const forceOpSchema = {
+  type: "object",
+  description:
+    "A quantified order applied to every matching unit. Use this for a complete withdrawal or redeployment from a front; do not list only a convenient subset in unitOps.",
+  properties: {
+    id: textSchema("Stable order identifier."),
+    op: { type: "string", enum: ["withdraw", "redeploy"] },
+    ownerCode: nonEmptyTextSchema("Polity whose forces are ordered, as a FULL country name."),
+    all: { type: "boolean", description: "Select every unit of ownerCode. Use only when the order explicitly covers the whole force." },
+    unitIds: stringArraySchema("Exact unit ids to include."),
+    regionIds: stringArraySchema("Exact source region ids to include."),
+    sectorIds: stringArraySchema("Exact source tactical sector ids to include."),
+    destination: forceDestinationSchema,
+    note: textSchema("Short operational reason or destination note."),
+  },
+  required: ["op", "ownerCode"],
+  additionalProperties: false,
+  anyOf: [
+    { required: ["all"] },
+    { required: ["unitIds"] },
+    { required: ["regionIds"] },
+    { required: ["sectorIds"] },
   ],
 };
 
@@ -817,10 +878,20 @@ const impactsSchema = {
       description: "Military unit operations.",
       items: unitOpSchema,
     },
+    forceOps: {
+      type: "array",
+      description: "Quantified withdrawal or redeployment orders expanded against the complete current order of battle.",
+      items: forceOpSchema,
+    },
     reserveOps: {
       type: "array",
       description: "Absolute military reserve snapshots. Update this when mobilisation, casualties, resupply, production, or shortages materially change a polity's reserves.",
       items: reserveOpSchema,
+    },
+    resourceOps: {
+      type: "array",
+      description: "Checked incremental production/consumption transactions. The engine rejects unknown starting balances and insufficient stock instead of inventing or clamping them.",
+      items: resourceOpSchema,
     },
     markerOps: {
       type: "array",

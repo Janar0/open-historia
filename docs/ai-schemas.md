@@ -87,6 +87,11 @@ The heart of the map-mutating pipeline. Attached to events (`eventSchema.impacts
 | `polityChanges` | `polityChangeSchema[]` | Polity metadata changes (name/color/reputation/tags…) | no |
 | `regionTransfers` | `regionTransferSchema[]` | **Map ownership changes.** Required by prompt whenever narration says territory changed hands — one entry per region | no |
 | `unitOps` | `unitOpSchema[]` | Military unit mutations | no |
+| `forceOps` | `forceOpSchema[]` | Quantified withdrawal/redeployment over all matching units in a scope | no |
+| `reserveOps` | `reserveOpSchema[]` | Absolute reported stockpile snapshots | no |
+| `resourceOps` | `resourceOpSchema[]` | Checked incremental production/consumption against a known balance | no |
+| `sectorOps` | `sectorOpSchema[]` | Partial control and cell-grid changes inside a region | no |
+| `territoryOps` | `territoryOpSchema[]` | Cell-backed subregions, occupation pockets or new states | no |
 | `markerOps` | `markerOpSchema[]` | Structures built/destroyed on the map | no |
 
 ### 4.2 `regionTransferSchema` (`:90`)
@@ -290,6 +295,9 @@ Passed as `validatePayload` by `jumpForward`/`autoJumpForward` (`gameplay.js:191
 | `unitOps.spawn` missing name/ownerCode | Reject | Drop the op | `:1059` |
 | `unitOps.spawn` duplicate id | Reject | `delete unit.id` so normalization mints a fresh one | `:1064` |
 | `unitOps` targeting a nonexistent `unitId` | Reject | Drop the op | `:1079` |
+| `forceOps` with an empty scope or no matching formation | Reject | Drop the op | current validator |
+| `forceOps.unitIds` containing a stale id | Reject | Drop the whole scoped order | current validator |
+| `resourceOps` against an unknown balance or insufficient stock | Reject | Drop the transaction | current validator |
 | `markerOps.build` missing name / coords | Reject | Drop the op | `:1097` |
 | `markerOps.remove` missing name+id | Reject | Drop the op | `:1106` |
 | `diplomaticOutreach` with no known participants / bad opener | Reject | Drop the outreach | `:1126` |

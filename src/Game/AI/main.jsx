@@ -1192,7 +1192,7 @@ async function buildAdvisorSystemPrompt() {
     });
     const helperValues = resolveHelperValues(promptPack.helpers, variables);
 
-    return renderTemplate(promptPack.advisor, { ...variables, ...helperValues });
+    return `${renderTemplate(promptPack.advisor, { ...variables, ...helperValues })}\n\n[Canonical Operational State]\n${variables.canonicalStateSummary || "No canonical operational snapshot is available."}`;
 }
 
 export async function buildDiplomaticSystemPrompt(countries, playerCountry) {
@@ -1222,7 +1222,7 @@ export async function buildDiplomaticSystemPrompt(countries, playerCountry) {
     const helperValues = resolveHelperValues(promptPack.helpers, variables);
 
     // Leaders negotiate as softly or ruthlessly as the chosen difficulty.
-    return `${renderTemplate(promptPack.leader, { ...variables, ...helperValues })}\n\n${difficultyDirective(gameData?.difficulty)}`;
+    return `${renderTemplate(promptPack.leader, { ...variables, ...helperValues })}\n\n[Canonical Operational State]\n${variables.canonicalStateSummary || "No canonical operational snapshot is available."}\n\n${difficultyDirective(gameData?.difficulty)}`;
 }
 
 let advisorHistory = [];

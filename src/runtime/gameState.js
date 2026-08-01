@@ -74,6 +74,10 @@ export const WORLD_DEFAULTS = {
   // scenario has not supplied logistics data yet; it must not be mistaken for
   // a country having zero ammunition.
   militaryReserves: {},
+  // Append-only accounting entries for deterministic resource consumption and
+  // production. An empty list means no machine-readable transaction has been
+  // recorded yet; it is not proof that nothing was spent.
+  resourceLedger: [],
   notes: "",
   polityOverrides: {},
   // Region id -> claimant polity names: the world-data way to mark a region
@@ -621,6 +625,7 @@ export const normalizeUnitEntry = (entry, index = 0) => {
     lng,
     lat,
     regionId: normalizeOptionalString(entry.regionId),
+    sectorId: normalizeOptionalString(entry.sectorId || entry.frontId),
     status: UNIT_STATUS_SET.has(status) ? status : "idle",
     note: normalizeOptionalString(entry.note),
     source: UNIT_SOURCE_SET.has(source) ? source : "scenario",
@@ -634,6 +639,94 @@ export const normalizeUnits = (units) =>
   normalizeArray(units)
     .map((entry, index) => normalizeUnitEntry(entry, index))
     .filter(Boolean);
+
+const normalizeForceTargetList = (value) => normalizeArray(value)
+  .map((entry) => normalizeOptionalString(entry))
+  .filter(Boolean)
+  .filter((entry, index, values) => values.findIndex((candidate) => candidate.toLowerCase() === entry.toLowerCase()) === index);
+
+const normalizeForceDestination = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const lng = finiteOrNull(value.lng ?? value.lon ?? value.longitude);
+  const lat = finiteOrNull(value.lat ?? value.latitude);
+  if (lng === null || lat === null || (lng === 0 && lat === 0)) return null;
+  return {
+    lat,
+    lng,
+    regionId: normalizeOptionalString(value.regionId || value.region || value.regionName),
+    sectorId: normalizeOptionalString(value.sectorId || value.frontId),
+  };
+};
+
+// A forceOp is a quantified order, not another piece of prose. It lets the AI
+// say "withdraw every German unit from these regions" once; the engine expands
+// that scope against the complete order of battle, so omitting the fourth unit
+// from a hand-written unitOps list cannot create a half-executed withdrawal.
+export const normalizeForceOp = (entry, index = 0) => {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const op = normalizeOptionalString(entry.op || entry.action).toLowerCase();
+  if (!["withdraw", "redeploy"].includes(op)) return null;
+  const ownerCode = toCountryName(normalizeOptionalString(entry.ownerCode || entry.owner || entry.polity));
+  const unitIds = normalizeForceTargetList(entry.unitIds || entry.units);
+  const regionIds = normalizeForceTargetList(entry.regionIds || entry.regions || entry.fromRegions);
+  const sectorIds = normalizeForceTargetList(entry.sectorIds || entry.sectors || entry.fromSectors);
+  const all = entry.all === true;
+  // Normalized operations carry `destination: null` when no destination was
+  // supplied. Treat that canonical null as omission so applying the normalizer
+  // twice remains safe; reject only a destination that was actually provided
+  // and could not be parsed.
+  const hasDestination = (entry.destination !== undefined && entry.destination !== null)
+    || (entry.to !== undefined && entry.to !== null);
+  const destination = normalizeForceDestination(entry.destination || entry.to);
+  if (hasDestination && !destination) return null;
+  if (!ownerCode || (!all && unitIds.length === 0 && regionIds.length === 0 && sectorIds.length === 0)) return null;
+  return {
+    all,
+    destination,
+    id: normalizeOptionalString(entry.id || entry.orderId) || generateId(`force-${index}`),
+    note: normalizeOptionalString(entry.note || entry.reason),
+    op,
+    ownerCode,
+    regionIds,
+    sectorIds,
+    unitIds,
+  };
+};
+
+export const normalizeForceOps = (ops) =>
+  normalizeArray(ops).map((entry, index) => normalizeForceOp(entry, index)).filter(Boolean);
+
+export const applyForceOps = (units, ops) => {
+  let next = normalizeUnits(units);
+  for (const operation of normalizeForceOps(ops)) {
+    const unitIds = new Set(operation.unitIds);
+    const regionIds = new Set(operation.regionIds.map((value) => value.toLowerCase()));
+    const sectorIds = new Set(operation.sectorIds.map((value) => value.toLowerCase()));
+    next = next.map((unit) => {
+      if (unit.ownerCode.toLowerCase() !== operation.ownerCode.toLowerCase()) return unit;
+      const inScope = operation.all
+        || unitIds.has(unit.id)
+        || regionIds.has(unit.regionId.toLowerCase())
+        || sectorIds.has(unit.sectorId.toLowerCase());
+      if (!inScope) return unit;
+      const destination = operation.destination;
+      return {
+        ...unit,
+        ...(destination ? {
+          lat: destination.lat,
+          lng: destination.lng,
+          ...(destination.regionId ? { regionId: destination.regionId } : {}),
+          ...(destination.sectorId ? { sectorId: destination.sectorId } : {}),
+        } : {}),
+        note: operation.note || `${operation.op === "withdraw" ? "Withdrawal" : "Redeployment"} order ${operation.id}`,
+        orderId: operation.id,
+        status: "moving",
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+  return next;
+};
 
 const CONTROL_SECTOR_STATUS_SET = new Set([
   "assault",
@@ -1041,6 +1134,28 @@ const normalizeReserveMap = (value) => {
 
 export const normalizeReserveSheet = (entry) => {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const reportedInput = entry.reported && typeof entry.reported === "object" && !Array.isArray(entry.reported)
+    ? entry.reported
+    : null;
+  const has = (...keys) => keys.some((key) => Object.prototype.hasOwnProperty.call(entry, key));
+  const reportedField = (key, ...valueKeys) => {
+    // An explicit false always means UNKNOWN. An explicit true still needs a
+    // value in the sheet; otherwise a partial report would turn an omitted
+    // field into a spendable zero on the next normalization pass.
+    if (reportedInput?.[key] === false) return false;
+    return has(...valueKeys);
+  };
+  const reported = {
+    // Legacy reserve sheets predate per-field provenance. Treat their existing
+    // scalar/map fields as authoritative, while omissions remain UNKNOWN.
+    manpower: reportedField("manpower", "manpower", "personnel"),
+    manpowerCommitted: reportedField("manpowerCommitted", "manpowerCommitted", "committed"),
+    equipment: reportedField("equipment", "equipment"),
+    munitions: reportedField("munitions", "munitions", "ammunition"),
+    fuel: reportedField("fuel", "fuel"),
+    supplies: reportedField("supplies", "supplies", "materials"),
+    maintenance: reportedField("maintenance", "maintenance", "spareParts"),
+  };
   return {
     manpower: normalizeReserveNumber(entry.manpower ?? entry.personnel),
     manpowerCommitted: normalizeReserveNumber(entry.manpowerCommitted ?? entry.committed),
@@ -1049,6 +1164,7 @@ export const normalizeReserveSheet = (entry) => {
     fuel: normalizeReserveNumber(entry.fuel),
     supplies: normalizeReserveNumber(entry.supplies ?? entry.materials),
     maintenance: normalizeReserveNumber(entry.maintenance ?? entry.spareParts),
+    reported,
     note: normalizeOptionalString(entry.note || entry.description),
     updatedAt: normalizeOptionalString(entry.updatedAt || entry.date),
   };
@@ -1089,6 +1205,150 @@ export const applyReserveOps = (reserves, ops) => {
   }
   return next;
 };
+
+const RESOURCE_NAMES = new Set([
+  "manpower",
+  "manpowerCommitted",
+  "equipment",
+  "munitions",
+  "fuel",
+  "supplies",
+  "maintenance",
+]);
+
+const RESOURCE_ALIASES = {
+  ammo: "munitions",
+  ammunition: "munitions",
+  material: "supplies",
+  materials: "supplies",
+  personnel: "manpower",
+  spareparts: "maintenance",
+  soldiers: "manpower",
+};
+
+const normalizeResourceName = (value) => {
+  const raw = normalizeOptionalString(value).replace(/[\s_-]+/g, "").toLowerCase();
+  if (raw === "manpowercommitted" || raw === "committedmanpower") return "manpowerCommitted";
+  const alias = RESOURCE_ALIASES[raw] || raw;
+  return RESOURCE_NAMES.has(alias) ? alias : "";
+};
+
+const normalizeResourceAmount = (value, { allowZero = false } = {}) => {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  const rounded = Math.round(amount);
+  if (rounded < 0 || (!allowZero && rounded === 0)) return null;
+  return rounded;
+};
+
+// A resource operation is deliberately narrower than a prose ledger entry. It
+// is the only operation allowed to change a reported stockpile incrementally;
+// absolute reserveOps remain available when a new intelligence report replaces
+// the whole sheet.
+export const normalizeResourceOp = (entry, index = 0) => {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const op = normalizeOptionalString(entry.op || entry.action).toLowerCase();
+  if (!["consume", "produce", "set"].includes(op)) return null;
+  const ownerCode = toCountryName(normalizeOptionalString(entry.ownerCode || entry.owner || entry.polity));
+  const resource = normalizeResourceName(entry.resource || entry.kind || entry.bucket);
+  const item = normalizeOptionalString(entry.item || entry.itemId || entry.asset || entry.equipmentType);
+  const amount = normalizeResourceAmount(entry.amount ?? entry.quantity ?? entry.value, { allowZero: op === "set" });
+  if (!ownerCode || !resource || amount === null) return null;
+  if (["equipment", "munitions"].includes(resource) && !item) return null;
+  return {
+    id: normalizeOptionalString(entry.id || entry.transactionId) || generateId(`resource-${index}`),
+    amount,
+    date: normalizeOptionalString(entry.date),
+    item,
+    note: normalizeOptionalString(entry.note || entry.reason),
+    op,
+    ownerCode,
+    resource,
+  };
+};
+
+export const normalizeResourceOps = (ops) =>
+  normalizeArray(ops).map((entry, index) => normalizeResourceOp(entry, index)).filter(Boolean);
+
+const resourceIsReported = (sheet, resource) => sheet?.reported?.[resource] !== false;
+
+const updateResourceValue = (sheet, resource, item, value) => {
+  if (["equipment", "munitions"].includes(resource)) {
+    return {
+      ...sheet,
+      [resource]: { ...(sheet[resource] || {}), [item]: value },
+      reported: { ...(sheet.reported || {}), [resource]: true },
+    };
+  }
+  return {
+    ...sheet,
+    [resource]: value,
+    reported: { ...(sheet.reported || {}), [resource]: true },
+  };
+};
+
+const readResourceValue = (sheet, resource, item) => {
+  if (!resourceIsReported(sheet, resource)) return null;
+  if (["equipment", "munitions"].includes(resource)) {
+    if (!Object.prototype.hasOwnProperty.call(sheet?.[resource] || {}, item)) return null;
+    return Number(sheet[resource][item]);
+  }
+  return Number(sheet?.[resource]);
+};
+
+// Apply incremental resource changes without ever manufacturing a starting
+// balance. The caller receives rejected operations so the AI validator can ask
+// for a real reserve report instead of silently clamping a shortage to zero.
+export const applyResourceOps = (reserves, ops) => {
+  let next = normalizeMilitaryReserves(reserves);
+  const applied = [];
+  const rejected = [];
+
+  for (const operation of normalizeResourceOps(ops)) {
+    const sheet = next[operation.ownerCode];
+    const mapResource = ["equipment", "munitions"].includes(operation.resource);
+    const currentValue = readResourceValue(sheet, operation.resource, operation.item);
+    const current = currentValue === null && operation.op === "produce" && mapResource && resourceIsReported(sheet, operation.resource)
+      ? 0
+      : currentValue;
+    if (!sheet || current === null || !Number.isFinite(current)) {
+      rejected.push({ operation, reason: "the starting balance is unknown" });
+      continue;
+    }
+
+    const nextValue = operation.op === "set"
+      ? operation.amount
+      : operation.op === "produce"
+        ? current + operation.amount
+        : current - operation.amount;
+    if (nextValue < 0) {
+      rejected.push({ operation, reason: `insufficient ${operation.resource}${operation.item ? `/${operation.item}` : ""} (have ${current}, need ${operation.amount})` });
+      continue;
+    }
+
+    next[operation.ownerCode] = updateResourceValue(
+      sheet,
+      operation.resource,
+      operation.item,
+      nextValue,
+    );
+    applied.push(operation);
+  }
+
+  return { applied, rejected, reserves: next };
+};
+
+export const normalizeResourceLedger = (entries) => normalizeArray(entries)
+  .map((entry, index) => {
+    const operation = normalizeResourceOp(entry, index);
+    if (!operation) return null;
+    return {
+      ...operation,
+      signedAmount: operation.op === "consume" ? -operation.amount : operation.amount,
+    };
+  })
+  .filter(Boolean);
 
 const KEY_FIGURE_STATUS_SET = new Set([
   "active",
@@ -1659,6 +1919,7 @@ const normalizeUnitOp = (entry) => {
       toLng,
       toLat,
       regionId: normalizeOptionalString(entry.regionId),
+      sectorId: normalizeOptionalString(entry.sectorId || entry.frontId),
       note: normalizeOptionalString(entry.note),
     };
   }
@@ -1692,6 +1953,7 @@ export const applyUnitOps = (units, ops) => {
               lng: op.toLng,
               lat: op.toLat,
               regionId: op.regionId || unit.regionId,
+              sectorId: op.sectorId || unit.sectorId,
               status: "moving",
               updatedAt: new Date().toISOString(),
             }
@@ -1720,6 +1982,8 @@ const normalizeEventImpacts = (value) => {
       militaryIndustryOps: [],
       territoryOps: [],
       reserveOps: [],
+      resourceOps: [],
+      forceOps: [],
       polityChanges: [],
       regionTransfers: [],
       sectorOps: [],
@@ -1740,6 +2004,8 @@ const normalizeEventImpacts = (value) => {
     ],
     territoryOps: normalizeTerritoryOps(value.territoryOps),
     reserveOps: normalizeReserveOps(value.reserveOps),
+    resourceOps: normalizeResourceOps(value.resourceOps ?? value.logisticsOps),
+    forceOps: normalizeForceOps(value.forceOps ?? value.forceOrders),
     polityChanges: normalizeArray(value.polityChanges).map(normalizePolityChange).filter(Boolean),
     regionTransfers: normalizeArray(value.regionTransfers).map(normalizeRegionTransfer).filter(Boolean),
     sectorOps: normalizeArray(value.sectorOps).map(normalizeSectorOp).filter(Boolean),
@@ -1956,6 +2222,7 @@ export const normalizeWorldState = (world) => {
     lastJumpTargetDate: normalizeOptionalString(nextWorld.lastJumpTargetDate),
     militaryIndustry: normalizeMilitaryIndustry(nextWorld.militaryIndustry),
     militaryReserves: normalizeMilitaryReserves(nextWorld.militaryReserves),
+    resourceLedger: normalizeResourceLedger(nextWorld.resourceLedger),
     notes: normalizeOptionalString(nextWorld.notes),
     polityOverrides,
     regionClaimants,
@@ -2250,6 +2517,30 @@ export const applyEventImpactsToWorld = ({ colors = {}, events = [], world }) =>
 
     if (event.impacts.reserveOps?.length) {
       nextWorld.militaryReserves = applyReserveOps(nextWorld.militaryReserves, event.impacts.reserveOps);
+    }
+
+    // A forceOp expands a scoped order against the complete current order of
+    // battle. It intentionally runs after explicit unitOps so a model can still
+    // move one named formation and then issue a quantified withdrawal for the
+    // rest of a front.
+    if (event.impacts.forceOps?.length) {
+      nextWorld.units = applyForceOps(nextWorld.units, event.impacts.forceOps);
+    }
+
+    if (event.impacts.resourceOps?.length) {
+      const resourceResult = applyResourceOps(nextWorld.militaryReserves, event.impacts.resourceOps);
+      nextWorld.militaryReserves = resourceResult.reserves;
+      if (resourceResult.applied.length > 0) {
+        const ledgerEntries = normalizeResourceLedger(resourceResult.applied.map((entry) => ({
+          ...entry,
+          date: entry.date || event.date,
+        })));
+        const existingIds = new Set(nextWorld.resourceLedger.map((entry) => entry.id));
+        nextWorld.resourceLedger = [
+          ...nextWorld.resourceLedger,
+          ...ledgerEntries.filter((entry) => !existingIds.has(entry.id)),
+        ].slice(-2000);
+      }
     }
 
     if (event.impacts.markerOps?.length) {

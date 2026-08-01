@@ -231,6 +231,9 @@ const resolveRegionName = (transfer, regionLookup) => {
 const getEventMapChangeCount = (event) =>
 (event?.impacts?.regionTransfers?.length || 0)
     + (event?.impacts?.sectorOps?.length || 0)
+    + (event?.impacts?.territoryOps?.length || 0)
+    + (event?.impacts?.unitOps?.length || 0)
+    + (event?.impacts?.forceOps?.length || 0)
     + (event?.impacts?.polityChanges?.length || 0);
 
 const collectEventTags = (event, { polityLookup, regionLookup }) => {

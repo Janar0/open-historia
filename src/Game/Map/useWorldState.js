@@ -56,6 +56,7 @@ const EMPTY_CONTROL_SECTORS = [];
 const EMPTY_TERRITORY_FRAGMENTS = [];
 const EMPTY_KEY_FIGURES = [];
 const EMPTY_MILITARY_INDUSTRY = { arsenal: [], research: [], production: [], ledger: [] };
+const EMPTY_RESOURCE_LEDGER = [];
 
 const areEqualShallow = (a, b) => {
   if (a === b) return true;
@@ -100,6 +101,7 @@ export function useWorldState() {
     keyFigures: Array.isArray(state?.keyFigures) ? state.keyFigures : EMPTY_KEY_FIGURES,
     militaryIndustry: state?.militaryIndustry && typeof state.militaryIndustry === "object" ? state.militaryIndustry : EMPTY_MILITARY_INDUSTRY,
     militaryReserves: state?.militaryReserves && typeof state.militaryReserves === "object" ? state.militaryReserves : {},
+    resourceLedger: Array.isArray(state?.resourceLedger) ? state.resourceLedger : EMPTY_RESOURCE_LEDGER,
     cityRenames: state?.cityRenames ?? {},
     labelFont: state?.labelFont ?? "",
     labelHaloColor: state?.labelHaloColor ?? "",
@@ -128,6 +130,7 @@ export function useWorldState() {
     JSON.stringify(prev.keyFigures) === JSON.stringify(derived.keyFigures) &&
     JSON.stringify(prev.militaryIndustry) === JSON.stringify(derived.militaryIndustry) &&
     JSON.stringify(prev.militaryReserves) === JSON.stringify(derived.militaryReserves) &&
+    JSON.stringify(prev.resourceLedger) === JSON.stringify(derived.resourceLedger) &&
     JSON.stringify(prev.cityRenames) === JSON.stringify(derived.cityRenames) &&
     areEqualShallow(prev.polityOverrides, derived.polityOverrides)
       ? prev

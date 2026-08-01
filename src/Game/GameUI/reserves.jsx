@@ -1,6 +1,6 @@
 /*! Open Historia — military reserves panel © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 import React, { useEffect, useMemo, useState } from "react";
-import { readGameData } from "../../runtime/gameState.js";
+import { normalizeReserveSheet, readGameData } from "../../runtime/gameState.js";
 import { useWorldState } from "../Map/useWorldState.js";
 
 const surface = {
@@ -15,13 +15,16 @@ const surface = {
 };
 
 const number = (value) => Number.isFinite(Number(value)) ? Number(value).toLocaleString() : "—";
+const reportedValue = (sheet, field, value) => sheet?.reported?.[field] === false ? "Unknown" : number(value);
 
-const ReserveGroup = ({ title, values }) => {
+const ReserveGroup = ({ title, values, unknown = false }) => {
   const entries = Object.entries(values || {});
   return (
     <div style={{ marginBottom: "10px" }}>
       <div style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(255,255,255,0.48)", marginBottom: "5px" }}>{title}</div>
-      {entries.length === 0 ? (
+      {unknown ? (
+        <div style={{ fontSize: "11px", color: "#fbbf24" }}>Unknown — no report</div>
+      ) : entries.length === 0 ? (
         <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.38)" }}>No data reported</div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "4px 10px" }}>
@@ -55,8 +58,30 @@ const IndustrySection = ({ title, records, valueField = "quantity", limit = 8 })
   );
 };
 
+const ResourceLedgerSection = ({ entries, owner }) => {
+  const visible = (entries || [])
+    .filter((entry) => !owner || String(entry.ownerCode || "").toLowerCase() === String(owner).toLowerCase())
+    .slice(-8)
+    .reverse();
+  if (visible.length === 0) return null;
+  return (
+    <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ fontSize: "10px", textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(255,255,255,0.48)", marginBottom: "5px" }}>Verified resource ledger</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+        {visible.map((entry) => (
+          <div key={entry.id || `${entry.date}-${entry.resource}-${entry.item}`} style={{ fontSize: "11px", color: "rgba(255,255,255,0.72)" }}>
+            <strong style={{ color: Number(entry.signedAmount) < 0 ? "#fca5a5" : "#86efac" }}>{Number(entry.signedAmount) < 0 ? "−" : "+"}{number(Math.abs(Number(entry.signedAmount) || 0))}</strong>{" "}
+            {entry.resource}{entry.item ? ` / ${entry.item}` : ""}{entry.date ? ` · ${entry.date}` : ""}
+            {entry.note && <span style={{ color: "rgba(255,255,255,0.45)" }}> — {entry.note}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const ReservesPanel = ({ open = false, onToggle }) => {
-  const { worldState, militaryReserves, militaryIndustry } = useWorldState();
+  const { worldState, militaryReserves, militaryIndustry, resourceLedger } = useWorldState();
   const [playerCode, setPlayerCode] = useState("");
 
   useEffect(() => {
@@ -67,12 +92,20 @@ const ReservesPanel = ({ open = false, onToggle }) => {
     return () => { cancelled = true; };
   }, [open]);
 
-  const sheet = playerCode ? militaryReserves[playerCode] : null;
+  // Polling reads the persisted JSON directly, so normalize legacy sheets here
+  // as well as in the AI pipeline. That preserves UNKNOWN for fields omitted by
+  // an old or partial report instead of rendering the normalizer's fallback zero.
+  const sheet = playerCode && militaryReserves[playerCode]
+    ? normalizeReserveSheet(militaryReserves[playerCode])
+    : null;
   const deployed = useMemo(() => {
     const groups = {};
-    for (const unit of worldState?.units || []) groups[unit.type] = (groups[unit.type] || 0) + Number(unit.strength || 0);
+    for (const unit of worldState?.units || []) {
+      if (playerCode && unit.ownerCode !== playerCode) continue;
+      groups[unit.type] = (groups[unit.type] || 0) + Number(unit.strength || 0);
+    }
     return groups;
-  }, [worldState?.units]);
+  }, [playerCode, worldState?.units]);
   const playerIndustry = useMemo(() => {
     const matches = (record) => !record?.ownerCode || !playerCode || String(record.ownerCode).toLowerCase() === String(playerCode).toLowerCase();
     return {
@@ -100,15 +133,15 @@ const ReservesPanel = ({ open = false, onToggle }) => {
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "12px" }}>
-            {[['Manpower reserve', sheet.manpower], ['Committed', sheet.manpowerCommitted], ['Fuel', sheet.fuel], ['Supplies', sheet.supplies], ['Maintenance', sheet.maintenance], ['Deployed strength', Object.values(deployed).reduce((sum, value) => sum + value, 0)]].map(([label, value]) => (
+            {[['Manpower reserve', 'manpower', sheet.manpower], ['Committed', 'manpowerCommitted', sheet.manpowerCommitted], ['Fuel', 'fuel', sheet.fuel], ['Supplies', 'supplies', sheet.supplies], ['Maintenance', 'maintenance', sheet.maintenance], ['Deployed strength', null, Object.values(deployed).reduce((sum, value) => sum + value, 0)]].map(([label, field, value]) => (
               <div key={label} style={{ background: "rgba(255,255,255,0.05)", borderRadius: "7px", padding: "7px" }}>
                 <div style={{ fontSize: "9px", color: "rgba(255,255,255,0.48)" }}>{label}</div>
-                <strong style={{ display: "block", fontSize: "14px", marginTop: "3px" }}>{number(value)}</strong>
+                <strong style={{ display: "block", fontSize: "14px", marginTop: "3px" }}>{field ? reportedValue(sheet, field, value) : number(value)}</strong>
               </div>
             ))}
           </div>
-          <ReserveGroup title="Reserve equipment" values={sheet.equipment} />
-          <ReserveGroup title="Munitions" values={sheet.munitions} />
+          <ReserveGroup title="Reserve equipment" values={sheet.equipment} unknown={sheet.reported?.equipment === false} />
+          <ReserveGroup title="Munitions" values={sheet.munitions} unknown={sheet.reported?.munitions === false} />
           {sheet.note && <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.58)", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: "8px" }}>{sheet.note}</div>}
           {sheet.updatedAt && <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.35)", marginTop: "7px" }}>Updated {sheet.updatedAt}</div>}
         </>
@@ -117,6 +150,7 @@ const ReservesPanel = ({ open = false, onToggle }) => {
       <IndustrySection title="Research projects" records={playerIndustry.research} valueField="progress" />
       <IndustrySection title="Production lines" records={playerIndustry.production} valueField="rate" />
       <IndustrySection title="Recent industrial ledger" records={playerIndustry.ledger} valueField="delta" limit={6} />
+      <ResourceLedgerSection entries={resourceLedger} owner={playerCode} />
     </div>
   );
 };

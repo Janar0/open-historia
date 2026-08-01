@@ -22,9 +22,12 @@ import {
 } from "../../runtime/assets.js";
 import {
   applyEventImpactsToWorld,
+  applyForceOps,
   applyKeyFigureOps,
   applyMilitaryIndustryOps,
   applyReserveOps,
+  applyResourceOps,
+  applyUnitOps,
   normalizeActionEntry,
   normalizeActions,
   normalizeChatEntry,
@@ -34,7 +37,9 @@ import {
   normalizeMilitaryIndustryOps,
   normalizeKeyFigures,
   normalizeGameData,
+  normalizeForceOp,
   normalizeReserveOps,
+  normalizeResourceOps,
   normalizeSectorOp,
   normalizeTerritoryOps,
   normalizeWorldState,
@@ -400,12 +405,14 @@ const ACTIONS_REFERENCE = "[Actions You Can Take]\nThis is the full menu of leve
 const MARKERS_AND_RESERVES_REFERENCE = `[Player Map Markers and Military Reserves]
 Player-placed map markers appear in the marker list with source "player" and status "pending". When the marker's coordinates and context identify a real place, use impacts.markerOps with {"op":"update","markerId":"<id>","name":"<current name>","newName":"<informed name>","kind":"objective|city|front|supply depot|base","status":"identified","note":"<description>"}. Operate on the existing marker instead of creating a duplicate nearby. Keep its coordinates unchanged unless the player explicitly moves it.
 Military reserve sheets appear in the current military reserves context. Use impacts.reserveOps to send absolute updated values when mobilisation, casualties, production, resupply, fuel use, or shortages materially change a polity's manpower, equipment, munitions, fuel, supplies, or maintenance. Missing data means unknown, not zero.
+For a quantified order that covers a formation set, use impacts.forceOps: {"op":"withdraw","ownerCode":"<FULL country name>","regionIds":["<exact source region id>"],"destination":{"lng":0,"lat":0,"regionId":"<rear region>"},"note":"<reason>"}. Use all:true only when the order explicitly covers every unit of that polity. The engine expands the scope against the complete roster and updates every matching formation; do not silently implement a complete withdrawal by listing only some unitOps. Omit destination only when the force should remain at its coordinates while its withdrawal is recorded as in progress.
+For concrete production or expenditure against a known sheet, use impacts.resourceOps with {"op":"consume|produce","ownerCode":"<FULL country name>","resource":"manpower|manpowerCommitted|equipment|munitions|fuel|supplies|maintenance","item":"<required for equipment/munitions>","amount":0,"date":"YYYY-MM-DD","note":"<exact block>"}. The engine rejects an unknown starting balance or a shortage; first establish an absolute reserveOps report when the ledger does not know the stock.
 `;
 
 const FIGURES_AND_INDUSTRY_REFERENCE = `[Key Figures, Brain Budget and Plausible Contact]
 Key figures are persistent named people, not countries or map units. Use impacts.keyFigureOps for consequential appointments, assignments, achievements, deaths or changes in a person's status. Keep the factual cast broad if useful, but keep most people at brainMode "off". "off" is a compact record with no private thoughts or separate model call; "light" stores only a small motive/goal dossier; "full" is reserved for roughly the current crisis, command, research, production, negotiation or council. Keep no more than about 8 full brains active at once and downgrade stale figures back to light or off. Never give every general, minister or foreign leader a personality by default. brainEnabled is a legacy alias: explicit brainMode wins.
 Use meetingAccess and meetingModes as hard contact metadata decided from the current timeline. A cabinet means a physical shared room and requires the date, liveness, location and access to make sense. The default for a newly recorded figure is secure-channel or correspondence only. Before allowing a physical meeting, the Game Master must explicitly update the relevant figures with the cabinet mode and, for a cross-polity meeting, meetingAccess "granted". If the timeline no longer supports an already-open cabinet, remove cabinet from meetingModes and set meetingAccess to "restricted" or "impossible"; the runtime will stop the physical chat and leave remote channels available when permitted. If the timeline does not support a shared room, keep cabinet absent and use emissaries, letters, radio or another secure channel. Never add a person-name exception or infer physical access merely because a player requested a conversation; alternate history can grant or remove access through ordinary keyFigureOps updates.
-Use impacts.militaryIndustryOps with section "arsenal" for unlocked weapons and stocks, "research" for projects, "production" for active lines, and "ledger" for dated signed records. A breakthrough must upsert an arsenal item. Production and expenditure must append ledger records. Example: {"op":"upsert","section":"arsenal","entry":{"id":"f1m","name":"F-1M rocket","ownerCode":"Germany","category":"rocket","quantity":6}} and {"op":"append","section":"ledger","entry":{"id":"ledger-01","name":"F-1M production","ownerCode":"Germany","itemId":"f1m","kind":"production","delta":6,"date":"YYYY-MM-DD","note":"6 units produced this turn"}}. For costs append a negative ledger delta and write the concrete block in note: "spent 5 F-1 rockets, 500 soldiers and 30 tanks"; pair this with reserveOps when a reserve sheet exists. Missing inventory is unknown, not zero.
+Use impacts.militaryIndustryOps with section "arsenal" for unlocked weapons and stocks, "research" for projects, "production" for active lines, and "ledger" for dated signed records. A breakthrough must upsert an arsenal item. Production and expenditure must append ledger records. Example: {"op":"upsert","section":"arsenal","entry":{"id":"f1m","name":"F-1M rocket","ownerCode":"Germany","category":"rocket","quantity":6}} and {"op":"append","section":"ledger","entry":{"id":"ledger-01","name":"F-1M production","ownerCode":"Germany","itemId":"f1m","kind":"production","delta":6,"date":"YYYY-MM-DD","note":"6 units produced this turn"}}. For a concrete change to a known physical balance, pair the narrative industry record with resourceOps: a cost such as "5 F-1 rockets, 500 soldiers and 30 tanks" is three checked resourceOps entries, not only a prose note or a negative industry ledger line. Missing inventory is unknown, not zero.
 `;
 
 const TACTICAL_SECTORS_REFERENCE = `[Tactical Sectors and Prolonged Battles]
@@ -429,6 +436,21 @@ const runJsonTask = async (taskKey, {
     ...variables,
     ...helperValues,
   });
+
+  // The prose summaries remain useful for immersion, but operational decisions
+  // must see one canonical, machine-shaped snapshot as well. This is appended at
+  // call time so old scenario prompt packs receive the same source of truth.
+  if (variables.canonicalStateSummary && [
+    "actions",
+    "autoJumpForward",
+    "catalystCreation",
+    "catalystExecutor",
+    "figureBrain",
+    "gameMaster",
+    "jumpForward",
+  ].includes(taskKey)) {
+    systemPrompt = `${systemPrompt}\n\n[Canonical Operational State]\n${variables.canonicalStateSummary}`;
+  }
 
   // The chosen difficulty steers every simulation task (see runtime/difficulty.js).
   try {
@@ -1382,6 +1404,95 @@ const buildTransferFeedback = (unresolved) => {
   return lines.join("\n");
 };
 
+const forceOpMatchesUnit = (unit, operation) => {
+  if (String(unit.ownerCode || "").toLowerCase() !== String(operation.ownerCode || "").toLowerCase()) return false;
+  if (operation.all) return true;
+  const unitIds = new Set(operation.unitIds);
+  const regionIds = new Set(operation.regionIds.map((value) => String(value).toLowerCase()));
+  const sectorIds = new Set(operation.sectorIds.map((value) => String(value).toLowerCase()));
+  return unitIds.has(unit.id)
+    || regionIds.has(String(unit.regionId || "").toLowerCase())
+    || sectorIds.has(String(unit.sectorId || "").toLowerCase());
+};
+
+// Scoped force orders are validated against the complete roster before the
+// event reaches applyEventImpactsToWorld. This prevents a typo or a stale unit
+// id from turning an intended full withdrawal into a silently partial one.
+const reconcileForceOps = (containers, world, { strict = false } = {}) => {
+  let units = normalizeWorldState(world).units;
+  const dropped = [];
+  for (const { impacts, path } of containers) {
+    if (!impacts) continue;
+    // Folding applies individual unitOps before a scoped force order in the
+    // same event. Mirror that order here so a freshly spawned formation can be
+    // included, and a unit moved out of a source region is not falsely counted.
+    if (Array.isArray(impacts.unitOps)) units = applyUnitOps(units, impacts.unitOps);
+    if (!Array.isArray(impacts.forceOps)) continue;
+    const kept = [];
+    for (let index = 0; index < impacts.forceOps.length; index += 1) {
+      const operationPath = `${path}.forceOps[${index}]`;
+      const operation = normalizeForceOp(impacts.forceOps[index], index);
+      if (!operation) {
+        dropped.push({ path: operationPath, reason: "it must name a polity and a non-empty unit, region, sector, or all:true scope" });
+        continue;
+      }
+      const unknownIds = operation.unitIds.filter((unitId) => !units.some((unit) => unit.id === unitId));
+      if (unknownIds.length > 0) {
+        dropped.push({ path: operationPath, reason: `unitIds do not exist: ${unknownIds.slice(0, 5).join(", ")}` });
+        continue;
+      }
+      const matches = units.filter((unit) => forceOpMatchesUnit(unit, operation));
+      if (matches.length === 0) {
+        dropped.push({ path: operationPath, reason: "the scope matches no current formation; the order would have no visible effect" });
+        continue;
+      }
+      kept.push(operation);
+      units = applyForceOps(units, [operation]);
+    }
+    impacts.forceOps = kept;
+  }
+  if (strict && dropped.length > 0) {
+    return `\n${dropped.slice(0, 5).map((entry) => `${entry.path}: ${entry.reason}.`).join("\n")}\nA forceOps order must match the complete current roster. Use regionIds/sectorIds for a scoped withdrawal, unitIds for named exceptions, or all:true only for a whole-polity order.`;
+  }
+  return "";
+};
+
+// Resource operations are replayed in event order on a working balance. A
+// reserveOps snapshot in an earlier event can therefore establish a new sheet,
+// after which later resourceOps in the same jump can consume or produce against
+// it. Unknown balances and shortages are errors on the retry and are dropped on
+// final salvage rather than being clamped to zero.
+const reconcileResourceOps = (containers, world, { strict = false } = {}) => {
+  let reserves = normalizeWorldState(world).militaryReserves;
+  const dropped = [];
+  for (const { impacts, path } of containers) {
+    if (!impacts) continue;
+    if (Array.isArray(impacts.reserveOps)) reserves = applyReserveOps(reserves, impacts.reserveOps);
+    if (!Array.isArray(impacts.resourceOps)) continue;
+    const kept = [];
+    for (let index = 0; index < impacts.resourceOps.length; index += 1) {
+      const operationPath = `${path}.resourceOps[${index}]`;
+      const operation = normalizeResourceOps([impacts.resourceOps[index]])[0];
+      if (!operation) {
+        dropped.push({ path: operationPath, reason: "it must name a known resource, owner, positive amount, and an item for equipment or munitions" });
+        continue;
+      }
+      const result = applyResourceOps(reserves, [operation]);
+      if (result.rejected.length > 0) {
+        dropped.push({ path: operationPath, reason: result.rejected[0].reason });
+        continue;
+      }
+      reserves = result.reserves;
+      kept.push(operation);
+    }
+    impacts.resourceOps = kept;
+  }
+  if (strict && dropped.length > 0) {
+    return `\n${dropped.slice(0, 5).map((entry) => `${entry.path}: ${entry.reason}.`).join("\n")}\nDo not invent a starting balance. Add a complete reserveOps report first, then use resourceOps only for the exact produced or consumed quantity.`;
+  }
+  return "";
+};
+
 // Also canonicalizes region ids in place (see resolveRegionTransfers): runJsonTask
 // hands the accepted payload straight to the caller, and a payload is only accepted
 // once this returns clean, so every applied transfer has passed through here.
@@ -1426,6 +1537,9 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
     containers.push({ impacts: candidate.impacts, path: "$.impacts" });
   }
   if (Array.isArray(candidate?.sectorOps) || Array.isArray(candidate?.territoryOps)) {
+    containers.push({ impacts: candidate, path: "$" });
+  }
+  if (Array.isArray(candidate?.forceOps) || Array.isArray(candidate?.resourceOps)) {
     containers.push({ impacts: candidate, path: "$" });
   }
   const unresolvedTransfers = await resolveRegionTransfers(containers, world);
@@ -1577,6 +1691,11 @@ export const validateGeneratedWorldChanges = async (candidate, world, { strictTr
     }
     if (impacts && Array.isArray(impacts.reserveOps)) impacts.reserveOps = keptReserveOps;
   }
+
+  const forceError = reconcileForceOps(containers, world, { strict });
+  if (forceError) return forceError;
+  const resourceError = reconcileResourceOps(containers, world, { strict });
+  if (resourceError) return resourceError;
 
   // Unprompted outreach chats (top-level, not tied to an event) need real
   // participants exactly like createdChats do.
