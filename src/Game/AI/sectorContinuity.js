@@ -96,16 +96,29 @@ export const tacticalGeometryContainsPoint = (geometry, candidate) => {
   }
 };
 
-export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor }) => {
+export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor, excludedGeometries = [] }) => {
   if (!sector?.id || !targetRegion?.id || !targetRegion?.geometry) return null;
   const rawRadius = Number(sector.radiusKm) || 9;
   const cellRadiusKm = Math.max(2.5, Math.min(5, rawRadius * 0.38));
-  const entry = tacticalEntryPoint(anchor, targetRegion.geometry, cellRadiusKm * 0.9 + 1);
-  if (!entry || !tacticalGeometryContainsPoint(targetRegion.geometry, entry)) return null;
+  const boundary = tacticalNearestBoundaryPoint(anchor, targetRegion.geometry);
+  if (!boundary) return null;
+  const isExclusiveTargetPoint = (candidate) => (
+    tacticalGeometryContainsPoint(targetRegion.geometry, candidate)
+    && !excludedGeometries.some((geometry) => tacticalGeometryContainsPoint(geometry, candidate))
+  );
+  const initialInsetKm = cellRadiusKm * 0.9 + 1;
+  let entry = null;
+  for (let insetKm = initialInsetKm; insetKm <= 30; insetKm += 1.5) {
+    const candidate = tacticalOffsetPoint(boundary, boundary.bearingDeg, insetKm);
+    if (!candidate || !isExclusiveTargetPoint(candidate)) continue;
+    entry = { ...candidate, boundary, bearingDeg: boundary.bearingDeg };
+    break;
+  }
+  if (!entry) return null;
   const tangentBearing = entry.bearingDeg + 90;
   let centers = [-1, 0, 1]
     .map((offset) => tacticalOffsetPoint(entry, tangentBearing, offset * cellRadiusKm * 1.25))
-    .filter((center) => center && tacticalGeometryContainsPoint(targetRegion.geometry, center));
+    .filter((center) => center && isExclusiveTargetPoint(center));
   if (centers.length < 2) centers = [entry];
   const control = Math.max(12, Math.min(35, Number(sector.control) || 24));
   const cells = centers.map((center, index) => ({

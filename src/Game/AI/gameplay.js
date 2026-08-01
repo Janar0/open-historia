@@ -1638,6 +1638,12 @@ const resolveControlSectorOps = async (containers, world, unitAnchors = []) => {
           sector: resolvedOperation.sector,
           targetRegion,
           anchor: crossing.anchor,
+          excludedGeometries: catalog
+            .filter((region) => (
+              region.geometry
+              && administrativeOwner(region.id)?.toLowerCase() === ownerCode.toLowerCase()
+            ))
+            .map((region) => region.geometry),
         });
         if (!rebuiltSector) {
           dropped.push({ path: `${path}.sectorOps[${index}]`, reason: `could not construct a valid entry strip inside "${regionId}"` });

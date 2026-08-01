@@ -122,6 +122,38 @@ test("first contact ignores guessed geometry and becomes a shallow connected bor
   assert.equal(sector.cells.every((entry) => entry.center.lng > 1), true);
 });
 
+test("first contact clears overlapping simplified source and target polygons", () => {
+  const targetRegion = {
+    id: "target-region",
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[1, -1], [3, -1], [3, 1], [1, 1], [1, -1]]],
+    },
+  };
+  const overlappingSource = {
+    type: "Polygon",
+    coordinates: [[[-1, -1], [1.15, -1], [1.15, 1], [-1, 1], [-1, -1]]],
+  };
+  const sector = deriveTacticalBorderSector({
+    anchor: cell(0.9, 0, 2),
+    targetRegion,
+    excludedGeometries: [overlappingSource],
+    sector: {
+      id: "front-overlap",
+      regionId: "source-region",
+      name: "Border advance",
+      ownerCode: "Attacker",
+      contestedBy: "Defender",
+      control: 25,
+      center: { lng: 0.9, lat: 0 },
+      radiusKm: 10,
+    },
+  });
+  assert.ok(sector);
+  assert.equal(sector.cells.every((entry) => tacticalGeometryContainsPoint(targetRegion.geometry, entry)), true);
+  assert.equal(sector.cells.some((entry) => tacticalGeometryContainsPoint(overlappingSource, entry)), false);
+});
+
 test("an established front grows by bounded pieces and its old cells cannot teleport", () => {
   const previous = {
     id: "front-1",
