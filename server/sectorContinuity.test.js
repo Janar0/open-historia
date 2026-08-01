@@ -240,6 +240,34 @@ test("an established front grows by bounded pieces and its old cells cannot tele
   )), true);
 });
 
+test("a moved cell reused under its old id becomes the next connected piece", () => {
+  const previous = {
+    id: "front-1",
+    name: "Border advance",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 1, lat: 0 },
+    frontBearing: 90,
+    frontWidthKm: 10,
+    advanceDepthKm: 18,
+    cells: [{ ...cell(1.04, 0, 4), id: "front-cell", control: 40, status: "assault" }],
+  };
+  const candidate = {
+    ...previous,
+    cells: [{ ...cell(1.3, 0, 4), id: "front-cell", control: 80, status: "held" }],
+  };
+  const bounded = boundTacticalSectorEvolution(previous, candidate);
+  assert.equal(bounded.cells.some((entry) => entry.id === "front-cell" && entry.center.lng === 1.04), true);
+  assert.equal(bounded.cells.some((entry) => entry.id !== "front-cell" && entry.center.lng === 1.3), true);
+
+  const nextCandidate = {
+    ...bounded,
+    cells: [{ ...cell(1.45, 0, 4), id: "front-cell", control: 80, status: "held" }],
+  };
+  const advancedAgain = boundTacticalSectorEvolution(bounded, nextCandidate);
+  assert.equal(advancedAgain.cells.some((entry) => entry.center.lng === 1.3), true);
+  assert.equal(advancedAgain.cells.some((entry) => entry.center.lng === 1.45), true);
+});
+
 test("old tactical cells disappear only through an explicit remove", () => {
   const previous = {
     id: "front-1",

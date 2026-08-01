@@ -266,7 +266,36 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
   for (const requested of candidateCells) {
     if (!requested?.id || explicitlyRemoved.has(String(requested.id)) || admittedIds.has(String(requested.id))) continue;
     const previous = previousById.get(String(requested.id));
-    if (previous) {
+    // Models occasionally reuse the old cell id while moving its coordinates
+    // forward. Treat that as a new captured piece instead of silently snapping
+    // it back to the old location forever. Existing cells remain immutable; the
+    // moved copy receives a stable coordinate-derived id and is then subject to
+    // the same continuity/advance bounds as any other new cell.
+    const movedExistingCell = previous
+      && !previous.parentCellId
+      && tacticalDistanceKm(previous, requested) > Math.max(2.5, radius(previous) * 0.75);
+    const admissionId = movedExistingCell
+      ? `${requested.id}-advance-${Math.round(Number(requested.center?.lng ?? 0) * 1000)}-${Math.round(Number(requested.center?.lat ?? 0) * 1000)}`
+      : requested.id;
+    const admissionRadius = Math.min(newRadiusLimit, Math.max(2.5, Number(requested.radiusKm) || newRadiusLimit));
+    const admissionCandidate = { ...requested, id: admissionId, radiusKm: admissionRadius };
+    const reachesOldFront = existingLeaves.some((oldCell) => (
+      tacticalDistanceKm(oldCell, admissionCandidate)
+        <= maxAdvanceKm + radius(oldCell) + radius(admissionCandidate)
+    ));
+    const projection = frontOrigin && Number.isFinite(frontBearing)
+      ? tacticalProjectPoint(frontOrigin, admissionCandidate, frontBearing)
+      : null;
+    const staysInsideFront = !projection || (
+      projection.forwardKm >= -radius(admissionCandidate) * 0.25
+      && projection.forwardKm <= previousDepthKm + maxAdvanceKm + radius(admissionCandidate)
+      && Math.abs(projection.rightKm) <= frontWidthKm / 2 + radius(admissionCandidate) * 0.65
+    );
+    const canAdmitMovedExisting = movedExistingCell
+      && newCellCount < maxNewCells
+      && reachesOldFront
+      && staysInsideFront;
+    if (previous && !canAdmitMovedExisting) {
       const control = clampControlChange(previous.control, requested.control, maxControlDelta);
       const contestedBy = control < 75
         ? requested.contestedBy ?? previous.contestedBy ?? candidateSector.contestedBy
@@ -290,26 +319,16 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     if (newCellCount >= maxNewCells) continue;
     const bounded = {
       ...requested,
-      radiusKm: Math.min(newRadiusLimit, Math.max(2.5, Number(requested.radiusKm) || newRadiusLimit)),
+      id: admissionId,
+      radiusKm: admissionRadius,
       control: Math.min(35, Math.max(5, Math.round(Number(requested.control) || 20))),
       ...(requested.contestedBy ?? candidateSector.contestedBy
         ? { contestedBy: requested.contestedBy ?? candidateSector.contestedBy }
         : {}),
       status: "assault",
     };
-    const reachesOldFront = existingLeaves.some((oldCell) => (
-      tacticalDistanceKm(oldCell, bounded)
-      <= maxAdvanceKm + radius(oldCell) + radius(bounded)
-    ));
     if (!reachesOldFront) continue;
-    const projection = frontOrigin && Number.isFinite(frontBearing)
-      ? tacticalProjectPoint(frontOrigin, bounded, frontBearing)
-      : null;
-    if (projection && (
-      projection.forwardKm < -radius(bounded) * 0.25
-      || projection.forwardKm > previousDepthKm + maxAdvanceKm + radius(bounded)
-      || Math.abs(projection.rightKm) > frontWidthKm / 2 + radius(bounded) * 0.65
-    )) continue;
+    if (!staysInsideFront) continue;
     admitted.push(bounded);
     admittedIds.add(String(bounded.id));
     newCellCount += 1;
