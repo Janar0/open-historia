@@ -1,4 +1,5 @@
 /*! Open Historia — tactical hex geometry helpers © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
+import polygonClipping from "polygon-clipping";
 
 export const hexagonPolygon = ({ lng, lat, radiusKm }) => {
   const safeLat = Math.max(-84, Math.min(84, Number(lat)));
@@ -11,6 +12,35 @@ export const hexagonPolygon = ({ lng, lat, radiusKm }) => {
     coordinates.push([
       Math.max(-180, Math.min(180, Number(lng) + lngRadius * Math.cos(angle))),
       Math.max(-84, Math.min(84, safeLat + latRadius * Math.sin(angle))),
+    ]);
+  }
+  return coordinates;
+};
+
+// Rendering cells as literal hexes exposed the simulation grid and made a
+// front look like a board game.  This deterministic, slightly uneven ring is
+// used only for presentation; authoritative centers/radii remain unchanged.
+export const tacticalAreaPolygon = ({ lng, lat, radiusKm }, seed = "") => {
+  const safeLat = Math.max(-84, Math.min(84, Number(lat)));
+  const safeRadius = Math.max(0.05, Number(radiusKm) || 0.05);
+  const latRadius = safeRadius / 111.32;
+  const lngRadius = safeRadius / (111.32 * Math.max(0.08, Math.cos((safeLat * Math.PI) / 180)));
+  let hash = 2166136261;
+  for (const character of `${seed}:${lng}:${lat}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  const coordinates = [];
+  const vertices = 20;
+  for (let index = 0; index <= vertices; index += 1) {
+    const angle = (index / vertices) * Math.PI * 2;
+    // Two low-frequency waves keep adjacent vertices smooth while preventing
+    // the perfect-circle "bubble" look.
+    const phase = ((hash % 360) * Math.PI) / 180;
+    const wobble = 1 + Math.sin(angle * 3 + phase) * 0.045 + Math.cos(angle * 5 - phase * 0.7) * 0.025;
+    coordinates.push([
+      Math.max(-180, Math.min(180, Number(lng) + lngRadius * wobble * Math.cos(angle))),
+      Math.max(-84, Math.min(84, safeLat + latRadius * wobble * Math.sin(angle))),
     ]);
   }
   return coordinates;
@@ -31,6 +61,13 @@ const planarRingArea = (ring, centerLat) => {
   }
   return Math.abs(twiceArea) / 2;
 };
+
+const planarMultiPolygonArea = (multiPolygon, centerLat) => (multiPolygon || []).reduce(
+  (total, polygon) => total + (polygon || []).reduce((area, ring, ringIndex) => (
+    area + planarRingArea(ring, centerLat) * (ringIndex === 0 ? 1 : -1)
+  ), 0),
+  0,
+);
 
 const closeRing = (points) => {
   if (!Array.isArray(points) || points.length < 3) return null;
@@ -72,32 +109,91 @@ const clipRingAtProjection = (ring, centerLat, normal, threshold) => {
 // read as one translucent capsule. This clips the cell along a stable front
 // bearing and binary-searches the cut until the visible polygon has the requested
 // share of the original area. The state stays percentage-based and deterministic.
-export const controlSlicePolygon = ({ lng, lat, radiusKm }, control, bearingDeg = 0) => {
+export const controlSliceRing = (ring, control, bearingDeg = 0, centerLat = 0) => {
   const percentage = Math.max(0, Math.min(100, Number(control) || 0));
   if (percentage <= 0) return null;
-  const ring = smoothClosedRing(hexagonPolygon({ lng, lat, radiusKm }), 0.08);
   if (percentage >= 100) return ring;
 
   const radians = ((Number(bearingDeg) || 0) * Math.PI) / 180;
   const normal = [Math.sin(radians), Math.cos(radians)];
   const projections = ring.slice(0, -1).map((point) => {
-    const [x, y] = localPoint(point, lat);
+    const [x, y] = localPoint(point, centerLat);
     return x * normal[0] + y * normal[1];
   });
   let low = Math.min(...projections);
   let high = Math.max(...projections);
-  const targetArea = planarRingArea(ring, lat) * (percentage / 100);
+  const targetArea = planarRingArea(ring, centerLat) * (percentage / 100);
   let clipped = ring;
   for (let iteration = 0; iteration < 24; iteration += 1) {
     const threshold = (low + high) / 2;
-    const candidate = clipRingAtProjection(ring, lat, normal, threshold);
-    const area = candidate ? planarRingArea(candidate, lat) : 0;
+    const candidate = clipRingAtProjection(ring, centerLat, normal, threshold);
+    const area = candidate ? planarRingArea(candidate, centerLat) : 0;
     if (area > targetArea) low = threshold;
     else high = threshold;
     clipped = candidate;
   }
   return clipped;
 };
+
+// Cut the already-unioned tactical footprint once. Cutting each source cell
+// independently can reopen gaps between touching cells and reveal the hidden
+// grid. A single half-plane keeps the visible advance territorial and coherent.
+export const controlSliceMultiPolygon = (multiPolygon, control, bearingDeg = 0, centerLat = 0) => {
+  const percentage = Math.max(0, Math.min(100, Number(control) || 0));
+  if (percentage <= 0 || !multiPolygon?.length) return [];
+  if (percentage >= 100) return multiPolygon;
+  const cosLat = Math.max(0.08, Math.cos((centerLat * Math.PI) / 180));
+  const radians = ((Number(bearingDeg) || 0) * Math.PI) / 180;
+  const normal = [Math.sin(radians), Math.cos(radians)];
+  const tangent = [-normal[1], normal[0]];
+  const points = multiPolygon.flat(2);
+  const projected = points.map((point) => {
+    const local = localPoint(point, centerLat);
+    return {
+      normal: local[0] * normal[0] + local[1] * normal[1],
+      tangent: local[0] * tangent[0] + local[1] * tangent[1],
+    };
+  });
+  let low = Math.min(...projected.map((entry) => entry.normal));
+  let high = Math.max(...projected.map((entry) => entry.normal));
+  const tangentLow = Math.min(...projected.map((entry) => entry.tangent));
+  const tangentHigh = Math.max(...projected.map((entry) => entry.tangent));
+  const span = Math.max(high - low, tangentHigh - tangentLow, 0.01) * 4 + 1;
+  const targetArea = planarMultiPolygonArea(multiPolygon, centerLat) * (percentage / 100);
+  const fromLocal = (projection, sideways) => {
+    const x = normal[0] * projection + tangent[0] * sideways;
+    const y = normal[1] * projection + tangent[1] * sideways;
+    return [x / cosLat, y];
+  };
+  let clipped = multiPolygon;
+  for (let iteration = 0; iteration < 22; iteration += 1) {
+    const threshold = (low + high) / 2;
+    const mask = [[[
+      fromLocal(threshold, tangentLow - span),
+      fromLocal(high + span, tangentLow - span),
+      fromLocal(high + span, tangentHigh + span),
+      fromLocal(threshold, tangentHigh + span),
+      fromLocal(threshold, tangentLow - span),
+    ]]];
+    try {
+      clipped = polygonClipping.intersection(multiPolygon, mask);
+    } catch {
+      return multiPolygon;
+    }
+    const area = planarMultiPolygonArea(clipped, centerLat);
+    if (area > targetArea) low = threshold;
+    else high = threshold;
+  }
+  return clipped;
+};
+
+export const controlSlicePolygon = ({ lng, lat, radiusKm }, control, bearingDeg = 0) =>
+  controlSliceRing(
+    smoothClosedRing(hexagonPolygon({ lng, lat, radiusKm }), 0.08),
+    control,
+    bearingDeg,
+    lat,
+  );
 
 // Chaikin smoothing is deliberately visual: the exact control cells and their
 // references remain sharp in the state, while their rendered edges stop looking

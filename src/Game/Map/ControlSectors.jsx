@@ -4,9 +4,10 @@ import { Source, Layer, Popup, useMap } from "react-map-gl/maplibre";
 import polygonClipping from "polygon-clipping";
 import { getNationColors } from "../../runtime/assets.js";
 import { useWorldState } from "./useWorldState.js";
-import { controlSlicePolygon, hexagonPolygon, smoothClosedRing } from "./controlGeometry.js";
+import { controlSliceMultiPolygon, smoothClosedRing, tacticalAreaPolygon } from "./controlGeometry.js";
 import { clipRingToRegion, useRegionClipGeometry } from "./useRegionClipGeometry.js";
 import { dismissRegionPopup } from "../Selection/Regions.jsx";
+import { tacticalConnectedComponents } from "../AI/sectorContinuity.js";
 
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 const TACTICAL_PALETTE = [
@@ -48,6 +49,48 @@ const cellControl = (cell, sector) => Number.isFinite(Number(cell.control))
 const isContested = (cell, sector) => Boolean(cell?.contestedBy || sector.contestedBy)
   || ["assault", "contested", "encircled"].includes(cell?.status || sector.status);
 
+const displayGroupKey = (sector) => [sector?.regionId, sector?.ownerCode, sector?.name]
+  .map((value) => String(value ?? "").trim().toLocaleLowerCase())
+  .join("|");
+
+// Models occasionally create five new ids for one named bridgehead.  Preserve
+// distinct named fronts, but present exact duplicates as one front and discard
+// detached components from that presentation.  This is deliberately visual:
+// historical saves and cell references are not silently rewritten here.
+const prepareDisplaySectors = (sectors) => {
+  const groups = new Map();
+  for (const sector of sectors) {
+    const key = displayGroupKey(sector);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sector);
+  }
+  return Array.from(groups.values()).map((group) => {
+    if (group.length === 1) return group[0];
+    const entries = group.flatMap((sector) => {
+      const allCells = Array.isArray(sector.cells) && sector.cells.length > 0
+        ? sector.cells
+        : [{ ...sector, id: `${sector.id}-cell-legacy`, name: sector.name }];
+      return leafCells(allCells).map((cell) => {
+        const geometry = cellGeometry(cell, sector);
+        return geometry ? { cell, sector, center: { lng: geometry.lng, lat: geometry.lat }, radiusKm: geometry.radiusKm } : null;
+      }).filter(Boolean);
+    });
+    const connected = tacticalConnectedComponents(entries)[0] || [];
+    if (!connected.length) return group[0];
+    const weight = connected.reduce((sum, entry) => sum + Math.max(0.25, entry.radiusKm ** 2), 0);
+    const average = (key) => connected.reduce((sum, entry) => sum + entry.center[key] * Math.max(0.25, entry.radiusKm ** 2), 0) / weight;
+    return {
+      ...group[0],
+      cells: connected.map((entry) => entry.cell),
+      center: { lng: average("lng"), lat: average("lat") },
+      control: Math.round(connected.reduce((sum, entry) => (
+        sum + cellControl(entry.cell, entry.sector) * Math.max(0.25, entry.radiusKm ** 2)
+      ), 0) / weight),
+      note: group.map((sector) => sector.note).filter(Boolean).at(-1) || group[0].note,
+    };
+  });
+};
+
 // Follow the real gradient when the AI supplied several cells (the side with
 // greater control is the secured rear; the cut advances toward lower-control
 // cells). A stable id-derived bearing keeps single-cell/flat sectors from
@@ -85,7 +128,6 @@ const multilineFromMultiPolygon = (multiPolygon) => multiPolygon
 const buildData = (sectors, colorMap, regionClips) => {
   const fills = [];
   const fronts = [];
-  const operations = [];
   const labels = [];
 
   for (const sector of sectors) {
@@ -96,10 +138,10 @@ const buildData = (sectors, colorMap, regionClips) => {
     const cells = leafCells(allCells);
     const bearing = sectorBearing(sector, cells);
     const regionClip = regionClips.get(String(sector.regionId ?? ""));
-    const controlledPolygons = [];
-    const operationPolygons = [];
+    const footprintPolygons = [];
     let contested = false;
     let weightedControl = 0;
+    let totalWeight = 0;
     let validCells = 0;
 
     for (const [cellIndex, cell] of cells.entries()) {
@@ -107,60 +149,46 @@ const buildData = (sectors, colorMap, regionClips) => {
       if (!geometry) continue;
       const control = cellControl(cell, sector);
       const cellIsContested = isContested(cell, sector);
-      const ownerCode = cell.ownerCode || sector.ownerCode;
-      const fill = colorForOwner(ownerCode, colorMap);
-      const fullRing = smoothClosedRing(hexagonPolygon(geometry), 0.08);
-      const fullPolygons = clipRingToRegion(fullRing, regionClip);
-      operationPolygons.push(...fullPolygons.map((polygon) => [polygon]));
-
-      const controlledRing = controlSlicePolygon(geometry, control, bearing);
-      const clipped = clipRingToRegion(controlledRing, regionClip);
+      const displayGeometry = { ...geometry, radiusKm: geometry.radiusKm * 1.14 };
+      const fullRing = smoothClosedRing(tacticalAreaPolygon(displayGeometry, cell.id || `${sector.id}-${cellIndex}`), 0.1);
+      const clipped = clipRingToRegion(fullRing, regionClip);
       if (clipped.length) {
-        controlledPolygons.push(...clipped.map((polygon) => [polygon]));
-        fills.push({
-          type: "Feature",
-          id: cell.id || `${sector.id}-cell-${cellIndex + 1}`,
-          geometry: { type: "MultiPolygon", coordinates: clipped },
-          properties: {
-            fill,
-            opacity: cellIsContested ? 0.46 : 0.56,
-            sectorId: sector.id,
-            cellId: cell.id || `${sector.id}-cell-${cellIndex + 1}`,
-            sectorName: sector.name,
-            cellName: cell.name || "",
-            regionId: sector.regionId,
-            ownerCode,
-            contestedBy: Array.isArray(cell.contestedBy || sector.contestedBy)
-              ? (cell.contestedBy || sector.contestedBy).join(", ")
-              : cell.contestedBy || sector.contestedBy || "",
-            control: Math.round(control),
-            status: cell.status || sector.status || "contested",
-            note: cell.note || sector.note || "",
-          },
-        });
+        footprintPolygons.push(...clipped.map((polygon) => [polygon]));
       }
       contested ||= cellIsContested;
-      weightedControl += control;
+      const weight = Math.max(0.25, geometry.radiusKm ** 2);
+      weightedControl += control * weight;
+      totalWeight += weight;
       validCells += 1;
     }
 
-    const controlled = unionPolygons(controlledPolygons);
-    const operational = unionPolygons(operationPolygons);
+    const footprint = unionPolygons(footprintPolygons);
+    const sectorControl = totalWeight > 0 ? weightedControl / totalWeight : Number(sector.control) || 0;
+    const controlled = controlSliceMultiPolygon(footprint, sectorControl, bearing, Number(sector.center?.lat) || 0);
     const fill = colorForOwner(cells[0]?.ownerCode || sector.ownerCode, colorMap);
     if (controlled.length) {
+      fills.push({
+        type: "Feature",
+        id: `${sector.id}-controlled-area`,
+        geometry: { type: "MultiPolygon", coordinates: controlled },
+        properties: {
+          fill,
+          opacity: contested ? 0.42 : 0.52,
+          sectorId: sector.id,
+          sectorName: sector.name,
+          regionId: sector.regionId,
+          ownerCode: cells[0]?.ownerCode || sector.ownerCode,
+          contestedBy: Array.isArray(sector.contestedBy) ? sector.contestedBy.join(", ") : sector.contestedBy || "",
+          control: Math.round(sectorControl),
+          status: sector.status || "contested",
+          note: sector.note || "",
+        },
+      });
       fronts.push({
         type: "Feature",
         id: `${sector.id}-front`,
         geometry: { type: "MultiLineString", coordinates: multilineFromMultiPolygon(controlled) },
-        properties: { fill, outline: contested ? "#f4f1de" : fill, contested },
-      });
-    }
-    if (operational.length) {
-      operations.push({
-        type: "Feature",
-        id: `${sector.id}-operation`,
-        geometry: { type: "MultiLineString", coordinates: multilineFromMultiPolygon(operational) },
-        properties: { fill },
+        properties: { fill, outline: contested ? "#ff7868" : fill, contested },
       });
     }
     const lng = Number(sector.center?.lng);
@@ -169,7 +197,7 @@ const buildData = (sectors, colorMap, regionClips) => {
       const parentControl = Number(sector.control);
       const control = Number.isFinite(parentControl)
         ? parentControl
-        : validCells ? weightedControl / validCells : 0;
+        : validCells && totalWeight > 0 ? weightedControl / totalWeight : 0;
       labels.push({
         type: "Feature",
         id: `${sector.id}-label`,
@@ -180,7 +208,7 @@ const buildData = (sectors, colorMap, regionClips) => {
   }
 
   const collection = (features) => ({ type: "FeatureCollection", features });
-  return { fills: collection(fills), fronts: collection(fronts), operations: collection(operations), labels: collection(labels) };
+  return { fills: collection(fills), fronts: collection(fronts), labels: collection(labels) };
 };
 
 const ControlSectors = () => {
@@ -188,21 +216,28 @@ const ControlSectors = () => {
   const { current: map } = useMap();
   const [colorMap, setColorMap] = useState({});
   const [selectedCell, setSelectedCell] = useState(null);
-  const regionIds = useMemo(() => controlSectors.map((sector) => sector.regionId), [controlSectors]);
+  const [battlePulse, setBattlePulse] = useState(false);
+  const displaySectors = useMemo(() => prepareDisplaySectors(controlSectors), [controlSectors]);
+  const regionIds = useMemo(() => displaySectors.map((sector) => sector.regionId), [displaySectors]);
   const regionClips = useRegionClipGeometry(regionIds);
 
   useEffect(() => {
     getNationColors().then(setColorMap).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!displaySectors.some((sector) => isContested(null, sector))) return undefined;
+    const timer = window.setInterval(() => setBattlePulse((current) => !current), 2200);
+    return () => window.clearInterval(timer);
+  }, [displaySectors]);
+
   const data = useMemo(
-    () => (controlSectors.length ? buildData(controlSectors, colorMap, regionClips) : {
+    () => (displaySectors.length ? buildData(displaySectors, colorMap, regionClips) : {
       fills: EMPTY_FEATURE_COLLECTION,
       fronts: EMPTY_FEATURE_COLLECTION,
-      operations: EMPTY_FEATURE_COLLECTION,
       labels: EMPTY_FEATURE_COLLECTION,
     }),
-    [controlSectors, colorMap, regionClips],
+    [displaySectors, colorMap, regionClips],
   );
 
   useEffect(() => {
@@ -232,7 +267,7 @@ const ControlSectors = () => {
     };
   }, [map]);
 
-  if (!data.fills.features.length && !data.operations.features.length) return null;
+  if (!data.fills.features.length) return null;
 
   return (
     <>
@@ -243,29 +278,15 @@ const ControlSectors = () => {
           paint={{ "fill-color": ["get", "fill"], "fill-opacity": ["get", "opacity"] }}
         />
       </Source>
-      <Source id="control-sector-operations-source" type="geojson" data={data.operations}>
-        <Layer
-          id="control-sector-operations"
-          type="line"
-          minzoom={6}
-          paint={{
-            "line-color": ["get", "fill"],
-            "line-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0.2, 10, 0.42],
-            "line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.7, 11, 1.25],
-            "line-dasharray": [2, 2.5],
-          }}
-          layout={{ "line-cap": "round", "line-join": "round" }}
-        />
-      </Source>
       <Source id="control-sector-fronts-source" type="geojson" data={data.fronts}>
         <Layer
           id="control-sector-fronts-glow"
           type="line"
           paint={{
             "line-color": ["get", "outline"],
-            "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.16, 9, 0.32, 13, 0.44],
-            "line-width": ["interpolate", ["linear"], ["zoom"], 4, 2.2, 9, 3.8, 13, 5.4],
-            "line-blur": 1.4,
+            "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.12, 9, 0.26, 13, 0.4],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.8, 9, 3.2, 13, 4.8],
+            "line-blur": 1.1,
           }}
           layout={{ "line-cap": "round", "line-join": "round" }}
         />
@@ -274,8 +295,21 @@ const ControlSectors = () => {
           type="line"
           paint={{
             "line-color": ["get", "outline"],
-            "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.48, 9, 0.78, 13, 0.94],
-            "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 9, 1.5, 13, 2.2],
+            "line-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.5, 9, 0.82, 13, 0.96],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.7, 9, 1.35, 13, 2],
+          }}
+          layout={{ "line-cap": "round", "line-join": "round" }}
+        />
+        <Layer
+          id="control-sector-battle-activity"
+          type="line"
+          filter={["==", ["get", "contested"], true]}
+          paint={{
+            "line-color": "#fff2cf",
+            "line-opacity": battlePulse ? 0.68 : 0.28,
+            "line-opacity-transition": { duration: 2000, delay: 0 },
+            "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.65, 10, 1.15, 13, 1.55],
+            "line-dasharray": [0.7, 2.8],
           }}
           layout={{ "line-cap": "round", "line-join": "round" }}
         />

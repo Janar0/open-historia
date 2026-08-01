@@ -711,7 +711,7 @@ const controlSectorCellOpSchema = {
 
 const controlSectorSchema = {
   type: "object",
-  description: "A tactical control patch inside an administrative region, not a new province. Use cells for the persistent HOI-style mosaic inside a prolonged battle.",
+  description: "One connected tactical front inside an administrative region, not a new province. A bridgehead keeps one stable sector id and grows through touching cells; never create duplicate same-named sectors for pieces of one front.",
   properties: {
     id: nonEmptyTextSchema("Stable tactical sector identifier; reuse it on later updates to the same battle."),
     regionId: nonEmptyTextSchema("Containing map region identifier or exact region name."),

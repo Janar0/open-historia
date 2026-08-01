@@ -19,27 +19,39 @@ export const tacticalDistanceKm = (left, right) => {
 const radius = (cell) => Math.max(0.5, Number(cell?.radiusKm) || 0.5);
 
 export const tacticalConnectionLimitKm = (left, right) => Math.min(
-  90,
-  Math.max(12, (radius(left) + radius(right)) * 1.8 + 8),
+  48,
+  // Cells represent adjacent ground, not radio range.  The old 1.8x + 8 km
+  // allowance let visibly separate hexes count as one "continuous" front.
+  // A little tolerance is still needed for hand-authored coordinates and map
+  // projection, but neighboring footprints now have to almost touch.
+  Math.max(4, (radius(left) + radius(right)) * 1.12 + 1.5),
 );
 
-export const tacticalCellsAreConnected = (cells) => {
+export const tacticalConnectedComponents = (cells) => {
   const usable = (cells || []).filter((cell) => Number.isFinite(Number(cell?.center?.lng ?? cell?.lng))
     && Number.isFinite(Number(cell?.center?.lat ?? cell?.lat)));
-  if (usable.length < 2) return true;
-  const reached = new Set([0]);
-  const queue = [0];
-  while (queue.length) {
-    const index = queue.shift();
-    for (let candidate = 0; candidate < usable.length; candidate += 1) {
-      if (reached.has(candidate)) continue;
-      if (tacticalDistanceKm(usable[index], usable[candidate]) > tacticalConnectionLimitKm(usable[index], usable[candidate])) continue;
-      reached.add(candidate);
-      queue.push(candidate);
+  const remaining = new Set(usable.map((_, index) => index));
+  const components = [];
+  while (remaining.size) {
+    const first = remaining.values().next().value;
+    const reached = new Set([first]);
+    const queue = [first];
+    remaining.delete(first);
+    while (queue.length) {
+      const index = queue.shift();
+      for (const candidate of Array.from(remaining)) {
+        if (tacticalDistanceKm(usable[index], usable[candidate]) > tacticalConnectionLimitKm(usable[index], usable[candidate])) continue;
+        reached.add(candidate);
+        remaining.delete(candidate);
+        queue.push(candidate);
+      }
     }
+    components.push(Array.from(reached).map((index) => usable[index]));
   }
-  return reached.size === usable.length;
+  return components;
 };
+
+export const tacticalCellsAreConnected = (cells) => tacticalConnectedComponents(cells).length <= 1;
 
 export const hasTacticalAnchor = (cells, anchors) => {
   const targets = cells?.length ? cells : [];

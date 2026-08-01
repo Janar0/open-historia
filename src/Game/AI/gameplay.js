@@ -421,7 +421,7 @@ Use impacts.militaryIndustryOps with section "arsenal" for unlocked weapons and 
 
 const TACTICAL_SECTORS_REFERENCE = `[Tactical Sectors and Prolonged Battles]
 The map has a fine-grained tactical layer below administrative regions. Use impacts.sectorOps for partial control inside a region, never regionTransfers, when a force holds a city, suburb, road, bridgehead, or other local patch while the rest of the region remains with its existing owner. The parent shape is {"op":"upsert","sector":{"id":"stable-id","regionId":"exact region id or name","name":"local sector","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-80,"status":"assault|contested|encircled|held|withdrawn|destroyed","battleId":"stable-battle-id","startedAt":"date","updatedAt":"date","note":"","cells":[{"id":"stable-cell-id","name":"optional village or approach","parentCellId":"optional-parent-when-splitting","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20,"status":"contested","note":""}],"cellOps":[{"op":"upsert","cell":{"id":"child-cell-id","parentCellId":"stable-cell-id","ownerCode":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20}},{"op":"remove","id":"old-cell-id"}]}} and {"op":"remove","id":"sector-id"}.
-   Keep the same sector id, battleId, and cell ids across jumps. Use a compact connected 3x3 grid by default: every center must lie inside the named parent region, neighboring cells should touch or nearly touch, and the radius must match the actual locality rather than covering most of a province. Cell control is the physical SHARE OF GROUND held by ownerCode; change it gradually and keep the lower-control edge toward the opposing front. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole grid changes; use cellOps when only one approach changes, when a few cells are captured, or when one cell is split. Updating only the parent sector preserves the existing cell hierarchy. The engine creates a stable 3x3 tactical grid for old sectors that have no cells, so those generated ids are also valid to update. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several named sectors when the battle has separate approaches or supply routes. Never invent a regionTransfer for a cell.`;
+   Keep the same sector id, battleId, name, and cell ids across jumps. ONE connected bridgehead or front gets ONE sector; extend it with touching cells instead of creating several same-named sector ids. Use a compact connected 3x3 grid by default: every center must lie inside the named parent region, neighboring cell footprints must touch or nearly touch on the map, and the radius must match the actual locality rather than covering most of a province. Cell control is the physical SHARE OF GROUND held by ownerCode; change it gradually and keep the lower-control edge toward the opposing front. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole grid changes; use cellOps when only one approach changes, when a few cells are captured, or when one cell is split. Updating only the parent sector preserves the existing cell hierarchy. The engine creates a stable 3x3 tactical grid for old sectors that have no cells, so those generated ids are also valid to update. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several sectors only for genuinely separate approaches or supply routes, and give them distinct names. Never invent a regionTransfer for a cell.`;
 
 const TERRITORY_FRAGMENT_REFERENCE = `[Cell-backed Territory Splits]
 The administrative map region is still the parent anchor. To cut out only part of it, first ensure the relevant sector has the required leaf cells, then emit impacts.territoryOps with a stable id and exact cellRefs in the form sectorId:cellId. Example: {"op":"create","fragment":{"id":"bakhmut-pocket-01","name":"Bakhmut Pocket","parentRegionId":"<exact map region>","ownerCode":"<FULL country name>","cellRefs":["battle-sector-01:cell-03","battle-sector-01:cell-06"],"kind":"subregion|autonomy|occupation|secession|new-state","status":"active","note":"..."}}. Use leaf cells only; a fragment cannot reference an abstract parent cell. This creates a named subregion/pocket without transferring the whole parent region. For a genuinely new country, pair the fragment with impacts.polityChanges containing a new polity code, name, and color, then set the fragment ownerCode to that new full polity name. For a province or autonomous area inside another country, keep ownerCode as the controlling country. Dissolve it with {"op":"remove","id":"..."}. Do not use territoryOps as a substitute for a complete regionTransfer.`;
@@ -1156,6 +1156,66 @@ const tacticalLeaves = (sector) => {
     : sector?.center ? [{ center: sector.center, radiusKm: sector.radiusKm, ownerCode: sector.ownerCode }] : [];
 };
 
+const sameTacticalFront = (existing, incoming, regionId, ownerCode) => {
+  if (existing?.id === incoming?.id) return false;
+  if (normalizeString(existing?.regionId) !== regionId) return false;
+  if (regionKey(existing?.ownerCode) !== regionKey(ownerCode)) return false;
+  const existingBattle = regionKey(existing?.battleId);
+  const incomingBattle = regionKey(incoming?.battleId);
+  if (existingBattle && incomingBattle && existingBattle === incomingBattle) return true;
+  return regionKey(existing?.name) === regionKey(incoming?.name);
+};
+
+// If the model invents a new id for the same named bridgehead, fold the new
+// cells into the stable sector before continuity validation.  Previously every
+// such op survived as another isolated polygon and duplicate label.
+const mergeTacticalFrontAlias = (existing, incoming, cellOps = []) => {
+  const usedIds = new Set(normalizeArray(existing?.cells).map((cell) => normalizeString(cell?.id)).filter(Boolean));
+  const remappedIds = new Map();
+  const incomingCells = normalizeArray(incoming?.cells).map((cell, index) => {
+    const originalId = normalizeString(cell?.id) || `cell-${index + 1}`;
+    let id = originalId;
+    if (usedIds.has(id)) {
+      const prefix = normalizeString(incoming?.id) || "advance";
+      id = `${prefix}-${originalId}`;
+      let suffix = 2;
+      while (usedIds.has(id)) id = `${prefix}-${originalId}-${suffix++}`;
+    }
+    usedIds.add(id);
+    remappedIds.set(originalId, id);
+    return { ...cell, id };
+  }).map((cell) => ({
+    ...cell,
+    ...(cell.parentCellId ? { parentCellId: remappedIds.get(cell.parentCellId) || cell.parentCellId } : {}),
+  }));
+  const remappedCellOps = normalizeArray(cellOps).map((cellOp) => {
+    if (cellOp?.op === "remove") return { ...cellOp, id: remappedIds.get(cellOp.id) || cellOp.id };
+    if (cellOp?.op !== "upsert") return cellOp;
+    return {
+      ...cellOp,
+      cell: {
+        ...cellOp.cell,
+        id: remappedIds.get(cellOp.cell?.id) || cellOp.cell?.id,
+        ...(cellOp.cell?.parentCellId
+          ? { parentCellId: remappedIds.get(cellOp.cell.parentCellId) || cellOp.cell.parentCellId }
+          : {}),
+      },
+    };
+  });
+  return {
+    sector: {
+      ...incoming,
+      id: existing.id,
+      name: existing.name,
+      center: existing.center,
+      cells: [...normalizeArray(existing.cells), ...incomingCells],
+      battleId: existing.battleId || incoming.battleId,
+      startedAt: existing.startedAt || incoming.startedAt,
+    },
+    cellOps: remappedCellOps,
+  };
+};
+
 const geometryContainsTacticalPoint = (geometry, candidate) => {
   if (!geometry) return true;
   const center = candidate?.center && typeof candidate.center === "object" ? candidate.center : candidate;
@@ -1313,7 +1373,7 @@ const resolveControlSectorOps = async (containers, world) => {
           },
         };
       });
-      const resolvedOperation = {
+      let resolvedOperation = {
         op: "upsert",
         sector: {
           ...sector,
@@ -1324,8 +1384,17 @@ const resolveControlSectorOps = async (containers, world) => {
         },
         ...(cellOps.length > 0 ? { cellOps } : {}),
       };
+      const stableFront = workingSectors.find((existing) => sameTacticalFront(existing, sector, regionId, ownerCode));
+      if (stableFront) {
+        const merged = mergeTacticalFrontAlias(stableFront, resolvedOperation.sector, resolvedOperation.cellOps);
+        resolvedOperation = {
+          op: "upsert",
+          sector: merged.sector,
+          ...(merged.cellOps.length > 0 ? { cellOps: merged.cellOps } : {}),
+        };
+      }
       const previewSectors = applySectorOps(workingSectors, [resolvedOperation]);
-      const candidateSector = previewSectors.find((candidate) => candidate.id === sector.id);
+      const candidateSector = previewSectors.find((candidate) => candidate.id === resolvedOperation.sector.id);
       if (!candidateSector) {
         dropped.push({ path: `${path}.sectorOps[${index}]`, reason: "the resulting tactical sector is invalid" });
         continue;

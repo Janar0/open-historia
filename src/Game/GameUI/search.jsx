@@ -281,11 +281,12 @@ const Search = memo(({ mapRef }) => {
         // Desktop: sits right of the bottom toolbar and expands rightward.
         // Phones: the expanded box wouldn't fit there, so it opens as a
         // full-width bar just above the toolbar instead.
-        bottom: expanded && isMobile
+        bottom: isMobile
           ? "calc(5rem + env(safe-area-inset-bottom, 0px))"
           : "calc(1rem + env(safe-area-inset-bottom, 0px))",
-        // Clear of the bottom toolbar (0.5rem + 8.75rem wide).
-        left: expanded && isMobile ? "0.5rem" : "9.75rem",
+        // Clear the complete 17.4rem toolbar. The old 9.75rem offset landed
+        // search directly on top of its middle buttons.
+        left: isMobile ? "0.5rem" : "18.4rem",
         height: "3rem",
         width: expanded ? (isMobile ? "calc(100vw - 1rem)" : "17rem") : "3rem",
         overflow: "visible",
