@@ -72,7 +72,10 @@ const minimalSector = (sector) => ({
   startedAt: text(sector.startedAt),
   updatedAt: text(sector.updatedAt),
   center: clone(sector.center),
+  frontOrigin: clone(sector.frontOrigin),
   frontBearing: number(sector.frontBearing),
+  frontWidthKm: number(sector.frontWidthKm),
+  advanceDepthKm: number(sector.advanceDepthKm),
   cells: asArray(sector.cells).map((cell) => ({
     id: text(cell.id),
     cellRef: text(cell.cellRef) || `${text(sector.id)}:${text(cell.id)}`,

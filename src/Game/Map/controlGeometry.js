@@ -62,6 +62,55 @@ export const tacticalAreaPolygon = ({
   return coordinates;
 };
 
+const offsetLocalKm = (origin, bearingDeg, forwardKm, rightKm = 0) => {
+  const safeLat = Math.max(-84, Math.min(84, Number(origin?.lat)));
+  const radians = ((Number(bearingDeg) || 0) * Math.PI) / 180;
+  const eastKm = Math.sin(radians) * forwardKm + Math.cos(radians) * rightKm;
+  const northKm = Math.cos(radians) * forwardKm - Math.sin(radians) * rightKm;
+  return [
+    Math.max(-180, Math.min(180, Number(origin?.lng) + eastKm
+      / (111.32 * Math.max(0.08, Math.cos((safeLat * Math.PI) / 180))))),
+    Math.max(-84, Math.min(84, safeLat + northKm / 111.32)),
+  ];
+};
+
+// A local conquest is rendered as ground behind a directed front, not as a
+// percentage slice of a circular marker. The narrow rear touches the real
+// border entry and the rounded shoulders lead to the current spearhead.
+export const tacticalBreakthroughPolygon = ({
+  origin,
+  bearingDeg = 0,
+  widthKm = 8,
+  depthKm = 12,
+}) => {
+  const safeOrigin = {
+    lng: Number(origin?.lng),
+    lat: Number(origin?.lat),
+  };
+  if (!Number.isFinite(safeOrigin.lng) || !Number.isFinite(safeOrigin.lat)) return [];
+  const width = Math.max(2, Math.min(60, Number(widthKm) || 8));
+  const depth = Math.max(width * 0.8, Math.min(160, Number(depthKm) || 12));
+  const half = width / 2;
+  const localShape = [
+    [0, -half * 0.16],
+    [depth * 0.16, -half * 0.38],
+    [depth * 0.48, -half * 0.52],
+    [depth * 0.72, -half * 0.48],
+    [depth * 0.84, -half * 0.3],
+    [depth, 0],
+    [depth * 0.84, half * 0.3],
+    [depth * 0.72, half * 0.48],
+    [depth * 0.48, half * 0.52],
+    [depth * 0.16, half * 0.38],
+    [0, half * 0.16],
+  ];
+  const ring = localShape.map(([forwardKm, rightKm]) => (
+    offsetLocalKm(safeOrigin, bearingDeg, forwardKm, rightKm)
+  ));
+  ring.push(ring[0]);
+  return smoothClosedRing(ring, 0.1);
+};
+
 const localPoint = ([lng, lat], centerLat) => [
   lng * Math.max(0.08, Math.cos((centerLat * Math.PI) / 180)),
   lat,

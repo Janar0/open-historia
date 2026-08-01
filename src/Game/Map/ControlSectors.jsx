@@ -4,10 +4,10 @@ import { Source, Layer, Popup, useMap } from "react-map-gl/maplibre";
 import polygonClipping from "polygon-clipping";
 import { getNationColors } from "../../runtime/assets.js";
 import { useWorldState } from "./useWorldState.js";
-import { controlSliceMultiPolygon, smoothClosedRing, tacticalAreaPolygon } from "./controlGeometry.js";
+import { smoothClosedRing, tacticalAreaPolygon, tacticalBreakthroughPolygon } from "./controlGeometry.js";
 import { clipRingToRegion, useRegionClipGeometry } from "./useRegionClipGeometry.js";
 import { dismissRegionPopup } from "../Selection/Regions.jsx";
-import { tacticalConnectedComponents } from "../AI/sectorContinuity.js";
+import { inferTacticalFrontGeometry, tacticalConnectedComponents } from "../AI/sectorContinuity.js";
 
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 const TACTICAL_PALETTE = [
@@ -53,7 +53,7 @@ const displayGroupKey = (sector) => [sector?.regionId, sector?.ownerCode, sector
   .map((value) => String(value ?? "").trim().toLocaleLowerCase())
   .join("|");
 
-// Models occasionally create five new ids for one named bridgehead.  Preserve
+// Models occasionally create five new ids for one named advance. Preserve
 // distinct named fronts, but present exact duplicates as one front and discard
 // detached components from that presentation.  This is deliberately visual:
 // historical saves and cell references are not silently rewritten here.
@@ -129,7 +129,6 @@ const multilineFromMultiPolygon = (multiPolygon) => multiPolygon
 const buildData = (sectors, colorMap, regionClips) => {
   const fills = [];
   const fronts = [];
-  const labels = [];
 
   for (const sector of sectors) {
     if (!sector?.name) continue;
@@ -140,46 +139,67 @@ const buildData = (sectors, colorMap, regionClips) => {
     const bearing = sectorBearing(sector, cells);
     const regionClip = regionClips.get(String(sector.regionId ?? ""));
     const footprintPolygons = [];
+    const inferredFront = Number.isFinite(Number(sector.frontBearing))
+      ? inferTacticalFrontGeometry({ ...sector, cells, frontBearing: bearing })
+      : null;
+    const frontOriginValue = sector.frontOrigin || inferredFront?.frontOrigin;
+    const frontOrigin = frontOriginValue && typeof frontOriginValue === "object"
+      ? { lng: Number(frontOriginValue.lng), lat: Number(frontOriginValue.lat) }
+      : null;
+    const frontWidthKm = Number(sector.frontWidthKm ?? inferredFront?.frontWidthKm);
+    const advanceDepthKm = Number(sector.advanceDepthKm ?? inferredFront?.advanceDepthKm);
+    const hasDirectedShape = Number.isFinite(frontOrigin?.lng)
+      && Number.isFinite(frontOrigin?.lat)
+      && Number.isFinite(frontWidthKm)
+      && Number.isFinite(advanceDepthKm);
     let contested = false;
     let weightedControl = 0;
     let totalWeight = 0;
-    let validCells = 0;
+
+    if (hasDirectedShape) {
+      const breakthrough = tacticalBreakthroughPolygon({
+        origin: frontOrigin,
+        bearingDeg: bearing,
+        widthKm: frontWidthKm,
+        depthKm: advanceDepthKm,
+      });
+      const clipped = clipRingToRegion(breakthrough, regionClip);
+      footprintPolygons.push(...clipped.map((polygon) => [polygon]));
+    }
 
     for (const [cellIndex, cell] of cells.entries()) {
       const geometry = cellGeometry(cell, sector);
       if (!geometry) continue;
       const control = cellControl(cell, sector);
       const cellIsContested = isContested(cell, sector);
-      const displayGeometry = {
-        ...geometry,
-        radiusKm: geometry.radiusKm * 1.14,
-        bearingDeg: bearing,
-        ...(cells.length === 1 ? { depthScale: 0.68, frontScale: 1.65 } : {}),
-      };
-      const fullRing = smoothClosedRing(tacticalAreaPolygon(displayGeometry, cell.id || `${sector.id}-${cellIndex}`), 0.1);
-      const clipped = clipRingToRegion(fullRing, regionClip);
-      if (clipped.length) {
-        footprintPolygons.push(...clipped.map((polygon) => [polygon]));
+      if (!hasDirectedShape) {
+        const displayGeometry = {
+          ...geometry,
+          radiusKm: geometry.radiusKm * 1.08,
+          bearingDeg: bearing,
+          ...(cells.length === 1 ? { depthScale: 0.72, frontScale: 1.35 } : {}),
+        };
+        const fullRing = smoothClosedRing(tacticalAreaPolygon(displayGeometry, cell.id || `${sector.id}-${cellIndex}`), 0.1);
+        const clipped = clipRingToRegion(fullRing, regionClip);
+        if (clipped.length) footprintPolygons.push(...clipped.map((polygon) => [polygon]));
       }
       contested ||= cellIsContested;
       const weight = Math.max(0.25, geometry.radiusKm ** 2);
       weightedControl += control * weight;
       totalWeight += weight;
-      validCells += 1;
     }
 
     const footprint = unionPolygons(footprintPolygons);
     const sectorControl = totalWeight > 0 ? weightedControl / totalWeight : Number(sector.control) || 0;
-    const controlled = controlSliceMultiPolygon(footprint, sectorControl, bearing, Number(sector.center?.lat) || 0);
     const fill = colorForOwner(cells[0]?.ownerCode || sector.ownerCode, colorMap);
-    if (controlled.length) {
+    if (footprint.length) {
       fills.push({
         type: "Feature",
         id: `${sector.id}-controlled-area`,
-        geometry: { type: "MultiPolygon", coordinates: controlled },
+        geometry: { type: "MultiPolygon", coordinates: footprint },
         properties: {
           fill,
-          opacity: contested ? 0.42 : 0.52,
+          opacity: contested ? 0.64 : 0.72,
           sectorId: sector.id,
           sectorName: sector.name,
           regionId: sector.regionId,
@@ -193,28 +213,14 @@ const buildData = (sectors, colorMap, regionClips) => {
       fronts.push({
         type: "Feature",
         id: `${sector.id}-front`,
-        geometry: { type: "MultiLineString", coordinates: multilineFromMultiPolygon(controlled) },
+        geometry: { type: "MultiLineString", coordinates: multilineFromMultiPolygon(footprint) },
         properties: { fill, outline: contested ? "#ff7868" : fill, contested },
-      });
-    }
-    const lng = Number(sector.center?.lng);
-    const lat = Number(sector.center?.lat);
-    if (Number.isFinite(lng) && Number.isFinite(lat)) {
-      const parentControl = Number(sector.control);
-      const control = Number.isFinite(parentControl)
-        ? parentControl
-        : validCells && totalWeight > 0 ? weightedControl / totalWeight : 0;
-      labels.push({
-        type: "Feature",
-        id: `${sector.id}-label`,
-        geometry: { type: "Point", coordinates: [lng, lat] },
-        properties: { label: `${sector.name} · ${Math.round(control)}%`, fill },
       });
     }
   }
 
   const collection = (features) => ({ type: "FeatureCollection", features });
-  return { fills: collection(fills), fronts: collection(fronts), labels: collection(labels) };
+  return { fills: collection(fills), fronts: collection(fronts) };
 };
 
 const ControlSectors = () => {
@@ -241,7 +247,6 @@ const ControlSectors = () => {
     () => (displaySectors.length ? buildData(displaySectors, colorMap, regionClips) : {
       fills: EMPTY_FEATURE_COLLECTION,
       fronts: EMPTY_FEATURE_COLLECTION,
-      labels: EMPTY_FEATURE_COLLECTION,
     }),
     [displaySectors, colorMap, regionClips],
   );
@@ -320,25 +325,6 @@ const ControlSectors = () => {
           layout={{ "line-cap": "round", "line-join": "round" }}
         />
       </Source>
-      <Source id="control-sector-labels-source" type="geojson" data={data.labels}>
-        <Layer
-          id="control-sectors-labels"
-          type="symbol"
-          minzoom={5.5}
-          layout={{
-            "text-field": ["get", "label"],
-            "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 5, 9, 10, 12],
-            "text-allow-overlap": false,
-            "text-ignore-placement": false,
-          }}
-          paint={{
-            "text-color": "#fffaf0",
-            "text-halo-color": "rgba(18, 24, 31, 0.9)",
-            "text-halo-width": 1.5,
-          }}
-        />
-      </Source>
       {selectedCell && (
         <Popup
           longitude={selectedCell.lng}
@@ -350,20 +336,13 @@ const ControlSectors = () => {
           offset={12}
         >
           <div style={{ minWidth: "210px", maxWidth: "280px", color: "#172033", fontFamily: "sans-serif" }}>
-            <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedCell.properties.cellName || selectedCell.properties.sectorName}</div>
-            {selectedCell.properties.cellName && (
-              <div style={{ color: "#64748b", fontSize: "11px", marginTop: "2px" }}>{selectedCell.properties.sectorName}</div>
-            )}
+            <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedCell.properties.ownerCode}</div>
+            <div style={{ color: "#64748b", fontSize: "11px", marginTop: "2px" }}>Controlled territory</div>
             <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 9px", fontSize: "11px", marginTop: "8px" }}>
-              <span style={{ color: "#64748b" }}>Controller</span><strong>{selectedCell.properties.ownerCode}</strong>
               {selectedCell.properties.contestedBy && <><span style={{ color: "#64748b" }}>Opposition</span><strong>{selectedCell.properties.contestedBy}</strong></>}
               <span style={{ color: "#64748b" }}>Status</span><strong>{selectedCell.properties.status}</strong>
               <span style={{ color: "#64748b" }}>Region</span><span>{selectedCell.properties.regionId}</span>
             </div>
-            <div style={{ height: "6px", overflow: "hidden", background: "#e2e8f0", borderRadius: "999px", marginTop: "9px" }}>
-              <div style={{ width: `${selectedCell.properties.control}%`, height: "100%", background: selectedCell.properties.fill || "#64748b" }} />
-            </div>
-            <div style={{ color: "#475569", fontSize: "10px", marginTop: "3px", textAlign: "right" }}>{selectedCell.properties.control}% controlled</div>
             {selectedCell.properties.note && <div style={{ borderTop: "1px solid #e2e8f0", color: "#475569", fontSize: "11px", lineHeight: 1.4, marginTop: "7px", paddingTop: "7px" }}>{selectedCell.properties.note}</div>}
           </div>
         </Popup>

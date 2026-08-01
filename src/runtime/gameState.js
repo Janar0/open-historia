@@ -938,6 +938,18 @@ const normalizeControlSectorEntry = (entry, index = 0, { generateCells = true } 
     ownerCode,
   );
   const rawStatus = normalizeOptionalString(entry.status).toLowerCase();
+  const rawFrontOrigin = entry.frontOrigin && typeof entry.frontOrigin === "object"
+    ? entry.frontOrigin
+    : null;
+  const frontOriginLng = finiteOrNull(rawFrontOrigin?.lng ?? rawFrontOrigin?.lon ?? rawFrontOrigin?.longitude);
+  const frontOriginLat = finiteOrNull(rawFrontOrigin?.lat ?? rawFrontOrigin?.latitude);
+  const frontOrigin = frontOriginLng !== null && frontOriginLat !== null
+    && frontOriginLng >= -180 && frontOriginLng <= 180
+    && frontOriginLat >= -90 && frontOriginLat <= 90
+    ? { lng: frontOriginLng, lat: frontOriginLat }
+    : undefined;
+  const rawFrontWidthKm = Number(entry.frontWidthKm);
+  const rawAdvanceDepthKm = Number(entry.advanceDepthKm);
 
   const sector = {
     id: normalizeOptionalString(entry.id) || generateId(`sector-${index}`),
@@ -947,8 +959,15 @@ const normalizeControlSectorEntry = (entry, index = 0, { generateCells = true } 
     ...(contestedBy.length > 0 ? { contestedBy: contestedBy.length === 1 ? contestedBy[0] : contestedBy } : {}),
     control,
     center: { lng, lat },
+    frontOrigin,
     frontBearing: Number.isFinite(Number(entry.frontBearing ?? entry.bearingDeg))
       ? ((Number(entry.frontBearing ?? entry.bearingDeg) % 360) + 360) % 360
+      : undefined,
+    frontWidthKm: Number.isFinite(rawFrontWidthKm)
+      ? Math.round(Math.max(2, Math.min(60, rawFrontWidthKm)) * 10) / 10
+      : undefined,
+    advanceDepthKm: Number.isFinite(rawAdvanceDepthKm)
+      ? Math.round(Math.max(2, Math.min(160, rawAdvanceDepthKm)) * 10) / 10
       : undefined,
     radiusKm: Math.round(radiusKm * 10) / 10,
     status: CONTROL_SECTOR_STATUS_SET.has(rawStatus)

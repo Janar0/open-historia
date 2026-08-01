@@ -7,6 +7,7 @@ import {
   groundSpawnIsFriendly,
   hasTacticalAnchor,
   hostileGroundMoveIsContinuous,
+  inferTacticalFrontGeometry,
   tacticalCellsAreConnected,
   tacticalConnectedComponents,
   tacticalConnectionLimitKm,
@@ -14,12 +15,14 @@ import {
   tacticalEntryPoint,
   tacticalGeometryContainsPoint,
   tacticalNearestBoundaryPoint,
+  tacticalProjectPoint,
   tacticalRegionCoverageGate,
 } from "../src/Game/AI/sectorContinuity.js";
 import {
   controlSliceMultiPolygon,
   smoothClosedRing,
   tacticalAreaPolygon,
+  tacticalBreakthroughPolygon,
 } from "../src/Game/Map/controlGeometry.js";
 import { applySectorOps, normalizeSectorOp } from "../src/runtime/gameState.js";
 
@@ -64,6 +67,35 @@ test("partial control is cut from the merged footprint without reopening the cel
   assert.ok(controlled[0][0].length > 8);
 });
 
+test("a rendered breakthrough starts at the border and extends along its bearing", () => {
+  const origin = { lng: 39.2, lat: 47.05 };
+  const ring = tacticalBreakthroughPolygon({ origin, bearingDeg: 90, widthKm: 8, depthKm: 18 });
+  const projections = ring.map(([lng, lat]) => tacticalProjectPoint(origin, { lng, lat }, 90));
+  const forward = projections.map((entry) => entry.forwardKm);
+  const sideways = projections.map((entry) => Math.abs(entry.rightKm));
+  assert.ok(Math.min(...forward) > -0.2);
+  assert.ok(Math.min(...forward) < 1);
+  assert.ok(Math.max(...forward) > 16);
+  assert.ok(Math.max(...sideways) < 4.5);
+  assert.ok(Math.max(...forward) > Math.max(...sideways) * 3);
+});
+
+test("an older sideways cell strip is migrated to one directed corridor", () => {
+  const inferred = inferTacticalFrontGeometry({
+    center: { lng: 39.3, lat: 47.05 },
+    frontBearing: 90,
+    cells: [
+      { ...cell(39.3, 47.0, 4), id: "south" },
+      { ...cell(39.3, 47.05, 4), id: "center" },
+      { ...cell(39.3, 47.1, 4), id: "north" },
+    ],
+  });
+  assert.ok(inferred.frontOrigin.lng < 39.3);
+  assert.ok(Math.abs(inferred.frontOrigin.lat - 47.05) < 0.001);
+  assert.equal(inferred.frontBearing, 90);
+  assert.ok(inferred.advanceDepthKm > inferred.frontWidthKm);
+});
+
 test("ground formations cannot spawn at a hostile objective", () => {
   assert.equal(groundSpawnIsFriendly({ ownerCode: "Ukraine", locationOwnerCode: "Russia" }), false);
   assert.equal(groundSpawnIsFriendly({ ownerCode: "Ukraine", locationOwnerCode: "Ukraine" }), true);
@@ -91,7 +123,7 @@ test("the engine derives first contact just across the real target boundary", ()
   assert.ok(Math.abs(entry.lat) < 0.001);
 });
 
-test("first contact ignores guessed geometry and becomes a shallow connected border strip", () => {
+test("first contact ignores guessed geometry and becomes a shallow directed breakthrough", () => {
   const targetRegion = {
     id: "target-region",
     geometry: {
@@ -116,10 +148,18 @@ test("first contact ignores guessed geometry and becomes a shallow connected bor
   assert.equal(sector.regionId, targetRegion.id);
   assert.ok(sector.control >= 12 && sector.control <= 35);
   assert.ok(sector.radiusKm <= 10);
-  assert.ok(sector.cells.length >= 1 && sector.cells.length <= 3);
+  assert.ok(sector.cells.length >= 1 && sector.cells.length <= 2);
   assert.equal(tacticalCellsAreConnected(sector.cells), true);
   assert.equal(sector.cells.every((entry) => tacticalGeometryContainsPoint(targetRegion.geometry, entry)), true);
   assert.equal(sector.cells.every((entry) => entry.center.lng > 1), true);
+  assert.ok(Math.abs(sector.frontOrigin.lng - 1) < 0.001);
+  assert.ok(Math.abs(sector.frontOrigin.lat) < 0.001);
+  assert.ok(sector.frontWidthKm >= 6 && sector.frontWidthKm <= 12);
+  assert.ok(sector.advanceDepthKm > sector.frontWidthKm);
+  assert.equal(sector.cells.every((entry) => {
+    const projection = tacticalProjectPoint(sector.frontOrigin, entry, sector.frontBearing);
+    return projection.forwardKm > 0 && Math.abs(projection.rightKm) < 0.2;
+  }), true);
 });
 
 test("first contact clears overlapping simplified source and target polygons", () => {
@@ -160,7 +200,10 @@ test("an established front grows by bounded pieces and its old cells cannot tele
     name: "Border front",
     ownerCode: "Attacker",
     battleId: "battle-1",
+    frontOrigin: { lng: 1, lat: 0 },
     frontBearing: 90,
+    frontWidthKm: 10,
+    advanceDepthKm: 18,
     cells: [
       { ...cell(1.04, 0, 4), id: "old-1", control: 20 },
       { ...cell(1.12, 0, 4), id: "old-2", control: 24 },
@@ -176,6 +219,7 @@ test("an established front grows by bounded pieces and its old cells cannot tele
       { ...cell(1.24, 0.04, 20), id: "new-2", control: 90 },
       { ...cell(1.26, -0.04, 20), id: "new-3", control: 90 },
       { ...cell(1.28, 0, 20), id: "new-4", control: 90 },
+      { ...cell(1.05, 0.25, 4), id: "wrong-side", control: 90 },
       { ...cell(2.8, 0, 20), id: "far-jump", control: 90 },
     ],
   };
@@ -183,11 +227,14 @@ test("an established front grows by bounded pieces and its old cells cannot tele
   const byId = new Map(bounded.cells.map((entry) => [entry.id, entry]));
   assert.equal(bounded.name, previous.name);
   assert.equal(bounded.frontBearing, previous.frontBearing);
+  assert.deepEqual(bounded.frontOrigin, previous.frontOrigin);
+  assert.equal(bounded.frontWidthKm, previous.frontWidthKm);
   assert.deepEqual(byId.get("old-1").center, previous.cells[0].center);
   assert.equal(byId.get("old-1").control, 38);
   assert.equal(byId.has("old-2"), true);
   assert.equal(["new-1", "new-2", "new-3", "new-4"].filter((id) => byId.has(id)).length, 3);
   assert.equal(byId.has("far-jump"), false);
+  assert.equal(byId.has("wrong-side"), false);
   assert.equal([...byId.values()].filter((entry) => entry.id.startsWith("new-")).every((entry) => (
     entry.control <= 35 && entry.radiusKm <= 4.8 && entry.status === "assault"
   )), true);
@@ -210,7 +257,7 @@ test("old tactical cells disappear only through an explicit remove", () => {
   assert.equal(explicit.cells.some((entry) => entry.id === "remove"), false);
 });
 
-test("an engine-derived border strip survives operation normalization and persistence", () => {
+test("an engine-derived breakthrough survives operation normalization and persistence", () => {
   const targetRegion = {
     id: "target-region",
     geometry: {
@@ -237,19 +284,22 @@ test("an engine-derived border strip survives operation normalization and persis
   assert.equal(persisted.id, "persisted-front");
   assert.equal(persisted.regionId, targetRegion.id);
   assert.equal(persisted.frontBearing, 90);
-  assert.ok(persisted.cells.length >= 1 && persisted.cells.length <= 3);
+  assert.ok(Math.abs(persisted.frontOrigin.lng - 1) < 0.001);
+  assert.ok(persisted.frontWidthKm >= 6);
+  assert.ok(persisted.advanceDepthKm > persisted.frontWidthKm);
+  assert.ok(persisted.cells.length >= 1 && persisted.cells.length <= 2);
   assert.equal(persisted.cells.every((entry) => tacticalGeometryContainsPoint(targetRegion.geometry, entry)), true);
   assert.equal(persisted.control <= 35, true);
 });
 
-test("a tiny secured bridgehead cannot flip a large administrative region", () => {
+test("a tiny secured advance cannot flip a large administrative region", () => {
   const largeRegion = {
     type: "Polygon",
     coordinates: [[[0, 0], [3, 0], [3, 2], [0, 2], [0, 0]]],
   };
-  const bridgehead = {
+  const advance = {
     id: "front-1",
-    name: "Bridgehead",
+    name: "Border advance",
     ownerCode: "Attacker",
     control: 100,
     status: "held",
@@ -259,7 +309,7 @@ test("a tiny secured bridgehead cannot flip a large administrative region", () =
       { ...cell(0.19, 0.8, 5), id: "c", control: 100, status: "held" },
     ],
   };
-  const coverage = tacticalRegionCoverageGate(bridgehead, largeRegion);
+  const coverage = tacticalRegionCoverageGate(advance, largeRegion);
   assert.equal(coverage.secured, false);
   assert.ok(coverage.frontSpanKm < coverage.requiredSpanKm);
 });

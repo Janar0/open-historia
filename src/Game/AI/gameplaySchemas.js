@@ -659,7 +659,7 @@ const controlSectorCellSchema = {
   description: "A stable HOI-style tactical cell inside its parent sector. Change individual cells gradually during a prolonged battle.",
   properties: {
     id: nonEmptyTextSchema("Stable cell identifier; reuse it on later updates to the same local patch."),
-    name: textSchema("Optional local label such as a village, road, suburb, or bridgehead."),
+    name: textSchema("Optional local label such as a village, road, suburb, or approach."),
     parentCellId: textSchema("Optional parent cell identifier. Set this when splitting one existing cell into finer child cells."),
     depth: { type: "integer", minimum: 1, maximum: 2, description: "Cell hierarchy depth: 1 is the sector grid, 2 is the final micro-cell level. Never create depth 3." },
     ownerCode: nonEmptyTextSchema("Current cell controller's FULL country name, never a country code."),
@@ -711,7 +711,7 @@ const controlSectorCellOpSchema = {
 
 const controlSectorSchema = {
   type: "object",
-  description: "One connected tactical front inside an administrative region, not a new province. A bridgehead keeps one stable sector id and grows through touching cells; never create duplicate same-named sectors for pieces of one front.",
+  description: "One connected advance inside an administrative region, not a new province. One direction of advance keeps one stable sector id and grows through touching cells; never create duplicate same-named sectors for pieces of one front.",
   properties: {
     id: nonEmptyTextSchema("Stable tactical sector identifier; reuse it on later updates to the same battle."),
     regionId: nonEmptyTextSchema("Containing map region identifier or exact region name."),
@@ -728,7 +728,19 @@ const controlSectorSchema = {
       required: ["lng", "lat"],
       additionalProperties: false,
     },
+    frontOrigin: {
+      type: "object",
+      description: "Engine-derived point where this advance crosses the real administrative border. Preserve it unchanged when present.",
+      properties: {
+        lng: { type: "number", minimum: -180, maximum: 180 },
+        lat: { type: "number", minimum: -90, maximum: 90 },
+      },
+      required: ["lng", "lat"],
+      additionalProperties: false,
+    },
     frontBearing: { type: "number", minimum: 0, maximum: 360, description: "Engine-derived direction of advance in degrees clockwise from north. Preserve it on later updates when present." },
+    frontWidthKm: { type: "number", minimum: 2, maximum: 60, description: "Engine-derived width of the connected breakthrough corridor. Preserve it when present." },
+    advanceDepthKm: { type: "number", minimum: 2, maximum: 160, description: "Engine-derived depth reached from the border entry. Preserve it when present." },
     radiusKm: { type: "number", minimum: 0.5, maximum: 80, description: "Approximate radius of the tactical patch in kilometres." },
     status: {
       type: "string",
@@ -859,7 +871,7 @@ const impactsSchema = {
       type: "array",
       description:
         "Complete administrative-region ownership changes. REQUIRED when the whole named region was "
-        + "annexed, ceded, liberated, or decisively occupied. For a city, bridgehead, road, district, "
+        + "annexed, ceded, liberated, or decisively occupied. For a city, border advance, road, district, "
         + "front advance, or any other partial capture inside the region, use sectorOps instead.",
       items: regionTransferSchema,
     },

@@ -79,6 +79,20 @@ export const tacticalOffsetPoint = (candidate, bearingDeg, distanceKm) => {
   };
 };
 
+export const tacticalProjectPoint = (originCandidate, pointCandidate, bearingDeg) => {
+  const origin = tacticalCoordinates(originCandidate);
+  const candidate = tacticalCoordinates(pointCandidate);
+  if (!origin || !candidate) return null;
+  const radians = ((Number(bearingDeg) || 0) * Math.PI) / 180;
+  const eastKm = (candidate.lng - origin.lng) * 111.32
+    * Math.max(0.08, Math.cos((origin.lat * Math.PI) / 180));
+  const northKm = (candidate.lat - origin.lat) * 111.32;
+  return {
+    forwardKm: eastKm * Math.sin(radians) + northKm * Math.cos(radians),
+    rightKm: eastKm * Math.cos(radians) - northKm * Math.sin(radians),
+  };
+};
+
 export const tacticalEntryPoint = (anchor, targetGeometry, insetKm = 2) => {
   const boundary = tacticalNearestBoundaryPoint(anchor, targetGeometry);
   if (!boundary) return null;
@@ -115,11 +129,11 @@ export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor, exclu
     break;
   }
   if (!entry) return null;
-  const tangentBearing = entry.bearingDeg + 90;
-  let centers = [-1, 0, 1]
-    .map((offset) => tacticalOffsetPoint(entry, tangentBearing, offset * cellRadiusKm * 1.25))
+  const advanceBearing = ((entry.bearingDeg % 360) + 360) % 360;
+  const centers = [0, cellRadiusKm * 1.45]
+    .map((distanceKm) => tacticalOffsetPoint(entry, advanceBearing, distanceKm))
     .filter((center) => center && isExclusiveTargetPoint(center));
-  if (centers.length < 2) centers = [entry];
+  if (!centers.length) centers.push(entry);
   const control = Math.max(12, Math.min(35, Number(sector.control) || 24));
   const cells = centers.map((center, index) => ({
     id: `${sector.id}-entry-${index + 1}`,
@@ -139,7 +153,12 @@ export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor, exclu
       lng: cells.reduce((sum, cell) => sum + cell.center.lng, 0) / cells.length,
       lat: cells.reduce((sum, cell) => sum + cell.center.lat, 0) / cells.length,
     },
-    frontBearing: ((entry.bearingDeg % 360) + 360) % 360,
+    frontOrigin: { lng: boundary.lng, lat: boundary.lat },
+    frontBearing: advanceBearing,
+    frontWidthKm: Math.round(cellRadiusKm * 2.4 * 10) / 10,
+    advanceDepthKm: Math.round(Math.max(...cells.map((cell) => (
+      tacticalDistanceKm(boundary, cell) + radius(cell) * 1.05
+    ))) * 10) / 10,
     radiusKm: cellRadiusKm * 2,
     control,
     status: "assault",
@@ -151,6 +170,39 @@ const tacticalLeafCells = (sector) => {
   const cells = Array.isArray(sector?.cells) ? sector.cells : [];
   const parentIds = new Set(cells.map((cell) => cell?.parentCellId).filter(Boolean));
   return cells.filter((cell) => cell?.id && !parentIds.has(cell.id));
+};
+
+// Older saves know the stable direction but predate explicit border-entry
+// geometry. Collapse their old sideways cell cloud into the same directed
+// corridor so loading an existing game does not resurrect the bubble renderer.
+export const inferTacticalFrontGeometry = (sector) => {
+  const bearing = Number(sector?.frontBearing);
+  const leaves = tacticalLeafCells(sector).filter((cell) => tacticalCoordinates(cell));
+  if (!Number.isFinite(bearing) || !leaves.length) return null;
+  const averageRadiusKm = leaves.reduce((sum, cell) => sum + radius(cell), 0) / leaves.length;
+  const suppliedCenter = tacticalCoordinates(sector.center);
+  const center = suppliedCenter || {
+    lng: leaves.reduce((sum, cell) => sum + tacticalCoordinates(cell).lng, 0) / leaves.length,
+    lat: leaves.reduce((sum, cell) => sum + tacticalCoordinates(cell).lat, 0) / leaves.length,
+  };
+  const projections = leaves.map((cell) => tacticalProjectPoint(center, cell, bearing));
+  const rearProjectionKm = Math.min(...projections.map((entry) => entry.forwardKm));
+  const frontOrigin = tacticalOffsetPoint(center, bearing, rearProjectionKm - averageRadiusKm * 1.05);
+  if (!frontOrigin) return null;
+  const frontWidthKm = Math.round(Math.max(2, Math.min(60, averageRadiusKm * 2.4)) * 10) / 10;
+  const advanceDepthKm = Math.round(Math.max(
+    frontWidthKm * 1.2,
+    ...leaves.map((cell) => {
+      const projection = tacticalProjectPoint(frontOrigin, cell, bearing);
+      return projection.forwardKm + radius(cell) * 1.05;
+    }),
+  ) * 10) / 10;
+  return {
+    frontOrigin,
+    frontBearing: ((bearing % 360) + 360) % 360,
+    frontWidthKm,
+    advanceDepthKm,
+  };
 };
 
 const clampControlChange = (before, after, delta) => {
@@ -193,6 +245,22 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     ? existingLeaves.reduce((sum, cell) => sum + Math.max(0.5, Number(cell.radiusKm) || 0.5), 0) / existingLeaves.length
     : 5;
   const newRadiusLimit = Math.max(2.5, Math.min(8, averageRadius * 1.2));
+  const inferredFront = inferTacticalFrontGeometry(previousSector);
+  const frontOrigin = tacticalCoordinates(previousSector.frontOrigin) || inferredFront?.frontOrigin;
+  const frontBearing = Number.isFinite(Number(previousSector.frontBearing))
+    ? Number(previousSector.frontBearing)
+    : Number(candidateSector.frontBearing);
+  const frontWidthKm = Math.max(2, Number(previousSector.frontWidthKm)
+    || Number(candidateSector.frontWidthKm)
+    || inferredFront?.frontWidthKm
+    || averageRadius * 2.4);
+  const previousDepthKm = Math.max(frontWidthKm, Number(previousSector.advanceDepthKm)
+    || Math.max(0, ...previousCells.map((cell) => {
+      const projection = frontOrigin && Number.isFinite(frontBearing)
+        ? tacticalProjectPoint(frontOrigin, cell, frontBearing)
+        : null;
+      return projection ? projection.forwardKm + radius(cell) : 0;
+    })));
   let newCellCount = 0;
 
   for (const requested of candidateCells) {
@@ -234,6 +302,14 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
       <= maxAdvanceKm + radius(oldCell) + radius(bounded)
     ));
     if (!reachesOldFront) continue;
+    const projection = frontOrigin && Number.isFinite(frontBearing)
+      ? tacticalProjectPoint(frontOrigin, bounded, frontBearing)
+      : null;
+    if (projection && (
+      projection.forwardKm < -radius(bounded) * 0.25
+      || projection.forwardKm > previousDepthKm + maxAdvanceKm + radius(bounded)
+      || Math.abs(projection.rightKm) > frontWidthKm / 2 + radius(bounded) * 0.65
+    )) continue;
     admitted.push(bounded);
     admittedIds.add(String(bounded.id));
     newCellCount += 1;
@@ -252,6 +328,12 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     lng: weighted.reduce((sum, entry) => sum + Number(entry.cell.center?.lng) * entry.weight, 0) / totalWeight,
     lat: weighted.reduce((sum, entry) => sum + Number(entry.cell.center?.lat) * entry.weight, 0) / totalWeight,
   } : previousSector.center;
+  const advanceDepthKm = frontOrigin && Number.isFinite(frontBearing)
+    ? Math.max(previousDepthKm, ...leaves.map((cell) => {
+      const projection = tacticalProjectPoint(frontOrigin, cell, frontBearing);
+      return projection ? projection.forwardKm + radius(cell) * 1.05 : 0;
+    }))
+    : Number(previousSector.advanceDepthKm ?? candidateSector.advanceDepthKm);
   return {
     ...candidateSector,
     id: previousSector.id,
@@ -259,7 +341,10 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     ownerCode: previousSector.ownerCode,
     battleId: previousSector.battleId || candidateSector.battleId,
     startedAt: previousSector.startedAt || candidateSector.startedAt,
+    frontOrigin: previousSector.frontOrigin ?? candidateSector.frontOrigin ?? inferredFront?.frontOrigin,
     frontBearing: previousSector.frontBearing ?? candidateSector.frontBearing,
+    frontWidthKm,
+    advanceDepthKm: Number.isFinite(advanceDepthKm) ? Math.round(advanceDepthKm * 10) / 10 : undefined,
     center,
     cells: admitted,
   };

@@ -348,7 +348,7 @@ export const attackFeature = async (attackerId, target) => {
     `Assault order: ${attacker.name} (${attacker.type}, id ${attacker.id}, owner ${attacker.ownerCode}) attacks ` +
       `${targetLabel} at ${at} and is now engaged at the objective. Resolve the assault on the next turn — decide the ` +
       `defense it meets, the casualties, and the outcome. If the objective falls, reflect it: a local city, suburb, ` +
-      `road or bridgehead should update sectorOps and may remain contested across several turns; use a regionTransfer ` +
+      `road or local breakthrough should update sectorOps and may remain contested across several turns; use a regionTransfer ` +
       `only when the whole administrative region changes hands. A destroyed or seized structure should be reflected with markerOps ` +
       `(remove it, or rebuild it under the new owner). If the assault is repelled, say so in an event and adjust the unit.`,
     { unitId: attacker.id, lng: attacker.lng, lat: attacker.lat, status: attacker.status },
