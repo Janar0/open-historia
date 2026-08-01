@@ -62,6 +62,11 @@
 your browser, and you bring your own AI key (it goes straight to your provider, never to
 us). The world map is served by the community [content-node network](https://github.com/Open-Historia/open-historia-node).
 
+On a self-hosted Docker server, the **OpenAI Compatible** provider uses the game's
+server-side relay instead, so the configured AI endpoint sees the server IP. A player's
+bearer key is forwarded only for the request over the current connection, unless an
+administrator has configured a server-side global or per-user AI profile.
+
 Local AI (Ollama, LM Studio) needs one extra step in the browser: the server has to allow
 the site's origin, e.g. start Ollama with `OLLAMA_ORIGINS=https://openhistoria.com`. The
 desktop app below needs no such setup.

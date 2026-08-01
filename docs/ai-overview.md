@@ -1,6 +1,6 @@
 # AI System Overview
 
-Open Historia drives every generative feature — the strategy advisor, leader diplomacy, timeline simulation, catalysts, stat sheets, and the game‑master console — through a single browser‑side AI layer under `src/Game/AI/`. The player's own API key talks **directly** to their chosen provider from the browser; there is no Open Historia backend in the loop except an optional same‑origin relay that only exists when the page is served from a machine the player controls. Two entry points sit on top of the transport: `callAI` for free‑form chat, and `runJsonTask` for schema‑validated structured "tasks" that mutate world state.
+Open Historia drives every generative feature — the strategy advisor, leader diplomacy, timeline simulation, catalysts, stat sheets, and the game‑master console — through a single browser‑side AI layer under `src/Game/AI/`. Player-local provider settings remain in the browser, while a self-hosted server can relay OpenAI-compatible requests so the provider sees the server IP. Two entry points sit on top of the transport: `callAI` for free‑form chat, and `runJsonTask` for schema‑validated structured "tasks" that mutate world state.
 
 This page documents the plumbing. For the prompt templates and how they are assembled, see [AI prompts](ai-prompts.md); for the JSON tool/response schemas and per‑field meaning, see [AI schemas](ai-schemas.md); for what the applied changes touch, see [World state](world-state.md).
 
@@ -38,7 +38,7 @@ Defined in `PROVIDER_OPTIONS` at `src/Game/AI/providerConfig.js:4`. The selected
 
 ## Configuration & storage keys
 
-All AI config lives in **browser `localStorage`** — never on a server. `PROVIDER_SETTINGS` (`providerConfig.js:42`) maps each provider's fields to their storage keys. Read via `getProviderSettings(provider)` (`providerConfig.js:157`), which always returns `{ provider, apiKey, endpoint, model, customParams }` (missing fields resolve to `""`).
+Player-local AI settings live in **browser `localStorage`**. `PROVIDER_SETTINGS` (`providerConfig.js:42`) maps each provider's fields to their storage keys. Read via `getProviderSettings(provider)` (`providerConfig.js:157`), which always returns `{ provider, apiKey, endpoint, model, customParams }` (missing fields resolve to `""`). On a self-hosted server, an admin-managed OpenAI-compatible profile is stored server-side in `ai-settings.json`; browsers receive only its public status, endpoint, and model — never the saved key.
 
 | Provider | apiKey key | model key (default) | endpoint key (default) | customParams key |
 |----------|-----------|---------------------|------------------------|------------------|
@@ -74,12 +74,12 @@ If a provider rejects `tools` + `reasoning_effort` together (documented 400/422)
 
 ## Where the key goes: direct calls, origin, and the relay
 
-The whole security model is in the comment block at `main.jsx:225`. AI calls go **straight from the browser to the provider** so the player's key only ever reaches the provider — never an Open Historia server or a community node. Direct is always tried first.
+The browser keeps provider settings locally. Cloud-provider calls go directly to the provider by default, but **OpenAI Compatible** calls in a self-hosted/server build always use the same-origin `/api/ai/relay`, so the configured endpoint sees the game server's IP rather than each player's IP. The player's provider key is forwarded to that relay for the duration of the request and is not persisted by the game server.
 
 - **`PAGE_IS_LOCAL`** (`main.jsx:250`, from `isLocallyServed()`): true when the page is served from a machine the player controls — `localhost`/`127.0.0.1`/`::1`/`*.local` or the LAN private ranges `10.*`, `192.168.*`, `172.16–31.*`. The LAN ranges cover the Android client, which loads the UI from a local server on the home network.
-- **`providerFetch(url, options)`** (`main.jsx:303`): tries `directFetch`; on a CORS/network `TypeError` (not an abort) **and** only when `PAGE_IS_LOCAL`, it remembers the origin in `relayOnlyOrigins` and retries through the same‑origin `/api/ai/relay` (`relayFetch`, `main.jsx:284`). A remembered origin skips the doomed direct attempt on later calls.
+- **`providerFetch(url, options)`** (`main.jsx:303`): an explicit `forceRelay` option sends the request through `/api/ai/relay`; OpenAI Compatible passes it for both `GET /models` and `/chat/completions`. Other compatible callers still use direct-first with the CORS fallback when applicable.
 - On a **hosted website** there is no relay: every call is direct‑only and the key is never handed to anything but the provider. If a hosted page tries to reach a **local** backend (Ollama/LM Studio) and the browser rejects it, `providerFetch` throws an actionable error telling the user to set `OLLAMA_ORIGINS`/enable CORS (`main.jsx:321`).
-- **Who uses the relay**: only the `providerFetch` callers — `openai`, `openai-compatible`, `anthropic-compatible`, and model discovery (`GET /models`). **Native Gemini and native Anthropic bypass `providerFetch` entirely** (plain `fetch`), because both explicitly allow browser calls (Anthropic via the `anthropic-dangerous-direct-browser-access: true` header, `main.jsx:795`). They are therefore always direct, relay or not.
+- **Who uses the relay**: OpenAI Compatible uses it deliberately for model discovery and generation; OpenAI and Anthropic Compatible retain the direct-first fallback. **Native Gemini and native Anthropic bypass `providerFetch` entirely** (plain `fetch`), because both explicitly allow browser calls (Anthropic via the `anthropic-dangerous-direct-browser-access: true` header, `main.jsx:795`). They are therefore always direct.
 
 `isLocalEndpoint(url)` (`main.jsx:269`) is the per‑endpoint sibling of `PAGE_IS_LOCAL`; it also gates local streaming (below).
 

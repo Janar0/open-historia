@@ -538,7 +538,7 @@ const ProviderSettingsPanel = ({ provider, settings, onSettingChange }) => {
             // Say so up front here rather than letting it surface as "Failed to fetch".
             helperText={import.meta.env.VITE_OH_WEB
                 ? "Base URL that exposes /chat/completions and /models. A server on your own machine (Ollama, LM Studio) also has to allow this site: start Ollama with OLLAMA_ORIGINS set to this site's address, or use the desktop app."
-                : "Base URL that exposes /chat/completions and /models."}
+                : "Base URL that exposes /chat/completions and /models. On this self-hosted build requests go through the game server relay, so the AI endpoint sees the server IP."}
             />
             <SettingsInput
             label="API Key (optional)"
@@ -546,7 +546,9 @@ const ProviderSettingsPanel = ({ provider, settings, onSettingChange }) => {
             value={settings.openaiCompatibleApiKey ?? ""}
             onChange={(value) => onSettingChange("openaiCompatibleApiKey", value)}
             placeholder="Leave empty for local Ollama"
-            helperText="Use a bearer token if your gateway requires authentication."
+            helperText={import.meta.env.VITE_OH_WEB
+                ? "Stored only in this browser and sent directly to the configured endpoint."
+                : "Sent to the server relay over the current connection and forwarded to the endpoint; an admin-managed server profile can override it."}
             />
             <SettingsInput
             label="Model"

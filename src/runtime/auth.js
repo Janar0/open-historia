@@ -330,6 +330,7 @@ const showAccountGate = ({ registrationOpen = false } = {}) => new Promise((reso
 });
 
 let accountWidgetInstalled = false;
+let accountWidgetController = null;
 
 const renderAdminUsers = async (container, message) => {
   container.replaceChildren();
@@ -382,6 +383,150 @@ const renderAdminUsers = async (container, message) => {
   }
 };
 
+const renderAdminAISettings = async (container, message) => {
+  container.replaceChildren(make("div", "Загружаю AI-настройки…", "oh-user-msg"));
+  try {
+    const [config, userPayload] = await Promise.all([
+      accountRequest("/api/auth/admin/ai-settings"),
+      accountRequest("/api/auth/admin/users"),
+    ]);
+    const state = {
+      mode: config.mode === "per-user" ? "per-user" : "global",
+      global: {
+        endpoint: config.global?.endpoint || "",
+        model: config.global?.model || "",
+        apiKey: "",
+        apiKeyConfigured: Boolean(config.global?.apiKeyConfigured),
+        clearApiKey: false,
+      },
+      users: {},
+    };
+    for (const user of userPayload.users ?? []) {
+      const saved = config.users?.[user.id] ?? {};
+      state.users[user.id] = {
+        endpoint: saved.endpoint || "",
+        model: saved.model || "",
+        apiKey: "",
+        apiKeyConfigured: Boolean(saved.apiKeyConfigured),
+        clearApiKey: false,
+      };
+    }
+
+    const title = make("h4", "AI-профиль сервера");
+    const hint = make("p", "Можно задать один endpoint и ключ для всех игроков или отдельный профиль каждому. Ключ хранится на сервере и не показывается обратно.");
+    const mode = document.createElement("select");
+    mode.append(new Option("Общий профиль для всех", "global"), new Option("Отдельный профиль каждому", "per-user"));
+    mode.value = state.mode;
+    const target = document.createElement("select");
+    target.append(new Option("Все пользователи", "global"));
+    for (const user of userPayload.users ?? []) {
+      target.append(new Option(`${user.displayName || user.username} (${user.username})`, user.id));
+    }
+    target.value = "global";
+    const endpoint = document.createElement("input");
+    endpoint.placeholder = "https://provider.example/v1";
+    const model = document.createElement("input");
+    model.placeholder = "qwen / llama / gpt-...";
+    const apiKey = document.createElement("input");
+    apiKey.type = "password";
+    apiKey.placeholder = "Оставьте пустым, чтобы не менять ключ";
+    const keyState = make("div", "");
+    const clearKey = make("button", "Сбросить сохранённый ключ", "ghost");
+    clearKey.type = "button";
+    const save = make("button", "Сохранить AI-профиль");
+    save.type = "button";
+
+    const field = (label, control, description) => {
+      const wrap = make("div");
+      const labelNode = make("label", label);
+      wrap.append(labelNode, control);
+      if (description) wrap.append(make("small", description));
+      return wrap;
+    };
+    const form = make("div", null, "oh-ai-admin-form");
+    form.append(
+      field("Режим", mode, "В режиме «отдельный» выбранный профиль применяется только к выбранному пользователю."),
+      field("Кому редактировать", target, "В режиме «общий» используется только профиль «Все пользователи»."),
+      field("Endpoint", endpoint, "Базовый URL с /models и /chat/completions."),
+      field("Модель", model, "Можно оставить пустым для автоопределения."),
+      field("API key", apiKey, "Новый ключ передаётся по HTTPS и сохраняется только на этом сервере."),
+      keyState,
+      clearKey,
+      save,
+    );
+
+    let selected = "global";
+    const profile = () => selected === "global" ? state.global : state.users[selected];
+    const persistFields = () => {
+      const current = profile();
+      if (!current) return;
+      current.endpoint = endpoint.value.trim();
+      current.model = model.value.trim();
+      if (apiKey.value.trim()) {
+        current.apiKey = apiKey.value.trim();
+        current.apiKeyConfigured = true;
+        current.clearApiKey = false;
+      }
+    };
+    const loadFields = () => {
+      const current = profile() || state.global;
+      endpoint.value = current.endpoint;
+      model.value = current.model;
+      apiKey.value = "";
+      keyState.textContent = current.apiKeyConfigured ? "Сохранённый ключ уже задан; пустое поле его сохранит." : "Ключ не задан.";
+      clearKey.disabled = !current.apiKeyConfigured;
+    };
+    mode.addEventListener("change", () => {
+      state.mode = mode.value;
+      target.disabled = state.mode === "global";
+    });
+    target.addEventListener("change", () => {
+      persistFields();
+      selected = target.value;
+      loadFields();
+    });
+    clearKey.addEventListener("click", () => {
+      const current = profile();
+      if (!current) return;
+      current.apiKey = "";
+      current.apiKeyConfigured = false;
+      current.clearApiKey = true;
+      apiKey.value = "";
+      keyState.textContent = "Ключ будет удалён после сохранения.";
+      clearKey.disabled = true;
+    });
+    save.addEventListener("click", async () => {
+      persistFields();
+      save.disabled = true;
+      try {
+        await accountRequest("/api/auth/admin/ai-settings", {
+          method: "PUT",
+          body: {
+            mode: state.mode,
+            global: state.global,
+            users: state.users,
+          },
+        });
+        message.className = "oh-user-msg oh-user-success";
+        message.textContent = "AI-профиль сохранён.";
+        window.dispatchEvent(new Event("oh:ai-settings-updated"));
+        loadFields();
+      } catch (error) {
+        message.className = "oh-user-msg";
+        message.textContent = error.message;
+      } finally {
+        save.disabled = false;
+      }
+    });
+
+    container.replaceChildren(title, hint, form);
+    target.disabled = state.mode === "global";
+    loadFields();
+  } catch (error) {
+    container.replaceChildren(make("div", error.message, "oh-user-msg"));
+  }
+};
+
 export const installUserAccountWidget = (user) => {
   if (typeof document === "undefined" || !user || accountWidgetInstalled) return;
   accountWidgetInstalled = true;
@@ -390,8 +535,7 @@ export const installUserAccountWidget = (user) => {
   style.textContent = accountGateStyle;
   document.head.appendChild(style);
   const root = make("div", null, "oh-user-widget");
-  const button = make("button", `${user.displayName || user.username} · ${user.role === "admin" ? "admin" : "игрок"}`, "oh-user-button");
-  button.type = "button";
+  root.style.display = "none";
   const panel = make("div", null, "oh-user-panel");
   panel.style.display = "none";
   const message = make("div", "", "oh-user-msg");
@@ -429,8 +573,21 @@ export const installUserAccountWidget = (user) => {
     window.location.reload();
   });
 
+  const panelHeader = make("div");
+  panelHeader.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px";
+  const panelTitle = make("h3", user.displayName || user.username);
+  panelTitle.style.margin = "0";
+  const closePanelButton = make("button", "×", "ghost");
+  closePanelButton.type = "button";
+  closePanelButton.title = "Закрыть";
+  closePanelButton.style.fontSize = "1.2rem";
+  closePanelButton.addEventListener("click", () => {
+    root.style.display = "none";
+    panel.style.display = "none";
+  });
+  panelHeader.append(panelTitle, closePanelButton);
   panel.append(
-    make("h3", user.displayName || user.username),
+    panelHeader,
     make("p", `${user.username} · ${user.role === "admin" ? "администратор" : "игрок"}`),
     passwordTitle,
     currentPassword,
@@ -475,18 +632,28 @@ export const installUserAccountWidget = (user) => {
         createButton.disabled = false;
       }
     });
-    panel.append(adminTitle, createForm, users);
+    const aiTitle = make("h4", "AI для игроков");
+    const aiSettings = make("div");
+    panel.append(adminTitle, createForm, users, aiTitle, aiSettings);
     renderAdminUsers(users, message);
+    renderAdminAISettings(aiSettings, message);
   }
   panel.append(logout);
-  root.append(button, panel);
+  root.append(panel);
   document.body.append(root);
-  button.addEventListener("click", () => {
-    panel.style.display = panel.style.display === "none" ? "block" : "none";
-  });
+  const open = () => {
+    root.style.display = "block";
+    panel.style.display = "block";
+  };
+  accountWidgetController = { open };
   document.addEventListener("click", (event) => {
     if (!root.contains(event.target)) panel.style.display = "none";
   });
+};
+
+export const openUserAccountPanel = () => {
+  if (!accountWidgetController) return;
+  setTimeout(() => accountWidgetController.open(), 0);
 };
 
 export const initializeServerAuth = async () => {

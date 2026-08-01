@@ -41,6 +41,7 @@ import {
   embedScenarioBundleVector,
 } from "../../runtime/communityBasemaps.js";
 import { zipBundle, unzipBundle, looksLikeZip } from "../../runtime/bundleZip.js";
+import { openUserAccountPanel } from "../../runtime/auth.js";
 
 const UNIT_TYPE_LABELS = {
   infantry: "Infantry",
@@ -2345,6 +2346,11 @@ const LibraryTopBar = () => {
             </div>
 
             <div style={{ alignItems: "center", display: "flex", gap: "0.55rem", justifyContent: "flex-end" }}>
+              {!import.meta.env.VITE_OH_WEB && (
+                <button onClick={openUserAccountPanel} style={actionButtonStyle} type="button">
+                  {isMobile ? "👤" : "Account"}
+                </button>
+              )}
               {activeTab !== "community" && (
                 <button onClick={() => refreshLibraryCatalog({ force: true }).catch(() => {})} style={actionButtonStyle} type="button">
                   {isMobile ? "⟳" : "Refresh"}

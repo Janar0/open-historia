@@ -9,6 +9,7 @@ import {
 import { JSON_URLS, readJson } from "../../runtime/assets.js";
 import { chatLanguageDirective, languageDirective } from "../../runtime/i18n.js";
 import { difficultyDirective } from "../../runtime/difficulty.js";
+import { getManagedOpenAICompatibleSettings } from "./serverSettings.js";
 import { normalizePromptPack } from "./gameplayPrompts.js";
 import {
     buildPromptContext,
@@ -235,16 +236,11 @@ function getGeminiUrl(model, apiKey) {
     return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
 }
 
-// AI calls go straight from the browser to the provider so the player's API key
-// only ever reaches the provider — never a server or a community node. Direct is
-// always tried first. Only when the page is served from a machine the player
-// controls (localhost / the LAN box the Android client loads from) do we fall
-// back to that trusted server's same-origin /api/ai/relay, and only for an
-// endpoint that refused the direct call (self-hosted OpenAI-/Anthropic-style
-// backends like Ollama or LM Studio rarely send browser CORS headers). On a
-// hosted website there is no relay, so every call is direct-only and the key is
-// never handed to anything but the provider. Gemini and native Anthropic were
-// already direct — both allow browser calls explicitly.
+// Cloud-provider calls normally go straight from the browser to the provider.
+// Self-hosted OpenAI-compatible calls are deliberately forced through the same-
+// origin /api/ai/relay so the configured AI endpoint sees the game server's IP,
+// not every player's IP. Gemini and native Anthropic remain direct because they
+// explicitly allow browser calls. The web build does not enable the server relay.
 
 // True when this page is served from a machine the player controls, i.e. a
 // trusted same-origin relay is reachable. The LAN private ranges cover the
@@ -294,11 +290,11 @@ function isLocalEndpoint(url) {
     }
 }
 
-const relayFetch = (url, { method = "POST", headers = {}, payload, signal } = {}) =>
+const relayFetch = (url, { method = "POST", headers = {}, payload, signal, relayCredentialProfile } = {}) =>
     fetch("/api/ai/relay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, method, headers, payload }),
+        body: JSON.stringify({ url, method, headers, payload, relayCredentialProfile }),
         signal,
     });
 
@@ -315,6 +311,10 @@ const directFetch = (url, { method = "POST", headers = {}, payload, signal } = {
 // trigger the relay fallback.
 async function providerFetch(url, options = {}) {
     const origin = endpointOrigin(url);
+
+    if (options.forceRelay && !import.meta.env.VITE_OH_WEB) {
+        return relayFetch(url, options);
+    }
 
     if (PAGE_IS_LOCAL && relayOnlyOrigins.has(origin)) {
         return relayFetch(url, options);
@@ -475,9 +475,18 @@ function toAnthropicMessages(history) {
     }));
 }
 
-async function resolveModel(provider, { endpoint = "", headers = {}, fallbackModel = "", providerLabel, signal } = {}) {
+async function resolveModel(provider, {
+    endpoint = "",
+    headers = {},
+    fallbackModel = "",
+    model,
+    providerLabel,
+    signal,
+    forceRelay = false,
+    relayCredentialProfile = "",
+} = {}) {
     const settings = getProviderSettings(provider);
-    const configuredModel = settings.model.trim();
+    const configuredModel = String(model ?? settings.model).trim();
 
     if (configuredModel) {
         return provider === "gemini" ? normalizeGeminiModel(configuredModel) : configuredModel;
@@ -498,7 +507,13 @@ async function resolveModel(provider, { endpoint = "", headers = {}, fallbackMod
     }
 
     try {
-        const response = await providerFetch(`${normalizedEndpoint}/models`, { method: "GET", headers, signal });
+        const response = await providerFetch(`${normalizedEndpoint}/models`, {
+            method: "GET",
+            headers,
+            signal,
+            forceRelay,
+            relayCredentialProfile,
+        });
 
         if (!response.ok) {
             const payload = await readErrorPayload(response);
@@ -656,6 +671,8 @@ async function callOpenAIStyleChatCompletions({
     allowJsonSchemaFallback = false,
     maxTokens,
     tokenLimitField = "max_tokens",
+    forceRelay = false,
+    relayCredentialProfile = "",
 }) {
     let structuredMode = tool ? "tool" : "text";
     let disableToolReasoning = false;
@@ -673,6 +690,8 @@ async function callOpenAIStyleChatCompletions({
         const response = await providerFetch(`${normalizeEndpoint(endpoint)}/chat/completions`, {
             headers,
             signal,
+            forceRelay,
+            relayCredentialProfile,
             payload: {
                 model,
                 // Streaming is what makes Cancel PHYSICAL on a local server —
@@ -843,8 +862,10 @@ async function callOpenAI(systemPrompt, history, opts = {}) {
 }
 
 async function callOpenAICompatible(systemPrompt, history, opts = {}) {
-    const settings = getProviderSettings("openai-compatible");
-    const endpoint = normalizeEndpoint(settings.endpoint);
+    const localSettings = getProviderSettings("openai-compatible");
+    const managedSettings = await getManagedOpenAICompatibleSettings();
+    const managed = Boolean(managedSettings?.managed);
+    const endpoint = normalizeEndpoint(managedSettings?.endpoint || localSettings.endpoint);
 
     if (!endpoint) {
         throw new Error("Go to **settings**, select OpenAI Compatible, and enter your endpoint (for example http://localhost:11434/v1).");
@@ -852,14 +873,17 @@ async function callOpenAICompatible(systemPrompt, history, opts = {}) {
 
     const headers = {
         "Content-Type": "application/json",
-        ...(settings.apiKey.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
+        ...(!managed && localSettings.apiKey.trim() ? { Authorization: `Bearer ${localSettings.apiKey.trim()}` } : {}),
     };
 
     const model = await resolveModel("openai-compatible", {
         endpoint,
         headers,
+        model: managedSettings?.model || localSettings.model,
         providerLabel: "OpenAI Compatible",
         signal: opts.signal,
+        forceRelay: true,
+        relayCredentialProfile: "openai-compatible",
     });
 
     return callOpenAIStyleChatCompletions({
@@ -869,10 +893,12 @@ async function callOpenAICompatible(systemPrompt, history, opts = {}) {
         systemPrompt,
         history,
         providerLabel: "OpenAI Compatible",
-        customParams: parseCustomParams(settings.customParams, "OpenAI Compatible"),
+        customParams: parseCustomParams(localSettings.customParams, "OpenAI Compatible"),
         allowJsonSchemaFallback: true,
         tokenLimitField: "max_tokens",
         ...opts,
+        forceRelay: true,
+        relayCredentialProfile: "openai-compatible",
     });
 }
 

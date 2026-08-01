@@ -76,6 +76,12 @@ import {
   toPublicUser,
   updateManagedUser,
 } from "./userAuth.js";
+import {
+  getAdminAISettings,
+  getEffectiveAISettings,
+  getPublicAISettings,
+  saveAdminAISettings,
+} from "./aiSettings.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 import { DATA_DIR } from "./dataDir.js";
@@ -212,6 +218,24 @@ const readUiSettings = () => {
 app.get("/api/auth/status", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(getUserAuthStatus(req));
+});
+
+app.get("/api/ai/settings", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getPublicAISettings(req.user?.id));
+});
+
+app.get("/api/auth/admin/ai-settings", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getAdminAISettings());
+});
+
+app.put("/api/auth/admin/ai-settings", jsonParser, requireAdmin, (req, res) => {
+  try {
+    return res.json(saveAdminAISettings(req.body));
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
 });
 
 app.post("/api/auth/register", jsonParser, (req, res) => {
@@ -724,11 +748,10 @@ const setHubFileGuards = (res) => {
 };
 
 // Browser AI calls to self-hosted OpenAI-compatible endpoints (llama.cpp,
-// LM Studio, NVIDIA NIM...) die on CORS — those servers rarely send the
-// headers. The game server relays them instead: same-origin for the browser,
-// plain server-to-server for the endpoint. The target is whatever the player
-// configured in Settings — them talking to their own AI through their own
-// game server.
+// LM Studio, NVIDIA NIM...) use this same-origin relay in the self-hosted
+// build. The upstream sees the game server's IP. A player-configured bearer
+// key is forwarded for the request, unless an admin-managed global/per-user
+// profile supplies the endpoint credentials server-side.
 app.post("/api/ai/relay", largeJsonParser, async (req, res) => {
   const controller = new AbortController();
   let completed = false;
@@ -739,22 +762,66 @@ app.post("/api/ai/relay", largeJsonParser, async (req, res) => {
   res.once("close", abortUpstream);
 
   try {
-    const { url: targetUrl, method = "POST", headers = {}, payload } = req.body ?? {};
+    const {
+      url: targetUrl,
+      method = "POST",
+      headers = {},
+      payload,
+      relayCredentialProfile = "",
+    } = req.body ?? {};
     const target = new URL(String(targetUrl ?? ""));
     if (target.protocol !== "http:" && target.protocol !== "https:") {
       return sendError(res, 400, new Error("Only http(s) AI endpoints can be relayed."));
     }
+
+    let upstreamHeaders = { "Content-Type": "application/json", ...headers };
+    if (relayCredentialProfile === "openai-compatible") {
+      const managed = getEffectiveAISettings(req.user?.id);
+      if (managed.managed) {
+        if (managed.endpoint) {
+          const configured = new URL(managed.endpoint);
+          const basePath = configured.pathname.replace(/\/$/, "");
+          const targetMatchesProfile = target.origin === configured.origin &&
+            target.pathname.startsWith(`${basePath}/`);
+          if (!targetMatchesProfile) {
+            return sendError(res, 403, new Error("The configured AI endpoint does not match this relay target."));
+          }
+        }
+        for (const headerName of Object.keys(upstreamHeaders)) {
+          if (headerName.toLowerCase() === "authorization") delete upstreamHeaders[headerName];
+        }
+        if (managed.apiKey) upstreamHeaders.Authorization = `Bearer ${managed.apiKey}`;
+      }
+    }
     const upstream = await fetch(target, {
       method: method === "GET" ? "GET" : "POST",
-      headers: { "Content-Type": "application/json", ...headers },
+      headers: upstreamHeaders,
       body: method === "GET" ? undefined : JSON.stringify(payload ?? {}),
       signal: controller.signal,
     });
-    const text = await upstream.text();
-    completed = true;
     res.status(upstream.status);
-    res.type(upstream.headers.get("content-type") || "application/json");
-    res.send(text);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+
+    // Preserve SSE streaming through the relay. Buffering the whole upstream
+    // body would make the browser wait for a complete answer and would turn
+    // Cancel into a cosmetic UI action for long local-model generations.
+    if (upstream.body) {
+      for await (const chunk of upstream.body) {
+        if (res.destroyed) {
+          controller.abort();
+          return;
+        }
+        if (!res.write(Buffer.from(chunk))) {
+          await new Promise((resolve) => res.once("drain", resolve));
+        }
+      }
+      completed = true;
+      res.end();
+      return;
+    }
+
+    completed = true;
+    res.end();
   } catch (error) {
     if (!controller.signal.aborted && !res.headersSent) {
       sendError(res, 502, error);

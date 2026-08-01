@@ -29,6 +29,7 @@ Route ordering matters: `/fmg/*` and `express.static` are mounted **before** the
 | Writable data-root resolution | `server/dataDir.js` | `DATA_DIR` |
 | Shared self-host auth | `server/auth.js` | API key loading, constant-time bearer check, LAN-bind guard |
 | Local user accounts | `server/userAuth.js` | `scrypt` password hashes, sessions, roles, registration and admin user management |
+| Server AI profiles | `server/aiSettings.js` | Optional global/per-user OpenAI-compatible endpoint and server-held key |
 | Path containment, CSRF guard, range parsing, hub host allowlist | `server/security.js` | Pure, unit-tested helpers |
 | Map-editor documents | `server/mapEditorStore.js` | `/api/mapeditor/*` |
 | User basemap library ("Your basemaps") | `server/basemapStore.js` | `/api/basemaps/*` |
@@ -102,6 +103,9 @@ requires a one-time `docker login ghcr.io` on the host.
 | GET | `/api/auth/admin/users` | List users; admin only | `server/server.js` |
 | POST | `/api/auth/admin/users` | Create a player or admin; admin only | `server/server.js` |
 | PATCH | `/api/auth/admin/users/:userId` | Change role, display name, password or enabled state; admin only | `server/server.js` |
+| GET | `/api/ai/settings` | Effective OpenAI-compatible profile for the signed-in user; never returns the key | `server/server.js` |
+| GET | `/api/auth/admin/ai-settings` | Read global/per-user AI profiles with key-presence flags; admin only | `server/server.js` |
+| PUT | `/api/auth/admin/ai-settings` | Save global/per-user OpenAI-compatible profiles; admin only | `server/server.js` |
 | GET | `/api/ui-settings` | Global shared UI settings (currently `language`) — every device sees the same choice | `server/server.js:171` |
 | PUT | `/api/ui-settings` | Set the shared UI language | `server/server.js:236` |
 | GET | `/api/lang/:code` | Merged language pack: shipped `dist|public/lang/<code>.json` **under** saved `data/lang/<code>.json` (saved wins) | `server/server.js:197` |
@@ -153,7 +157,7 @@ requires a one-time `docker login ghcr.io` on the host.
 ### AI relay, hub proxy, telemetry, shutdown
 | Method | Path | Purpose | Handler |
 | --- | --- | --- | --- |
-| POST | `/api/ai/relay` | Server-to-server relay to a player-configured OpenAI-compatible endpoint (defeats the endpoint's missing CORS). Streams status/body back; aborts upstream if the client disconnects | `server/server.js:523` |
+| POST | `/api/ai/relay` | Server-to-server relay to an OpenAI-compatible endpoint. Self-hosted builds force this path so the endpoint sees the game server IP; a server profile can supply the upstream key. Streams status/body back and aborts upstream if the client disconnects | `server/server.js:523` |
 | POST | `/api/server/shutdown` | Stop the process from the UI's ⏻ button (acks first, then `process.exit(0)`) | `server/server.js:559` |
 | GET | `/api/hub/file?url=` | Proxy-download a community bundle from GitHub only; manual redirect-following with per-hop allowlist re-check; on-disk cache keyed by URL SHA-256 | `server/server.js:575` |
 | POST | `/api/hub/import-log` | Best-effort import telemetry; one ping per scenario per install (atomic `wx` marker), forwarded to the counter Worker | `server/server.js:657` |
@@ -193,6 +197,7 @@ server/data/
   scenario-manifest.json         # { order[], selectedScenarioId, activeScenarioId, version:2 }
   game-manifest.json             # { order[], activeGameId, version:2 }
   ui-settings.json               # { language }
+  ai-settings.json               # optional global/per-user OpenAI-compatible profiles
   scenarios/
     <scenarioId>/
       scenario.json              # meta (name, hero*, accentColor, coverImageContentType,
