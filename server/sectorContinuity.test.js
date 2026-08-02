@@ -23,7 +23,6 @@ import {
   controlSliceMultiPolygon,
   smoothClosedRing,
   tacticalAreaPolygon,
-  tacticalBreakthroughPolygon,
 } from "../src/Game/Map/controlGeometry.js";
 import { applySectorOps, normalizeSectorOp } from "../src/runtime/gameState.js";
 
@@ -66,19 +65,6 @@ test("partial control is cut from the merged footprint without reopening the cel
   assert.equal(footprint.length, 1);
   assert.equal(controlled.length, 1);
   assert.ok(controlled[0][0].length > 8);
-});
-
-test("a rendered breakthrough starts at the border and extends along its bearing", () => {
-  const origin = { lng: 39.2, lat: 47.05 };
-  const ring = tacticalBreakthroughPolygon({ origin, bearingDeg: 90, widthKm: 8, depthKm: 18 });
-  const projections = ring.map(([lng, lat]) => tacticalProjectPoint(origin, { lng, lat }, 90));
-  const forward = projections.map((entry) => entry.forwardKm);
-  const sideways = projections.map((entry) => Math.abs(entry.rightKm));
-  assert.ok(Math.min(...forward) > -0.2);
-  assert.ok(Math.min(...forward) < 1);
-  assert.ok(Math.max(...forward) > 16);
-  assert.ok(Math.max(...sideways) < 4.5);
-  assert.ok(Math.max(...forward) > Math.max(...sideways) * 3);
 });
 
 test("an older sideways cell strip is migrated to one directed corridor", () => {
@@ -124,7 +110,7 @@ test("the engine derives first contact just across the real target boundary", ()
   assert.ok(Math.abs(entry.lat) < 0.001);
 });
 
-test("first contact ignores guessed geometry and becomes a shallow directed breakthrough", () => {
+test("first contact ignores guessed geometry and becomes a compact border bridgehead", () => {
   const targetRegion = {
     id: "target-region",
     geometry: {
@@ -156,11 +142,17 @@ test("first contact ignores guessed geometry and becomes a shallow directed brea
   assert.ok(Math.abs(sector.frontOrigin.lng - 1) < 0.001);
   assert.ok(Math.abs(sector.frontOrigin.lat) < 0.001);
   assert.ok(sector.frontWidthKm >= 6 && sector.frontWidthKm <= 12);
-  assert.ok(sector.advanceDepthKm > sector.frontWidthKm);
+  assert.ok(sector.advanceDepthKm >= sector.frontWidthKm);
   assert.equal(sector.cells.every((entry) => {
     const projection = tacticalProjectPoint(sector.frontOrigin, entry, sector.frontBearing);
-    return projection.forwardKm > 0 && Math.abs(projection.rightKm) < 0.2;
+    return projection.forwardKm > 0 && Math.abs(projection.rightKm) <= entry.radiusKm;
   }), true);
+  assert.ok(sector.cells.length < 2 || (() => {
+    const projections = sector.cells.map((entry) => tacticalProjectPoint(sector.frontOrigin, entry, sector.frontBearing));
+    const forwardSpread = Math.abs(projections[0].forwardKm - projections[1].forwardKm);
+    const lateralSpread = Math.abs(projections[0].rightKm - projections[1].rightKm);
+    return lateralSpread > forwardSpread;
+  })());
 });
 
 test("first contact clears overlapping simplified source and target polygons", () => {
@@ -308,7 +300,7 @@ test("old tactical cells disappear only through an explicit remove", () => {
   assert.equal(explicit.cells.some((entry) => entry.id === "remove"), false);
 });
 
-test("an engine-derived breakthrough survives operation normalization and persistence", () => {
+test("an engine-derived border bridgehead survives operation normalization and persistence", () => {
   const targetRegion = {
     id: "target-region",
     geometry: {
@@ -337,7 +329,7 @@ test("an engine-derived breakthrough survives operation normalization and persis
   assert.equal(persisted.frontBearing, 90);
   assert.ok(Math.abs(persisted.frontOrigin.lng - 1) < 0.001);
   assert.ok(persisted.frontWidthKm >= 6);
-  assert.ok(persisted.advanceDepthKm > persisted.frontWidthKm);
+  assert.ok(persisted.advanceDepthKm >= persisted.frontWidthKm);
   assert.ok(persisted.cells.length >= 1 && persisted.cells.length <= 2);
   assert.equal(persisted.cells.every((entry) => tacticalGeometryContainsPoint(targetRegion.geometry, entry)), true);
   assert.equal(persisted.control <= 35, true);

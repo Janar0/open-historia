@@ -4,10 +4,10 @@ import { Source, Layer, Popup, useMap } from "react-map-gl/maplibre";
 import polygonClipping from "polygon-clipping";
 import { getNationColors } from "../../runtime/assets.js";
 import { useWorldState } from "./useWorldState.js";
-import { smoothClosedRing, tacticalAreaPolygon, tacticalBreakthroughPolygon } from "./controlGeometry.js";
+import { smoothClosedRing, tacticalAreaPolygon } from "./controlGeometry.js";
 import { clipRingToRegion, useRegionClipGeometry } from "./useRegionClipGeometry.js";
 import { dismissRegionPopup } from "../Selection/Regions.jsx";
-import { inferTacticalFrontGeometry, tacticalConnectedComponents } from "../AI/sectorContinuity.js";
+import { tacticalConnectedComponents } from "../AI/sectorContinuity.js";
 
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
 const TACTICAL_PALETTE = [
@@ -139,50 +139,29 @@ const buildData = (sectors, colorMap, regionClips) => {
     const bearing = sectorBearing(sector, cells);
     const regionClip = regionClips.get(String(sector.regionId ?? ""));
     const footprintPolygons = [];
-    const inferredFront = Number.isFinite(Number(sector.frontBearing))
-      ? inferTacticalFrontGeometry({ ...sector, cells, frontBearing: bearing })
-      : null;
-    const frontOriginValue = sector.frontOrigin || inferredFront?.frontOrigin;
-    const frontOrigin = frontOriginValue && typeof frontOriginValue === "object"
-      ? { lng: Number(frontOriginValue.lng), lat: Number(frontOriginValue.lat) }
-      : null;
-    const frontWidthKm = Number(sector.frontWidthKm ?? inferredFront?.frontWidthKm);
-    const advanceDepthKm = Number(sector.advanceDepthKm ?? inferredFront?.advanceDepthKm);
-    const hasDirectedShape = Number.isFinite(frontOrigin?.lng)
-      && Number.isFinite(frontOrigin?.lat)
-      && Number.isFinite(frontWidthKm)
-      && Number.isFinite(advanceDepthKm);
     let contested = false;
     let weightedControl = 0;
     let totalWeight = 0;
-
-    if (hasDirectedShape) {
-      const breakthrough = tacticalBreakthroughPolygon({
-        origin: frontOrigin,
-        bearingDeg: bearing,
-        widthKm: frontWidthKm,
-        depthKm: advanceDepthKm,
-      });
-      const clipped = clipRingToRegion(breakthrough, regionClip);
-      footprintPolygons.push(...clipped.map((polygon) => [polygon]));
-    }
 
     for (const [cellIndex, cell] of cells.entries()) {
       const geometry = cellGeometry(cell, sector);
       if (!geometry) continue;
       const control = cellControl(cell, sector);
       const cellIsContested = isContested(cell, sector);
-      if (!hasDirectedShape) {
-        const displayGeometry = {
-          ...geometry,
-          radiusKm: geometry.radiusKm * 1.08,
-          bearingDeg: bearing,
-          ...(cells.length === 1 ? { depthScale: 0.72, frontScale: 1.35 } : {}),
-        };
-        const fullRing = smoothClosedRing(tacticalAreaPolygon(displayGeometry, cell.id || `${sector.id}-${cellIndex}`), 0.1);
-        const clipped = clipRingToRegion(fullRing, regionClip);
-        if (clipped.length) footprintPolygons.push(...clipped.map((polygon) => [polygon]));
-      }
+      // The simulation cells are the authoritative occupied ground. Rendering
+      // a synthetic arrow here hid their connected footprint behind a narrow
+      // teardrop, which made every new advance look like the same artefact.
+      // A lightly softened union preserves a territorial patch without
+      // exposing a literal board-game grid.
+      const displayGeometry = {
+        ...geometry,
+        radiusKm: geometry.radiusKm * 1.06,
+        bearingDeg: bearing,
+        ...(cells.length === 1 ? { depthScale: 0.96, frontScale: 1.1 } : {}),
+      };
+      const fullRing = smoothClosedRing(tacticalAreaPolygon(displayGeometry, cell.id || `${sector.id}-${cellIndex}`), 0.1);
+      const clipped = clipRingToRegion(fullRing, regionClip);
+      if (clipped.length) footprintPolygons.push(...clipped.map((polygon) => [polygon]));
       contested ||= cellIsContested;
       const weight = Math.max(0.25, geometry.radiusKm ** 2);
       weightedControl += control * weight;

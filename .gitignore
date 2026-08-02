@@ -15,6 +15,10 @@ dist-ssr
 release
 *.local
 
+# Never commit local AI credentials or browser test profiles.
+.env.local
+.openrouter.local
+
 # Web-mode seed (generated from server/data/scenarios/default by
 # scripts/seed-web-defaults.mjs at `npm run build:web`; never committed, never
 # in the local build).

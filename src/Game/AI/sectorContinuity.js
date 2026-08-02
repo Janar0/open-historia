@@ -130,8 +130,11 @@ export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor, exclu
   }
   if (!entry) return null;
   const advanceBearing = ((entry.bearingDeg % 360) + 360) % 360;
-  const centers = [0, cellRadiusKm * 1.45]
-    .map((distanceKm) => tacticalOffsetPoint(entry, advanceBearing, distanceKm))
+  // The first contact is a compact bridgehead across the border, not a thin
+  // arrow aimed at a remote objective. Later events extend this connected
+  // patch forward one cell at a time.
+  const centers = [-1, 1]
+    .map((side) => tacticalOffsetPoint(entry, advanceBearing + 90, side * cellRadiusKm * 0.72))
     .filter((center) => center && isExclusiveTargetPoint(center));
   if (!centers.length) centers.push(entry);
   const control = Math.max(12, Math.min(35, Number(sector.control) || 24));
@@ -146,6 +149,11 @@ export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor, exclu
     status: "assault",
     note: sector.note,
   }));
+  const frontWidthKm = Math.round(cellRadiusKm * 2.4 * 10) / 10;
+  const advanceDepthKm = Math.round(Math.max(
+    frontWidthKm,
+    ...cells.map((cell) => tacticalDistanceKm(boundary, cell) + radius(cell) * 1.05),
+  ) * 10) / 10;
   return {
     ...sector,
     regionId: targetRegion.id,
@@ -155,10 +163,8 @@ export const deriveTacticalBorderSector = ({ sector, targetRegion, anchor, exclu
     },
     frontOrigin: { lng: boundary.lng, lat: boundary.lat },
     frontBearing: advanceBearing,
-    frontWidthKm: Math.round(cellRadiusKm * 2.4 * 10) / 10,
-    advanceDepthKm: Math.round(Math.max(...cells.map((cell) => (
-      tacticalDistanceKm(boundary, cell) + radius(cell) * 1.05
-    ))) * 10) / 10,
+    frontWidthKm,
+    advanceDepthKm,
     radiusKm: cellRadiusKm * 2,
     control,
     status: "assault",

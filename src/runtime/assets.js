@@ -1047,52 +1047,54 @@ export const loadRegionCatalog = async ({ force = false } = {}) => {
   regionCatalogPromiseKey = cacheKey;
   const promise = (async () => {
     try {
-      const pmtiles = getPmtilesArchive(PMTILES_ARCHIVES.regions);
-      const tileData = await pmtiles.getZxy(0, 0, 0);
-      if (!tileData?.data) return [];
-
-      const tile = await decodeVectorTile(tileData.data);
-      const layer = tile.layers.regions;
-      if (!layer) return [];
-
       const seen = new Map();
-      for (let index = 0; index < layer.length; index += 1) {
-        const vectorFeature = layer.feature(index);
-        const props = vectorFeature.properties;
-        const id = props?.GID_1 || props?.gid_1 || props?.HASC_1 || props?.fid;
-        // A few GADM regions carry the literal placeholder "NA" as their name (England
-        // among them). Correct the known ones and treat the rest as nameless, so the
-        // `!name` skip below drops them instead of teaching the model a region called
-        // "NA" that it can never meaningfully transfer.
-        const name = resolveRegionName(id, props?.NAME_1 || props?.name_1 || props?.NAME || props?.name);
-        const countryCode = props?.GID_0 || props?.gid_0 || "";
-        const country = resolveCountryDisplayName(
-          props?.COUNTRY || props?.Country || props?.country,
-          countryCode,
-        );
+      try {
+        const pmtiles = getPmtilesArchive(PMTILES_ARCHIVES.regions);
+        const tileData = await pmtiles.getZxy(0, 0, 0);
+        const tile = tileData?.data ? await decodeVectorTile(tileData.data) : null;
+        const layer = tile?.layers?.regions;
+        if (layer) {
+          for (let index = 0; index < layer.length; index += 1) {
+            const vectorFeature = layer.feature(index);
+            const props = vectorFeature.properties;
+            const id = props?.GID_1 || props?.gid_1 || props?.HASC_1 || props?.fid;
+            // A few GADM regions carry the literal placeholder "NA" as their name (England
+            // among them). Correct the known ones and treat the rest as nameless, so the
+            // `!name` skip below drops them instead of teaching the model a region called
+            // "NA" that it can never meaningfully transfer.
+            const name = resolveRegionName(id, props?.NAME_1 || props?.name_1 || props?.NAME || props?.name);
+            const countryCode = props?.GID_0 || props?.gid_0 || "";
+            const country = resolveCountryDisplayName(
+              props?.COUNTRY || props?.Country || props?.country,
+              countryCode,
+            );
 
-        if (!id || !name) {
-          continue;
-        }
+            if (!id || !name) continue;
 
-        const key = String(id);
-        if (!seen.has(key)) {
-          let geometry = null;
-          try {
-            // The z0 tile is the same complete, intentionally simplified world
-            // overview used for the catalog. Retaining its geometry lets the
-            // gameplay validator reject a tactical center outside the region it
-            // claims to belong to, without loading the full-resolution archive.
-            geometry = vectorFeature.toGeoJSON(0, 0, 0)?.geometry ?? null;
-          } catch { /* property-only vector decoders remain supported */ }
-          seen.set(key, {
-            country,
-            countryCode,
-            geometry,
-            id: key,
-            name: String(name),
-          });
+            const key = String(id);
+            if (!seen.has(key)) {
+              let geometry = null;
+              try {
+                // The z0 tile is the same complete, intentionally simplified world
+                // overview used for the catalog. Retaining its geometry lets the
+                // gameplay validator reject a tactical center outside the region it
+                // claims to belong to, without loading the full-resolution archive.
+                geometry = vectorFeature.toGeoJSON(0, 0, 0)?.geometry ?? null;
+              } catch { /* property-only vector decoders remain supported */ }
+              seen.set(key, {
+                country,
+                countryCode,
+                geometry,
+                id: key,
+                name: String(name),
+              });
+            }
+          }
         }
+      } catch (error) {
+        // A custom-editor map is itself a complete region catalog. Do not make
+        // its tactical validation depend on the optional stock PMTiles archive.
+        console.warn("Failed to load stock region catalog; using scenario geometry:", error);
       }
 
       // Regions the stock tiles don't know — shapes DRAWN in the map editor
