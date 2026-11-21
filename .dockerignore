@@ -1,0 +1,31 @@
+.git
+.github
+.codex
+.agents
+node_modules
+dist
+dist-web
+release
+fmg
+*.log
+*.key
+*.key.pem
+
+# Runtime data belongs in the host-mounted data directory. The built-in
+# scenario ships as server/seed and is laid in by the server itself.
+open-historia-data
+server/data
+
+# These large files are fetched and checksum-verified during the image build.
+public/assets/*.pmtiles
+public/assets/regions-seed.geojson
+public/assets/cities-seed.json
+
+# Not part of the server image.
+mobile
+native
+electron
+site
+wiki
+tools
+map-cache
