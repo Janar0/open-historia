@@ -17,6 +17,10 @@ services:
       # Names this server is opened by, comma-separated (a domain behind a
       # reverse proxy). IP addresses and localhost always work.
       OH_ALLOWED_HOSTS: ${OPEN_HISTORIA_ALLOWED_HOSTS:-}
+      # Requests a minute from one address before the server answers 429
+      # (default 1200). Behind a reverse proxy every player arrives from the
+      # proxy's address and shares that one allowance, so raise it there.
+      OH_RATE_LIMIT: ${OPEN_HISTORIA_RATE_LIMIT:-}
     secrets:
       - open_historia_api_key
     volumes:
