@@ -16,6 +16,7 @@ import {
 import { buildLabel } from "./runtime/buildLabel.js";
 import { countVisit } from "./runtime/visitCount.js";
 import { startMusic } from "./runtime/ambientMusic.js";
+import { initializeServerAuth } from "./runtime/auth.js";
 // Registers the Logging file's settings snapshot (every setting's current value).
 import "./runtime/settingsLog.js";
 import App from "./App.jsx";
@@ -106,5 +107,17 @@ if (import.meta.env.VITE_OH_WEB) {
         .catch((error) => console.error("Web backend failed to install:", error))
         .finally(mount);
 } else {
-    mount();
+    // A server shared with a few people may ask for its key and an account
+    // (runtime/auth.js). That is settled before the map starts asking the API
+    // for anything; a server that asks for neither answers at once.
+    // The key and account screens wear the player's interface theme too.
+    installUiTheme();
+    initializeServerAuth()
+        .catch((error) => console.error("Server authentication failed:", error))
+        // The server's own AI profile, when its admin set one, is ready to use
+        // without the player typing an endpoint or a key (AI/serverSettings.js).
+        .then(() => import("./Game/AI/serverSettings.js"))
+        .then(({ ensureManagedConnection }) => ensureManagedConnection())
+        .catch((error) => console.warn("The server's AI profile could not be applied:", error))
+        .finally(mount);
 }

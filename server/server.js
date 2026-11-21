@@ -132,6 +132,30 @@ import {
 } from "./security.js";
 import { appendLog, clearLog, readLogSince } from "./logStore.js";
 import { desktopDownloadFor } from "./desktopDownload.js";
+import { AUTH_REQUIRED, apiAuthMiddleware } from "./auth.js";
+import {
+  USER_AUTH_REQUIRED,
+  changeOwnPassword,
+  clearSessionCookie,
+  createManagedUser,
+  ensureUserStore,
+  getUserAuthStatus,
+  getUserFromRequest,
+  listUsers,
+  loginUser,
+  registerUser,
+  requireAdmin,
+  requireUserAuth,
+  setSessionCookie,
+  toPublicUser,
+  updateManagedUser,
+} from "./userAuth.js";
+import {
+  getAdminAISettings,
+  getEffectiveAISettings,
+  getPublicAISettings,
+  saveAdminAISettings,
+} from "./aiSettings.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 import { DATA_DIR } from "./dataDir.js";
@@ -197,6 +221,15 @@ const writeNetworkSettings = (changes) => {
 const HOST_FROM_ENV = process.env.OH_HOST || "";
 let HOST = HOST_FROM_ENV || (readNetworkSettings().lanAccess ? ALL_INTERFACES_HOST : LOOPBACK_HOST);
 let LAN_ENABLED = isLanHost(HOST);
+// A hosted box (the Docker image sets this) must never come up open: with
+// OH_REQUIRE_AUTH=1 the server refuses to start unless a shared API key is
+// configured (server/auth.js), whatever it is bound to.
+if (process.env.OH_REQUIRE_AUTH === "1" && !AUTH_REQUIRED) {
+  throw new Error(
+    "OH_REQUIRE_AUTH=1 but no shared API key is configured. "
+      + "Set OH_SHARED_API_KEY_FILE (recommended) or OH_SHARED_API_KEY first.",
+  );
+}
 // What the toggle last asked for. HOST only changes once a rebind has landed,
 // a moment after the reply, so a second flip compared against HOST saw the old
 // binding, matched it and did nothing: on-then-off left the switch showing Off
@@ -264,7 +297,7 @@ app.use((req, res, next) => {
   res.setHeader("Vary", "Origin");
   if (corsOrigin) res.setHeader("Access-Control-Allow-Origin", corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   // PMTiles range reads are cross-origin from the phone shell. Range is
   // CORS-safelisted so 206s work, but pmtiles' recovery path for a very small
   // archive reads Content-Range off a 416 — and a non-exposed header reads as
@@ -302,6 +335,12 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// When a shared key is configured it protects every API route except the
+// public status probe (server/auth.js). Static assets and the SPA stay
+// reachable so a browser can show the access screen before it knows the key.
+app.use(apiAuthMiddleware);
+if (USER_AUTH_REQUIRED) ensureUserStore();
 
 ensureScenarioStore();
 ensureGameStore();
@@ -382,7 +421,9 @@ app.use((req, res, next) => {
     remoteAddress: req.socket?.remoteAddress,
     allowAll: ALLOW_CROSS_ORIGIN_WRITES,
   });
-  if (decision.allowed) {
+  // A bearer key in the header is proof of intent: no other site's page can
+  // attach it. The access cookie is not (server/auth.js), so it lifts nothing.
+  if (decision.allowed || req.apiKeyBearer) {
     return next();
   }
   return sendError(
@@ -390,6 +431,123 @@ app.use((req, res, next) => {
     403,
     new Error("Cross-origin write blocked. Set OH_ALLOW_CROSS_ORIGIN=1 on the server to allow it."),
   );
+});
+
+// Accounts (OH_USER_AUTH=1, server/userAuth.js). The shared API key is the
+// server-level gate; once it passes, account auth keeps individual identities
+// and roles on top of it, so a browser that only reached the public SPA shell
+// is told nothing of the games.
+app.use(requireUserAuth);
+
+app.get("/api/auth/status", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getUserAuthStatus(req));
+});
+
+app.get("/api/ai/settings", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getPublicAISettings(req.user?.id));
+});
+
+app.get("/api/auth/admin/ai-settings", requireAdmin, (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(getAdminAISettings());
+});
+
+app.put("/api/auth/admin/ai-settings", jsonParser, requireAdmin, (req, res) => {
+  try {
+    return res.json(saveAdminAISettings(req.body));
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.post("/api/auth/register", jsonParser, (req, res) => {
+  if (!USER_AUTH_REQUIRED) return sendError(res, 404, "User accounts are not enabled on this server.");
+  try {
+    const user = registerUser({
+      displayName: req.body?.displayName,
+      password: req.body?.password,
+      username: req.body?.username,
+    });
+    const login = loginUser(req, { password: req.body?.password, username: req.body?.username });
+    if (login.error) return sendError(res, login.error.statusCode || 401, login.error);
+    setSessionCookie(res, login.token);
+    return res.status(201).json({ user: toPublicUser(login.user || user) });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.post("/api/auth/login", jsonParser, (req, res) => {
+  if (!USER_AUTH_REQUIRED) return sendError(res, 404, "User accounts are not enabled on this server.");
+  const result = loginUser(req, {
+    password: req.body?.password,
+    username: req.body?.username,
+  });
+  if (result.error) {
+    if (result.error.statusCode === 429) res.setHeader("Retry-After", "900");
+    return sendError(res, result.error.statusCode || 401, result.error);
+  }
+  setSessionCookie(res, result.token);
+  return res.json({ user: toPublicUser(result.user) });
+});
+
+app.get("/api/auth/session", (req, res) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: "Account login required.", accountRequired: true });
+  return res.json({ user });
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  clearSessionCookie(res);
+  return res.json({ ok: true });
+});
+
+app.post("/api/auth/password", jsonParser, (req, res) => {
+  if (!USER_AUTH_REQUIRED) return sendError(res, 404, "User accounts are not enabled on this server.");
+  const user = getUserFromRequest(req);
+  if (!user) return sendError(res, 401, "Account login required.");
+  try {
+    const changed = changeOwnPassword(user.id, req.body?.currentPassword, req.body?.newPassword);
+    if (!changed) return sendError(res, 401, "Current password is incorrect.");
+    clearSessionCookie(res);
+    return res.json({ ok: true });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.get("/api/auth/admin/users", requireAdmin, (_req, res) => {
+  res.json({ users: listUsers() });
+});
+
+app.post("/api/auth/admin/users", jsonParser, requireAdmin, (req, res) => {
+  try {
+    const user = createManagedUser({
+      displayName: req.body?.displayName,
+      password: req.body?.password,
+      role: req.body?.role,
+      username: req.body?.username,
+    });
+    return res.status(201).json({ user: toPublicUser(user) });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
+});
+
+app.patch("/api/auth/admin/users/:userId", jsonParser, requireAdmin, (req, res) => {
+  try {
+    const user = updateManagedUser(req.params.userId, {
+      displayName: req.body?.displayName,
+      enabled: req.body?.enabled,
+      password: req.body?.password,
+      role: req.body?.role,
+    });
+    return res.json({ user: toPublicUser(user) });
+  } catch (error) {
+    return sendError(res, 400, error);
+  }
 });
 
 const streamBinaryFile = (req, res, sourcePath, contentType = "application/octet-stream") => {
@@ -1402,7 +1560,10 @@ app.post("/api/ai/relay", largeJsonParser, async (req, res) => {
   armTimeout();
 
   try {
-    if (!ALLOW_REMOTE_RELAY && !RELAY_FOR_LAN && !isLoopbackAddress(req.socket?.remoteAddress)) {
+    // A caller who passed the shared key or signed in to an account is this
+    // server's own player, not a stranger on the network: the relay answers them.
+    const relayCallerKnown = Boolean(req.apiKeyAuthenticated || req.user);
+    if (!ALLOW_REMOTE_RELAY && !RELAY_FOR_LAN && !relayCallerKnown && !isLoopbackAddress(req.socket?.remoteAddress)) {
       res.setHeader(RELAY_REFUSED_HEADER, "refused");
       return sendError(
         res,
@@ -1414,7 +1575,7 @@ app.post("/api/ai/relay", largeJsonParser, async (req, res) => {
       );
     }
 
-    const { url: targetUrl, method = "POST", headers = {}, payload } = req.body ?? {};
+    const { url: targetUrl, method = "POST", headers = {}, payload, relayCredentialProfile = "" } = req.body ?? {};
     let target;
     try {
       target = new URL(String(targetUrl ?? ""));
@@ -1436,6 +1597,34 @@ app.post("/api/ai/relay", largeJsonParser, async (req, res) => {
     const upstreamHeaders = { "content-type": "application/json" };
     for (const [key, value] of Object.entries(sanitizeRelayHeaders(headers))) {
       upstreamHeaders[key.toLowerCase()] = value;
+    }
+    // An admin-managed AI profile (server/aiSettings.js) supplies the endpoint's
+    // credentials here, so players never hold the key: whatever Authorization the
+    // page sent is dropped, and the target must be the endpoint the profile names.
+    if (relayCredentialProfile === "openai-compatible") {
+      const managed = getEffectiveAISettings(req.user?.id);
+      if (managed.managed) {
+        // The stored key goes to the endpoint the profile names and nowhere
+        // else. A profile with a key and no endpoint would hand that key to
+        // whatever address the caller wrote, so it sends none.
+        let targetMatchesProfile = false;
+        if (managed.endpoint) {
+          const configured = new URL(managed.endpoint);
+          const basePath = configured.pathname.replace(/\/$/, "");
+          targetMatchesProfile = target.origin === configured.origin
+            && target.pathname.startsWith(`${basePath}/`);
+          if (!targetMatchesProfile) {
+            return sendError(res, 403, new Error("The configured AI endpoint does not match this relay target."));
+          }
+        }
+        if (managed.apiKey && !targetMatchesProfile) {
+          return sendError(res, 400, new Error("The server's AI profile has a key but no endpoint. Ask the server's admin to set the endpoint."));
+        }
+        if (targetMatchesProfile) {
+          delete upstreamHeaders.authorization;
+          if (managed.apiKey) upstreamHeaders.authorization = `Bearer ${managed.apiKey}`;
+        }
+      }
     }
     if (body !== undefined) upstreamHeaders["content-length"] = Buffer.byteLength(body);
 
@@ -2310,8 +2499,12 @@ app.get("*splat", (_req, res) => {
 
 const describeBinding = () => {
   if (LAN_ENABLED) {
-    console.log(`Reachable from your network on ${HOST}:${PORT}. This API has no password:`);
-    console.log("anyone who can reach that address can read, change and delete your games.");
+    if (AUTH_REQUIRED) {
+      console.log(`Reachable from your network on ${HOST}:${PORT}. Shared API-key authentication is on${USER_AUTH_REQUIRED ? ", with accounts" : ""}.`);
+    } else {
+      console.log(`Reachable from your network on ${HOST}:${PORT}. This API has no password:`);
+      console.log("anyone who can reach that address can read, change and delete your games.");
+    }
     for (const { url } of lanAddresses()) console.log(`  ${url}`);
     console.log(
       HOST_FROM_ENV

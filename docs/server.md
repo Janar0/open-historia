@@ -406,6 +406,71 @@ Additional hardening in the stores: content hashes for basemaps/flags are **alwa
 
 ---
 
+## Shared servers: the key, accounts and the server's AI profile
+
+A server opened to other people (a LAN box, a VPS, the Docker image) can be closed with a shared key, per-player accounts on top of it, and an AI endpoint whose key only the server holds. All three are off unless configured, so the desktop app and a local clone behave exactly as before.
+
+| Module | Owns |
+|---|---|
+| `server/auth.js` | Loading the shared key, the constant-time Bearer check, the access cookie |
+| `server/userAuth.js` | `scrypt` password hashes, sessions, roles, registration, admin user management |
+| `server/aiSettings.js` | The optional global or per-player OpenAI-compatible endpoint, model and server-held key |
+| `src/runtime/auth.js` | The key and account screens shown before the app mounts, and the Account panel |
+| `src/Game/AI/serverSettings.js` | Reading the server's AI profile and making a player's Connection to it |
+
+### The shared key
+
+Set one of these (not both):
+
+```bash
+openssl rand -hex 32 > open-historia-server.key
+chmod 600 open-historia-server.key
+OH_HOST=0.0.0.0 OH_SHARED_API_KEY_FILE=$PWD/open-historia-server.key node server/server.js
+```
+
+With a key configured, every `/api/*` route except `GET /api/auth/status` needs it. Static files stay public so a browser can show the access screen. The page stores the key per browser and sends it as `Authorization: Bearer <key>` on same-origin API calls (`installServerAuthFetch`). Keys in a query string are deliberately not accepted.
+
+A page cannot put a header on everything it loads: the map's workers, images and the service worker fetch `/api` without one. So the first request that proves the key with a Bearer header is handed the `oh_access` cookie (`HttpOnly`, `SameSite=Strict`), which stands for the key from then on. It holds a keyed digest, never the key, and changes when the key does. Only the Bearer header lifts the cross-origin write guard; the cookie does not.
+
+`OH_REQUIRE_AUTH=1` makes the server refuse to start without a key. The Docker image sets it.
+
+### Accounts
+
+`OH_USER_AUTH=1` requires an account after the key has passed. The first registered account is the `admin`; later ones are `player`s. Admins create, promote and disable accounts from **Account** in the main menu. Passwords are kept in `<OH_DATA_DIR>/users.json` as `scrypt` hashes. Sessions live in memory, so a server restart signs everyone out. Set `OH_REGISTRATION_OPEN=0` once the accounts exist if admins should be the only way to add more, and `OH_SECURE_COOKIES=1` behind HTTPS.
+
+Accounts are identities and roles, not separate libraries: every signed-in player sees the same games and scenarios.
+
+| Route | |
+|---|---|
+| `GET /api/auth/status` | Public probe: `{ required, authenticated, accountsRequired, accountAuthenticated, registrationOpen, user }` |
+| `POST /api/auth/register`, `/login`, `/logout`, `/password` | The player's own account |
+| `GET /api/auth/session` | The signed-in user |
+| `GET/POST /api/auth/admin/users`, `PATCH /api/auth/admin/users/:userId` | Admin only |
+| `GET/PUT /api/auth/admin/ai-settings` | Admin only: the AI profile, keys never returned |
+| `GET /api/ai/settings` | What a player's page is told: endpoint, model, whether a key is set |
+
+### The server's AI profile
+
+An admin can give every player one OpenAI-compatible endpoint, model and key (**Account → AI for players**), or one per player. It is stored in `<OH_DATA_DIR>/ai-settings.json` (mode `0600`), or read from `OH_AI_ENDPOINT`, `OH_AI_MODEL` and `OH_AI_API_KEY` when nothing is saved.
+
+- The page learns the endpoint and model, never the key. On a player's first visit a Connection to that endpoint is added at the top of their Fallback list (`ensureManagedConnection`), so there is nothing to type.
+- A call to that endpoint always goes through `POST /api/ai/relay` with `relayCredentialProfile: "openai-compatible"`. The relay drops whatever `Authorization` the page sent and adds the stored key.
+- The stored key goes to the endpoint the profile names and nowhere else: a different target is refused (403), and a profile with a key but no endpoint sends no key at all (400).
+- A caller who passed the shared key or is signed in may use the relay from another device, without `OH_ALLOW_REMOTE_RELAY`.
+
+### Docker
+
+The `Dockerfile` builds the client, fetches the checksum-verified map files, and runs the server as the `node` user with `OH_HOST=0.0.0.0`, `OH_DATA_DIR=/data` and `OH_REQUIRE_AUTH=1`. `compose.yaml` mounts `./open-historia-data/` as the data directory and the key as a read-only secret:
+
+```bash
+openssl rand -hex 32 > open-historia-server.key
+chmod 600 open-historia-server.key
+docker compose pull
+docker compose up -d
+```
+
+The entrypoint lays the stock world into `/data/stock/` when it is missing or older; the server seeds the built-in scenario itself. A server reached by a domain name needs that name in `OPEN_HISTORIA_ALLOWED_HOSTS` (`OH_ALLOWED_HOSTS`): the server refuses a `Host` it does not answer to.
+
 ## Portability: the writable data dir
 
 `server/dataDir.js` is the whole portability story:
@@ -428,6 +493,13 @@ Every store imports this one constant, so a single env var relocates **all** wri
 | `OH_AGENT_WAIT_MS` | `30000` | How long one `list_requests` from the player's Agent waits for the next request of a running skip before it answers `running` |
 | `OH_ALLOW_REMOTE_RELAY` | unset | `=1` lets devices other than this computer use `/api/ai/relay`. Overrides and locks the Settings switch (`relayForLan` in `network-settings.json`) |
 | `OH_ALLOWED_HOSTS` | unset | Comma-separated host names the server also answers to, beyond IP addresses, `localhost` and this computer's name (a name behind a reverse proxy, a LAN DNS name); `*` turns the Host guard off |
+| `OH_SHARED_API_KEY_FILE` / `OH_SHARED_API_KEY` | unset | The shared key every `/api/*` call must carry (at least 16 characters; set one, not both). See [Shared servers](#shared-servers-the-key-accounts-and-the-servers-ai-profile) |
+| `OH_REQUIRE_AUTH` | unset | `=1` refuses to start without a shared key. The Docker image sets it |
+| `OH_USER_AUTH` | unset | `=1` requires a player account after the key (`server/userAuth.js`) |
+| `OH_REGISTRATION_OPEN` | on | `=0` leaves adding accounts to admins once the first one exists |
+| `OH_SECURE_COOKIES` | unset | `=1` marks the session and access cookies `Secure` (behind HTTPS) |
+| `OH_ADMIN_USERNAME`, `OH_ADMIN_PASSWORD` / `OH_ADMIN_PASSWORD_FILE` | unset | An admin account made at first start, instead of the first registration |
+| `OH_AI_ENDPOINT`, `OH_AI_MODEL`, `OH_AI_API_KEY` | unset | The server's AI profile when none is saved from the Account panel (`server/aiSettings.js`) |
 | `OH_DISCORD_PRESENCE` | on | `=0` turns Discord Rich Presence off (`server/discordPresence.js`) |
 | `OH_VISIT_COUNT` | on | `=0` has this server's pages load no visit counter, neither Google Analytics nor Umami: the game page and the bundled pages (guides, privacy) go through one gate (`public/consent.js`), which asks this server what it is (`server/appKind.js`) and is told `uncounted`. Use it for a test server |
 | `OH_DISCORD_APP_ID` | the committed id | Another Discord application for the presence (testing) |

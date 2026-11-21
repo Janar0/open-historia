@@ -35,6 +35,7 @@ import { endpointIsLocal, isLocalHostname } from "./localEndpoint.js";
 import { createKoboldCppMemory, endpointOriginOf, isKoboldCppModelName, saysKoboldCpp } from "./koboldCpp.js";
 import { MIN_CACHEABLE_PREFIX_CHARS, renderTemplateCached, splitSystemPromptForCache } from "./promptLayout.js";
 import { looksLikeModelFilePath, resolveServedModelId } from "./modelIds.js";
+import { getManagedOpenAICompatibleSettings, managedRelayProfileFor } from "./serverSettings.js";
 import { RELAY_CUT_OFF_MESSAGE, isRelayRefusal, isRelayUnreachable, relayUnreachableReason, withRelayCutoffHint } from "./relayResponse.js";
 import { attachLookupRound, attachCallMetrics, attachRequestOutcome, finishAiRecord, isTelemetryEnabled, startAiRecord  } from "./telemetry.js";
 import { JSON_URLS, loadRegionCatalog, readJson } from "../../runtime/assets.js";
@@ -616,11 +617,11 @@ function isLocalEndpoint(url) {
 // here as the failure it is, the way fetch() itself fails on a server that is
 // not there: the relay's 502 used to reach the provider paths as a busy
 // gateway's, and each waited fifteen seconds to ask a dead server again.
-const relayFetch = async (url, { method = "POST", headers = {}, payload, signal } = {}) => {
+const relayFetch = async (url, { method = "POST", headers = {}, payload, signal, relayCredentialProfile = "" } = {}) => {
     const response = await fetch("/api/ai/relay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, method, headers, payload }),
+        body: JSON.stringify({ url, method, headers, payload, ...(relayCredentialProfile ? { relayCredentialProfile } : {}) }),
         signal,
     });
     if (isRelayRefusal(response)) relayOnlyOrigins.delete(endpointOrigin(url));
@@ -643,6 +644,13 @@ const directFetch = (url, { method = "POST", headers = {}, payload, signal } = {
 // trigger the relay fallback.
 async function providerFetch(url, options = {}) {
     const origin = endpointOrigin(url);
+
+    // The endpoint a shared server's admin set for its players (serverSettings.js):
+    // only the server holds its key, so the call can only go through the relay.
+    const relayCredentialProfile = import.meta.env.VITE_OH_WEB ? "" : managedRelayProfileFor(url);
+    if (relayCredentialProfile) {
+        return relayFetch(url, { ...options, relayCredentialProfile });
+    }
 
     if (PAGE_IS_LOCAL && relayOnlyOrigins.has(origin)) {
         return relayOnlyOrigins.remember(origin, await relayFetch(url, options));
@@ -1911,7 +1919,15 @@ async function callOpenAI(systemPrompt, history, opts = {}) {
 }
 
 async function callOpenAICompatible(systemPrompt, history, opts = {}) {
-    const { entrySettings, ...rest } = opts;
+    const { entrySettings: ownSettings, ...rest } = opts;
+    // A shared server's own AI profile, when its admin set one, takes the place
+    // of the endpoint and model written on this device; its key stays on the
+    // server and is added by the relay (serverSettings.js).
+    const managed = await getManagedOpenAICompatibleSettings();
+    const managedEndpoint = managed?.managed ? normalizeEndpoint(managed.endpoint) : "";
+    const entrySettings = managedEndpoint
+        ? { ...ownSettings, endpoint: managedEndpoint, ...(managed.model ? { model: managed.model } : {}) }
+        : ownSettings;
     const settings = entrySettings;
     const endpoint = normalizeEndpoint(settings.endpoint);
 
@@ -1921,7 +1937,7 @@ async function callOpenAICompatible(systemPrompt, history, opts = {}) {
 
     const headers = {
         "Content-Type": "application/json",
-        ...(settings.apiKey.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
+        ...(!managedEndpoint && settings.apiKey.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
     };
 
     const model = await resolveModel("openai-compatible", {

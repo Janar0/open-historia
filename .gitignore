@@ -79,3 +79,9 @@ electron/channel.json
 
 # Relocatable wiki preview (scripts/build-wiki-preview.mjs) — a build output, like dist-site.
 dist-wiki-preview/
+
+# A shared server's secrets and data (compose.yaml, .env.example): the key that
+# closes the API, a local .env, and the host-mounted data directory.
+*.key
+.env
+/open-historia-data/

@@ -48,6 +48,7 @@ import { enterGame, hasEnteredGame, leaveGame, useGameEntered } from "../../runt
 import { loadCountryNames, normalizeOwnBasemaps, readJson, writeJson, JSON_URLS } from "../../runtime/assets.js";
 import { ownBasemapsFromGame } from "../../Editor/ownBasemaps.js";
 import { LABEL_FONT_SUGGESTIONS } from "../../runtime/mapSettings.js";
+import { hasUserAccount, openUserAccountPanel } from "../../runtime/auth.js";
 import FactionCreator from "./FactionCreator.jsx";
 import { groupRegions, normalizeGroupAreas, normalizeGroups } from "../../runtime/groups.js";
 import FeaturesSectionEditor from "./FeaturesSectionEditor.jsx";
@@ -461,6 +462,17 @@ const MenuRail = ({ activeTab, onTab, onOpenSettings, onOpenHistory }) => (
       </button>
     ))}
     <div style={{ flex: 1, minHeight: "0.6rem" }} />
+    {/* On a shared server with accounts (runtime/auth.js): the signed-in
+        player's password, and for an admin the players and the server's AI. */}
+    {hasUserAccount() && (
+      <button className="oh-tap-row" data-oh-theme-nav="" onClick={openUserAccountPanel} style={railButtonStyle(false)} type="button">
+        <svg aria-hidden="true" fill="none" height={MENU_RAIL_ICON} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width={MENU_RAIL_ICON}>
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" />
+        </svg>
+        <span>Account</span>
+      </button>
+    )}
     {typeof onOpenSettings === "function" && (
       <button className="oh-tap-row" data-oh-theme-nav="" onClick={onOpenSettings} style={railButtonStyle(false)} type="button">
         <ButtonIcon kind="settings" size={MENU_RAIL_ICON} />
@@ -5352,6 +5364,29 @@ const LibraryTopBar = ({ onOpenSettings }) => {
                     {tab.label}
                   </button>
                 ))}
+                {/* A shared server's account, as on the rail (runtime/auth.js). */}
+                {hasUserAccount() && (
+                  <button
+                    data-oh-theme-nav=""
+                    className="oh-tap-row"
+                    onClick={openUserAccountPanel}
+                    style={touchFit({
+                      ...themeButtonStyle,
+                      background: "rgba(255,255,255,0.04)",
+                      borderColor: "rgba(255,255,255,0.08)",
+                      borderRadius: "10px",
+                      fontSize: "0.86rem",
+                      fontWeight: 500,
+                      minHeight: "2.35rem",
+                      minWidth: "0",
+                      padding: "0 0.85rem",
+                      whiteSpace: "nowrap",
+                    }, touch)}
+                    type="button"
+                  >
+                    Account
+                  </button>
+                )}
               </div>
             </div>
           ) : (
