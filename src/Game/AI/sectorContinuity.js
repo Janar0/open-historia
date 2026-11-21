@@ -225,6 +225,7 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
   maxControlDelta = 18,
   maxNewCells = 3,
   maxAdvanceKm = 28,
+  maxFrontWidthGrowthKm = 12,
   removedCellIds = [],
 } = {}) => {
   const previousCells = Array.isArray(previousSector?.cells) ? previousSector.cells : [];
@@ -260,6 +261,14 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     || Number(candidateSector.frontWidthKm)
     || inferredFront?.frontWidthKm
     || averageRadius * 2.4);
+  // A breakthrough cannot become a full theatre-wide occupation in one turn,
+  // but it also must be able to widen. The old bound kept the entry corridor's
+  // width forever, so a front could advance in depth yet never secure enough
+  // frontage to finish a large administrative region.
+  const requestedFrontWidthKm = Number(candidateSector.frontWidthKm);
+  const nextFrontWidthKm = Number.isFinite(requestedFrontWidthKm)
+    ? Math.max(frontWidthKm, Math.min(frontWidthKm + Math.max(0, Number(maxFrontWidthGrowthKm) || 0), requestedFrontWidthKm))
+    : frontWidthKm;
   const previousDepthKm = Math.max(frontWidthKm, Number(previousSector.advanceDepthKm)
     || Math.max(0, ...previousCells.map((cell) => {
       const projection = frontOrigin && Number.isFinite(frontBearing)
@@ -295,7 +304,7 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     const staysInsideFront = !projection || (
       projection.forwardKm >= -radius(admissionCandidate) * 0.25
       && projection.forwardKm <= previousDepthKm + maxAdvanceKm + radius(admissionCandidate)
-      && Math.abs(projection.rightKm) <= frontWidthKm / 2 + radius(admissionCandidate) * 0.65
+      && Math.abs(projection.rightKm) <= nextFrontWidthKm / 2 + radius(admissionCandidate) * 0.65
     );
     const canAdmitMovedExisting = movedExistingCell
       && newCellCount < maxNewCells
@@ -368,7 +377,7 @@ export const boundTacticalSectorEvolution = (previousSector, candidateSector, {
     startedAt: previousSector.startedAt || candidateSector.startedAt,
     frontOrigin: previousSector.frontOrigin ?? candidateSector.frontOrigin ?? inferredFront?.frontOrigin,
     frontBearing: previousSector.frontBearing ?? candidateSector.frontBearing,
-    frontWidthKm,
+    frontWidthKm: Math.round(nextFrontWidthKm * 10) / 10,
     advanceDepthKm: Number.isFinite(advanceDepthKm) ? Math.round(advanceDepthKm * 10) / 10 : undefined,
     center,
     cells: admitted,
@@ -400,6 +409,35 @@ export const tacticalFrontSpanKm = (cells) => {
   return span;
 };
 
+// Direction-aware coverage is stricter than the longest distance between two
+// cells. A narrow spearhead can have a large diagonal span while still leaving
+// both flanks open. Once a front has an engine-derived bearing, measure the
+// secured frontage perpendicular to that bearing as well as its depth.
+export const tacticalDirectionalFrontMetrics = (sector) => {
+  const leaves = tacticalLeafCells(sector).filter((cell) => tacticalCoordinates(cell));
+  if (!leaves.length) return null;
+  const inferred = inferTacticalFrontGeometry(sector);
+  const frontOrigin = tacticalCoordinates(sector?.frontOrigin) || inferred?.frontOrigin;
+  const frontBearing = Number.isFinite(Number(sector?.frontBearing))
+    ? Number(sector.frontBearing)
+    : inferred?.frontBearing;
+  if (!frontOrigin || !Number.isFinite(frontBearing)) return null;
+  const projections = leaves.map((cell) => ({
+    cell,
+    projection: tacticalProjectPoint(frontOrigin, cell, frontBearing),
+  })).filter((entry) => entry.projection);
+  if (!projections.length) return null;
+  const averageRadiusKm = leaves.reduce((sum, cell) => sum + radius(cell), 0) / leaves.length;
+  const rightValues = projections.map((entry) => entry.projection.rightKm);
+  const forwardValues = projections.map((entry) => entry.projection.forwardKm);
+  return {
+    frontWidthKm: Math.max(0, Math.max(...rightValues) - Math.min(...rightValues)) + averageRadiusKm * 2,
+    advanceDepthKm: Math.max(...forwardValues) + averageRadiusKm,
+    frontOrigin,
+    frontBearing: ((Number(frontBearing) % 360) + 360) % 360,
+  };
+};
+
 export const tacticalRegionCoverageGate = (sector, regionGeometry) => {
   const leaves = tacticalLeafCells(sector);
   const regionSpanKm = tacticalGeometrySpanKm(regionGeometry);
@@ -407,17 +445,28 @@ export const tacticalRegionCoverageGate = (sector, regionGeometry) => {
   const averageRadiusKm = leaves.length
     ? leaves.reduce((sum, cell) => sum + radius(cell), 0) / leaves.length
     : 0;
-  const requiredSpanKm = Math.min(120, Math.max(12, regionSpanKm * 0.22));
-  const requiredCells = Math.min(9, Math.max(3, Math.ceil(requiredSpanKm / Math.max(5, averageRadiusKm * 2))));
+  const requiredSpanKm = Math.min(180, Math.max(18, regionSpanKm * 0.3));
+  const requiredCells = Math.min(24, Math.max(4, Math.ceil(requiredSpanKm / Math.max(5, averageRadiusKm * 1.8))));
   const securedCells = leaves.filter((cell) => Number(cell.control) >= 75 && cell.status === "held").length;
   const requiredSecuredCells = Math.max(2, Math.ceil(leaves.length * 0.7));
+  const directional = tacticalDirectionalFrontMetrics(sector);
+  const requiredFrontWidthKm = Math.min(60, Math.max(16, regionSpanKm * 0.18));
+  const requiredAdvanceDepthKm = Math.min(160, Math.max(24, regionSpanKm * 0.25));
+  const securedFrontWidthKm = directional?.frontWidthKm ?? frontSpanKm;
+  const securedAdvanceDepthKm = directional?.advanceDepthKm ?? frontSpanKm;
   return {
     secured: Boolean(regionSpanKm)
       && Number(sector?.control) >= 85
       && sector?.status === "held"
       && leaves.length >= requiredCells
       && securedCells >= requiredSecuredCells
-      && frontSpanKm + averageRadiusKm * 2 >= requiredSpanKm,
+      && frontSpanKm + averageRadiusKm * 2 >= requiredSpanKm
+      // Legacy sectors without a bearing keep the older span-only rule; new
+      // engine-derived fronts must also cover enough width perpendicular to
+      // their direction before the administrative border can move.
+      && (!directional
+        || (securedFrontWidthKm >= requiredFrontWidthKm
+          && securedAdvanceDepthKm >= requiredAdvanceDepthKm)),
     cellCount: leaves.length,
     securedCells,
     requiredCells,
@@ -425,8 +474,22 @@ export const tacticalRegionCoverageGate = (sector, regionGeometry) => {
     frontSpanKm,
     requiredSpanKm,
     regionSpanKm,
+    securedFrontWidthKm,
+    requiredFrontWidthKm,
+    securedAdvanceDepthKm,
+    requiredAdvanceDepthKm,
+    directionalFront: Boolean(directional),
   };
 };
+
+// Political sovereignty changes are an explicit structured event mode, not a
+// prose escape hatch. The caller supplies the event-level settlement signal;
+// this helper keeps the transfer contract small and regression-testable.
+export const tacticalPoliticalSettlementAllowed = ({ transfer, settlementNarration }) => (
+  transfer?.transferMode === "political"
+  && Boolean(settlementNarration)
+  && Boolean(String(transfer?.note || "").trim())
+);
 
 export const tacticalConnectionLimitKm = (left, right) => Math.min(
   48,
@@ -484,9 +547,42 @@ export const deriveNextTacticalCell = (sector, regionGeometry, { id } = {}) => {
   const frontMostKm = Math.max(...projections.map((entry) => entry.forwardKm));
   const averageRadiusKm = leaves.reduce((sum, cell) => sum + radius(cell), 0) / leaves.length;
   const stepKm = Math.max(3, Math.min(10, averageRadiusKm * 1.35));
-  const candidate = tacticalOffsetPoint(frontOrigin, frontBearing, frontMostKm + stepKm);
-  if (!candidate || (regionGeometry && !tacticalGeometryContainsPoint(regionGeometry, candidate))) return null;
-  if (leaves.some((cell) => tacticalDistanceKm(cell, candidate) < Math.max(2, averageRadiusKm * 0.55))) return null;
+  // A real administrative border is rarely a rectangle. A straight step from
+  // the front-most cell can therefore leave the region even though a nearby
+  // connected patch is still available along the same advance corridor. Search
+  // the bounded forward interval from the furthest legal point back toward the
+  // contact line, with a small lateral fan, rather than stalling the war at the
+  // first concave/diagonal boundary.
+  const lateralOffsets = [
+    0,
+    -averageRadiusKm * 0.65,
+    averageRadiusKm * 0.65,
+    -averageRadiusKm * 1.2,
+    averageRadiusKm * 1.2,
+    // Administrative borders can turn away from the nominal bearing. Keep
+    // the search attached to the spearhead, but allow one wider step along
+    // the frontage so a legal connected village is not rejected merely
+    // because the border bends around it.
+    -averageRadiusKm * 1.8,
+    averageRadiusKm * 1.8,
+    -averageRadiusKm * 2.4,
+    averageRadiusKm * 2.4,
+  ];
+  let candidate = null;
+  for (let forwardStepKm = stepKm; forwardStepKm >= 0.75 && !candidate; forwardStepKm -= 1) {
+    const base = tacticalOffsetPoint(frontOrigin, frontBearing, frontMostKm + forwardStepKm);
+    if (!base) continue;
+    for (const lateralOffsetKm of lateralOffsets) {
+      const probe = lateralOffsetKm
+        ? tacticalOffsetPoint(base, frontBearing + 90, lateralOffsetKm)
+        : base;
+      if (!probe || (regionGeometry && !tacticalGeometryContainsPoint(regionGeometry, probe))) continue;
+      if (leaves.some((cell) => tacticalDistanceKm(cell, probe) < Math.max(2, averageRadiusKm * 0.55))) continue;
+      candidate = probe;
+      break;
+    }
+  }
+  if (!candidate) return null;
 
   return {
     id: id || `${sector.id || "sector"}-advance-${leaves.length + 1}`,
@@ -509,6 +605,17 @@ export const hasTacticalAnchor = (cells, anchors) => {
     }
   }
   return false;
+};
+
+// Used by movement validation to keep an active formation attached to the
+// sector it is advancing through. A destination may be a neighbouring cell,
+// but it cannot silently jump into the rear while the event claims ground.
+export const tacticalMoveStaysWithFront = (destination, sector) => {
+  const leaves = tacticalLeafCells(sector);
+  const anchors = leaves.length > 0
+    ? leaves
+    : (sector?.center ? [{ center: sector.center, radiusKm: sector.radiusKm }] : []);
+  return Boolean(destination && anchors.length && hasTacticalAnchor([destination], anchors));
 };
 
 export const groundSpawnIsFriendly = ({

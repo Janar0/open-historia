@@ -13,11 +13,15 @@ import {
   tacticalConnectedComponents,
   tacticalConnectionLimitKm,
   tacticalDistanceKm,
+  tacticalDirectionalFrontMetrics,
   tacticalEntryPoint,
   tacticalGeometryContainsPoint,
   tacticalNearestBoundaryPoint,
+  tacticalOffsetPoint,
+  tacticalPoliticalSettlementAllowed,
   tacticalProjectPoint,
   tacticalRegionCoverageGate,
+  tacticalMoveStaysWithFront,
 } from "../src/Game/AI/sectorContinuity.js";
 import {
   controlSliceMultiPolygon,
@@ -94,6 +98,18 @@ test("hostile ground movement must remain beside the connected front", () => {
   const borderFront = [cell(39.35, 47.08, 7)];
   assert.equal(hostileGroundMoveIsContinuous(unit, cell(39.36, 47.08, 2), borderFront), true);
   assert.equal(hostileGroundMoveIsContinuous(unit, cell(39.72, 47.23, 2), borderFront), false);
+});
+
+test("an advancing formation cannot leave its only active front", () => {
+  const sector = {
+    id: "kharkiv-front",
+    cells: [
+      { ...cell(37.60, 50.28, 3.4), id: "rear" },
+      { ...cell(37.64, 50.20, 3.4), id: "lead" },
+    ],
+  };
+  assert.equal(tacticalMoveStaysWithFront(cell(37.65, 50.21, 2), sector), true);
+  assert.equal(tacticalMoveStaysWithFront(cell(37.45, 50.43, 2), sector), false);
 });
 
 test("the engine derives first contact just across the real target boundary", () => {
@@ -233,6 +249,37 @@ test("an established front grows by bounded pieces and its old cells cannot tele
   )), true);
 });
 
+test("an established front can widen, but only by a bounded frontage per turn", () => {
+  const previous = {
+    id: "front-width",
+    name: "Border front",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 1, lat: 0 },
+    frontBearing: 90,
+    frontWidthKm: 10,
+    advanceDepthKm: 18,
+    cells: [
+      { ...cell(1.04, 0, 4), id: "old-1", control: 72, status: "contested" },
+    ],
+  };
+  const candidate = {
+    ...previous,
+    frontWidthKm: 50,
+    cells: [
+      ...previous.cells,
+      { ...cell(1.16, 0.1, 4), id: "north-flank", control: 25, status: "assault" },
+      { ...cell(1.16, -0.1, 4), id: "south-flank", control: 25, status: "assault" },
+    ],
+  };
+  const widened = boundTacticalSectorEvolution(previous, candidate);
+  assert.equal(widened.frontWidthKm, 22);
+  assert.equal(widened.cells.some((entry) => entry.id === "north-flank"), true);
+  assert.equal(widened.cells.some((entry) => entry.id === "south-flank"), true);
+
+  const metrics = tacticalDirectionalFrontMetrics(widened);
+  assert.ok(metrics.frontWidthKm > 10);
+});
+
 test("a moved cell reused under its old id becomes the next connected piece", () => {
   const previous = {
     id: "front-1",
@@ -281,6 +328,39 @@ test("a repeated partial request gets a deterministic next cell when the model o
   assert.equal(next.id, "front-1-advance-2");
   assert.ok(next.center.lng > sector.cells[0].center.lng);
   assert.equal(tacticalGeometryContainsPoint(region, next), true);
+});
+
+test("a concave administrative border backs the next cell onto nearby legal ground", () => {
+  const region = {
+    type: "Polygon",
+    coordinates: [[[1, -1], [1.5, -1], [1.12, 0], [1.5, 1], [1, 1], [1, -1]]],
+  };
+  const sector = {
+    id: "notch-front",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 1, lat: 0 },
+    frontBearing: 90,
+    frontWidthKm: 8,
+    advanceDepthKm: 10,
+    control: 24,
+    cells: [{
+      id: "entry",
+      ownerCode: "Attacker",
+      center: { lng: 1.08, lat: 0 },
+      radiusKm: 4,
+      control: 24,
+      status: "assault",
+    }],
+  };
+  const straightProbe = tacticalOffsetPoint(sector.frontOrigin, sector.frontBearing, 14.5);
+  assert.equal(tacticalGeometryContainsPoint(region, straightProbe), false);
+
+  const next = deriveNextTacticalCell(sector, region, { id: "notch-front-advance-2" });
+  assert.ok(next);
+  assert.equal(next.id, "notch-front-advance-2");
+  assert.equal(tacticalGeometryContainsPoint(region, next), true);
+  assert.ok(Math.abs(next.center.lat) > 0.01);
+  assert.ok(tacticalDistanceKm(sector.cells[0], next) < 12);
 });
 
 test("old tactical cells disappear only through an explicit remove", () => {
@@ -335,6 +415,32 @@ test("an engine-derived border bridgehead survives operation normalization and p
   assert.equal(persisted.control <= 35, true);
 });
 
+test("held tactical ground remains held before control reaches one hundred percent", () => {
+  const persisted = applySectorOps([], [{
+    op: "upsert",
+    sector: {
+      id: "held-front",
+      regionId: "target-region",
+      name: "Secured bridgehead",
+      ownerCode: "Attacker",
+      control: 92,
+      status: "held",
+      center: { lng: 2, lat: 0 },
+      radiusKm: 8,
+      cells: [{
+        id: "held-cell",
+        ownerCode: "Attacker",
+        control: 92,
+        status: "held",
+        center: { lng: 2, lat: 0 },
+        radiusKm: 8,
+      }],
+    },
+  }])[0];
+  assert.equal(persisted.status, "held");
+  assert.equal(persisted.control, 92);
+});
+
 test("a tiny secured advance cannot flip a large administrative region", () => {
   const largeRegion = {
     type: "Polygon",
@@ -379,4 +485,125 @@ test("a broad mature front can complete administrative control", () => {
   assert.equal(coverage.cellCount >= coverage.requiredCells, true);
   assert.equal(coverage.frontSpanKm >= coverage.requiredSpanKm, true);
   assert.equal(coverage.secured, true);
+});
+
+test("a directional spearhead cannot complete a region by spanning only its depth", () => {
+  const region = {
+    type: "Polygon",
+    coordinates: [[[0, 0], [2, 0], [2, 1], [0, 1], [0, 0]]],
+  };
+  const cells = Array.from({ length: 9 }, (_, index) => ({
+    ...cell(0.15 + index * 0.2, 0.5, 8),
+    id: `spear-${index + 1}`,
+    control: 92,
+    status: "held",
+  }));
+  const coverage = tacticalRegionCoverageGate({
+    id: "front-spear",
+    name: "Narrow spearhead",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 0, lat: 0.5 },
+    frontBearing: 90,
+    frontWidthKm: 16,
+    control: 92,
+    status: "held",
+    cells,
+  }, region);
+  assert.equal(coverage.directionalFront, true);
+  assert.ok(coverage.securedFrontWidthKm < coverage.requiredFrontWidthKm);
+  assert.equal(coverage.secured, false);
+});
+
+test("a wide shallow line cannot complete a region without operational depth", () => {
+  const region = {
+    type: "Polygon",
+    coordinates: [[[0, 0], [2, 0], [2, 1], [0, 1], [0, 0]]],
+  };
+  const cells = Array.from({ length: 9 }, (_, index) => ({
+    ...cell(0.2, 0.1 + index * 0.1, 8),
+    id: `shallow-${index + 1}`,
+    control: 92,
+    status: "held",
+  }));
+  const coverage = tacticalRegionCoverageGate({
+    id: "front-shallow",
+    name: "Wide but shallow front",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 0, lat: 0.5 },
+    frontBearing: 90,
+    frontWidthKm: 120,
+    control: 92,
+    status: "held",
+    cells,
+  }, region);
+  assert.equal(coverage.directionalFront, true);
+  assert.ok(coverage.securedFrontWidthKm >= coverage.requiredFrontWidthKm);
+  assert.ok(coverage.securedAdvanceDepthKm < coverage.requiredAdvanceDepthKm);
+  assert.equal(coverage.secured, false);
+});
+
+test("settlement prose alone cannot authorize a political region transfer", () => {
+  assert.equal(tacticalPoliticalSettlementAllowed({
+    transfer: { transferMode: "military", note: "capitulation" },
+    settlementNarration: true,
+  }), false);
+  assert.equal(tacticalPoliticalSettlementAllowed({
+    transfer: { transferMode: "political" },
+    settlementNarration: true,
+  }), false);
+  assert.equal(tacticalPoliticalSettlementAllowed({
+    transfer: { transferMode: "political", note: "Signed peace treaty transfers sovereignty" },
+    settlementNarration: true,
+  }), true);
+  assert.equal(tacticalPoliticalSettlementAllowed({
+    transfer: { transferMode: "political", note: "Signed peace treaty" },
+    settlementNarration: false,
+  }), false);
+});
+
+test("a capture lifecycle stays partial until a connected held front is mature", () => {
+  const region = {
+    type: "Polygon",
+    coordinates: [[[0, -1], [3, -1], [3, 1], [0, 1], [0, -1]]],
+  };
+  const cells = [];
+  for (let column = 0; column < 6; column += 1) {
+    for (const lat of [-0.225, -0.075, 0.075, 0.225]) {
+      cells.push({
+        ...cell(0.15 + column * 0.17, lat, 8),
+        id: `advance-${column + 1}-${lat}`,
+        control: 92,
+        status: "held",
+      });
+    }
+  }
+
+  let front = {
+    id: "lifecycle-front",
+    name: "Border breakthrough",
+    ownerCode: "Attacker",
+    frontOrigin: { lng: 0, lat: 0 },
+    frontBearing: 90,
+    frontWidthKm: 16,
+    advanceDepthKm: 16,
+    control: 20,
+    status: "assault",
+    cells: [cells[0]],
+  };
+  assert.equal(tacticalRegionCoverageGate(front, region).secured, false);
+
+  for (let step = 1; step <= 11; step += 1) {
+    front = boundTacticalSectorEvolution(front, {
+      ...front,
+      control: Math.min(92, 20 + step * 18),
+      status: step === 11 ? "held" : "contested",
+      frontWidthKm: 60,
+      cells: cells.slice(0, Math.min(cells.length, 1 + step * 3)),
+    });
+  }
+
+  const mature = tacticalRegionCoverageGate(front, region);
+  assert.equal(mature.secured, true);
+  assert.ok(front.cells.length >= mature.requiredCells);
+  assert.equal(front.cells.every((entry) => entry.control >= 75 && entry.status === "held"), true);
 });

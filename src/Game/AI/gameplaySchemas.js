@@ -96,8 +96,14 @@ const regionTransferSchema = {
       + "(the engine resolves names to ids).",
     ),
     regionName: textSchema("Human-readable region name, when known."),
-    fromCode: textSchema("Previous owner's FULL country name (\"Spain\"), never a country code."),
+    fromCode: nonEmptyTextSchema("Previous owner's FULL country name (\"Spain\"), never a country code. This must match the region's current owner."),
     toCode: textSchema("New owner's FULL country name (\"Spain\"), never a country code such as \"ESP\"."),
+    transferMode: {
+      type: "string",
+      enum: ["military", "political"],
+      description:
+        "Use military for a battlefield transfer (the default). Use political only when this same event structurally records a treaty, capitulation, referendum or government collapse; political does not describe an ordinary advance.",
+    },
     note: textSchema("Brief reason for the transfer."),
     wholeCountry: {
       type: "boolean",
@@ -109,7 +115,7 @@ const regionTransferSchema = {
         + "one named region.",
     },
   },
-  required: ["regionId", "toCode"],
+  required: ["regionId", "fromCode", "toCode"],
   additionalProperties: false,
 };
 
@@ -264,6 +270,11 @@ const unitOpSchema = {
         toLat: { type: "number", minimum: -90, maximum: 90 },
         regionId: textSchema("Destination region identifier, when known."),
         sectorId: textSchema("Destination tactical sector identifier, when known."),
+        status: {
+          type: "string",
+          description: "Optional status after the move, for example engaged when a defending formation reaches the contact.",
+          enum: ["idle", "moving", "engaged", "pending"],
+        },
         note: textSchema("Brief explanation of the operation."),
       },
       required: ["op", "unitId", "toLng", "toLat"],
@@ -739,7 +750,7 @@ const controlSectorSchema = {
       additionalProperties: false,
     },
     frontBearing: { type: "number", minimum: 0, maximum: 360, description: "Engine-derived direction of advance in degrees clockwise from north. Preserve it on later updates when present." },
-    frontWidthKm: { type: "number", minimum: 2, maximum: 60, description: "Engine-derived width of the connected breakthrough corridor. Preserve it when present." },
+    frontWidthKm: { type: "number", minimum: 2, maximum: 60, description: "Engine-derived width of the connected breakthrough corridor. Preserve it when present; widen gradually as the front consolidates, never in one leap." },
     advanceDepthKm: { type: "number", minimum: 2, maximum: 160, description: "Engine-derived depth reached from the border entry. Preserve it when present." },
     radiusKm: { type: "number", minimum: 0.5, maximum: 80, description: "Approximate radius of the tactical patch in kilometres." },
     status: {

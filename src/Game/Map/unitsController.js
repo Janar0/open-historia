@@ -53,7 +53,9 @@ export const subscribeUnits = (fn) => {
 // revealed event rather than the final post-jump list. null = live state.
 let unitsOverride = null;
 export const setUnitsOverride = (list) => {
-  unitsOverride = Array.isArray(list) ? list : null;
+  const nextOverride = Array.isArray(list) ? list : null;
+  if (unitsOverride === nextOverride) return;
+  unitsOverride = nextOverride;
   emit();
 };
 

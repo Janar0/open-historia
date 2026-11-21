@@ -370,8 +370,33 @@ export const updateScenarioFromBundle = async (scenarioId, bundle) => {
   return details;
 };
 
-export const loadGameDetails = async (gameId) =>
-  requestJson(`${GAMES_API_ROOT}/${encodeURIComponent(gameId)}`);
+// A game jump updates the authoritative game record before the lightweight
+// library catalog is refreshed. Keep the in-game summary pill in lockstep with
+// that record while the DateWidget polls details; otherwise the date widget
+// shows the new turn while the top-left game summary still shows yesterday.
+const mergeActiveGameDetails = (details) => {
+  const game = details?.game;
+  if (!game || String(game.id) !== String(libraryState.activeGameId)) return;
+
+  const current = libraryState.activeGame;
+  const changed = !current || Object.keys(game).some((key) => current[key] !== game[key]);
+  if (!changed) return;
+
+  const nextGames = libraryState.games.map((entry) => (
+    String(entry.id) === String(game.id) ? { ...entry, ...game } : entry
+  ));
+  setLibraryState({
+    ...libraryState,
+    activeGame: current ? { ...current, ...game } : game,
+    games: nextGames,
+  });
+};
+
+export const loadGameDetails = async (gameId) => {
+  const details = await requestJson(`${GAMES_API_ROOT}/${encodeURIComponent(gameId)}`);
+  mergeActiveGameDetails(details);
+  return details;
+};
 
 export const createGame = async (payload) => {
   const details = await requestJson(GAMES_API_ROOT, {

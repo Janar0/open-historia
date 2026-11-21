@@ -145,7 +145,7 @@ Every event may carry an `impacts` object (`normalizeEventImpacts`, `src/runtime
 
 | Impact array | Element normalizer | Applied by | Effect on `world.json` |
 |---|---|---|---|
-| `regionTransfers` | `normalizeRegionTransfer` (`:420`) → `{regionId,toCode,fromCode,regionName,note}` | inline loop (`:1048`) | `regionOwnershipOverrides[regionId] = toCode`. |
+| `regionTransfers` | `normalizeRegionTransfer` (`:420`) → `{regionId,toCode,fromCode,regionName,transferMode,note}` | inline loop (`:1048`) | `regionOwnershipOverrides[regionId] = toCode`; AI military transfers are admitted only after tactical continuity validation, while political transfers require an explicit settlement mode. |
 | `polityChanges` | `normalizePolityChange` (`:442`) → `{code,name,color,aliases[],note,reputation,tags}` | inline loop (`:1052`) | Upserts `polityOverrides[code]`; also writes `colors[code]` (§7), `internationalReputation[code]`, `countryTags[code]`. |
 | `unitOps` | `normalizeUnitOp` (`:592`) → `spawn\|move\|strength\|remove` | `applyUnitOps` (`:638`) | Rewrites `world.units`. |
 | `forceOps` | `normalizeForceOp` → `withdraw\|redeploy` with `all`, `unitIds`, `regionIds` or `sectorIds` | `applyForceOps` | Expands one quantified order across every matching formation, marking all of them moving and optionally moving them to a rear destination. |

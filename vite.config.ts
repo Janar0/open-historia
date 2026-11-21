@@ -116,7 +116,18 @@ export default defineConfig(({ mode }) => ({
   // save/load (and the game's runtime endpoints) work with hot-reload too.
   server: {
     proxy: {
-      '/api': 'http://localhost:3000',
+      '/api': {
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+        // The Express API deliberately rejects cross-origin writes. From the
+        // browser's point of view Vite is the app origin, so mirror the proxy
+        // target's origin on the upstream request instead of weakening CSRF.
+        configure(proxy) {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Origin', 'http://127.0.0.1:3000')
+          })
+        },
+      },
     },
   },
   build: {

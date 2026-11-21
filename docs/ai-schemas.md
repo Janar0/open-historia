@@ -100,8 +100,9 @@ The heart of the map-mutating pipeline. Attached to events (`eventSchema.impacts
 |---|---|---|---|
 | `regionId` | string | Exact region id **or plain name** (engine resolves names → ids) | **yes** |
 | `regionName` | string | Human-readable name, when known | no |
-| `fromCode` | string | Previous owner polity code — lets the resolver locate the region | no |
+| `fromCode` | string | Previous owner polity name — must match the region's current owner; prevents stale or invented transfers | **yes** |
 | `toCode` | string | New owner polity code | **yes** |
+| `transferMode` | `"military" | "political"` | Military is the default and requires a mature connected front. Political is allowed only with settlement language and a non-empty mechanism note in the same transfer | no |
 | `note` | string | Brief reason | no |
 
 ### 4.3 `polityChangeSchema` (`:107`)

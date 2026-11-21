@@ -1,5 +1,5 @@
 /*! Open Historia — portions (troop system integration + globe sun/stars) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Map from "react-map-gl/maplibre";
 import Nations from "./Nations";
 import ControlSectors from "./ControlSectors.jsx";
@@ -14,6 +14,7 @@ import Units from "./Units";
 import UnitPopup from "../Selection/Units";
 import MarkersLayer from "./MarkersLayer.jsx";
 import FeaturePopup from "../Selection/Features.jsx";
+import OperationalFrontRail from "./OperationalFrontRail.jsx";
 import {
   DEFAULT_BASEMAP_ID,
   TERRAIN_TILE_TEMPLATE,
@@ -21,8 +22,11 @@ import {
   basemapProtocolTemplate,
   ensureBasemapProtocol,
   esriTileTemplate,
+  loadRegionCatalog,
 } from "../../runtime/assets.js";
 import { MAP_SETTING_KEYS, useMapSetting } from "../../runtime/mapSettings.js";
+import { loadGameDetails, useLibraryState } from "../../runtime/library.js";
+import { useWorldState } from "./useWorldState.js";
 
 // The high-res source goes through the ohbase protocol so ESRI's "Map Data
 // Not Yet Available" placeholders get replaced with upscaled ancestor tiles.
@@ -37,6 +41,17 @@ const SATELLITE_PAINT = {
   "raster-contrast": 0.08,
   "raster-brightness-min": 0.02,
   "raster-brightness-max": 0.78,
+};
+
+// Once a live front exists the basemap becomes terrain for a staff map, not the
+// main visual. Desaturate and lower it so the contact line, counters, and
+// operational fills carry the information instead of a pastel satellite wash.
+const OPERATIONAL_SATELLITE_PAINT = {
+  ...SATELLITE_PAINT,
+  "raster-saturation": -0.86,
+  "raster-contrast": 0.28,
+  "raster-brightness-min": 0,
+  "raster-brightness-max": 0.42,
 };
 
 // Full-map image corners (TL, TR, BR, BL). The flat mercator map only reaches
@@ -58,7 +73,7 @@ const WORLD_IMAGE_COORDS_GLOBE = [
   [-180, -89.9],
 ];
 
-const buildWorldStyle = (basemapId, customBg, backgroundDeclared, isGlobe) => {
+const buildWorldStyle = (basemapId, customBg, backgroundDeclared, isGlobe, operationalMode = false) => {
   // A custom uploaded map replaces the ESRI basemap entirely — no satellite or
   // terrain tiles load at all (saves those requests), the uploaded map is the
   // base layer, and the regions/labels from <Nations> paint on top of it.
@@ -132,19 +147,36 @@ const buildWorldStyle = (basemapId, customBg, backgroundDeclared, isGlobe) => {
       maxzoom: 5,
       tileSize: 256,
     },
+    "operational-veil": {
+      type: "geojson",
+      data: {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [-180, 85.0511],
+            [180, 85.0511],
+            [180, -85.0511],
+            [-180, -85.0511],
+            [-180, 85.0511],
+          ]],
+        },
+        properties: {},
+      },
+    },
   },
   layers: [
     {
       id: "satellite-lowres-layer",
       type: "raster",
       source: "satellite-lowres",
-      paint: SATELLITE_PAINT,
+      paint: operationalMode ? OPERATIONAL_SATELLITE_PAINT : SATELLITE_PAINT,
     },
     {
       id: "satellite-layer",
       type: "raster",
       source: "satellite",
-      paint: SATELLITE_PAINT,
+      paint: operationalMode ? OPERATIONAL_SATELLITE_PAINT : SATELLITE_PAINT,
     },
     {
       id: "hills",
@@ -153,6 +185,15 @@ const buildWorldStyle = (basemapId, customBg, backgroundDeclared, isGlobe) => {
       paint: {
         "hillshade-exaggeration": 0.1,
         "hillshade-shadow-color": "#000",
+      },
+    },
+    {
+      id: "operational-veil",
+      type: "fill",
+      source: "operational-veil",
+      paint: {
+        "fill-color": "#0a1726",
+        "fill-opacity": operationalMode ? 0.16 : 0,
       },
     },
   ],
@@ -164,10 +205,50 @@ const buildWorldStyle = (basemapId, customBg, backgroundDeclared, isGlobe) => {
   };
 };
 
+const collectGeometryCoordinates = (value, output) => {
+  if (!Array.isArray(value)) return;
+  if (
+    value.length >= 2 &&
+    Number.isFinite(Number(value[0])) &&
+    Number.isFinite(Number(value[1]))
+  ) {
+    output.push([Number(value[0]), Number(value[1])]);
+    return;
+  }
+  value.forEach((child) => collectGeometryCoordinates(child, output));
+};
+
+const geometryCenter = (geometry) => {
+  const coordinates = [];
+  collectGeometryCoordinates(geometry?.coordinates, coordinates);
+  if (!coordinates.length) return null;
+
+  const totals = coordinates.reduce(
+    (sum, [lng, lat]) => ({ lng: sum.lng + lng, lat: sum.lat + lat }),
+    { lng: 0, lat: 0 },
+  );
+  return {
+    lng: totals.lng / coordinates.length,
+    lat: totals.lat / coordinates.length,
+  };
+};
+
+const distanceKmBetweenPoints = (left, right) => {
+  if (!left || !right) return Infinity;
+  const lat = (Number(left.lat) + Number(right.lat)) / 2;
+  const east = (Number(right.lng) - Number(left.lng)) * 111.32
+    * Math.max(0.08, Math.cos((lat * Math.PI) / 180));
+  const north = (Number(right.lat) - Number(left.lat)) * 111.32;
+  return Math.hypot(east, north);
+};
+
 function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
   const hasReportedInitialIdleRef = useRef(false);
+  const focusedGameRef = useRef("");
   const [loading, setLoading] = useState(false);
   const loadTimerRef = useRef(null);
+  const { activeGameId, activeGame } = useLibraryState();
+  const { controlSectors } = useWorldState();
   const viewStateRef = useRef({
     longitude: 0,
     latitude: 0,
@@ -183,22 +264,164 @@ function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
   const isGlobe = projection === "globe";
   const roadsEnabled = useMapSetting(MAP_SETTING_KEYS.showRoads);
   const mapProjection = useMemo(() => ({ type: projection }), [projection]);
+  const focusPlayerCountry = useCallback(() => {
+    const map = mapRef?.current?.getMap?.();
+    if (!map || !activeGameId) return Promise.resolve(false);
+
+    const playerCountry = activeGame?.country
+      ? Promise.resolve(activeGame.country)
+      : loadGameDetails(activeGameId).then((details) => details?.game?.country);
+    return playerCountry
+      .then((countryValue) => {
+        const country = String(countryValue ?? "").trim();
+        if (!country) return null;
+        const sectorCells = controlSectors.flatMap((sector) => (
+          Array.isArray(sector?.cells) ? sector.cells : []
+        ));
+        const tacticalCenters = controlSectors.flatMap((sector) => {
+          const cells = Array.isArray(sector?.cells) ? sector.cells : [];
+          // Once a theatre has a tactical cell grid, frame the contact itself.
+          // Including the original border entry in the fit kept the leading
+          // cell and its front line at the bottom edge of the screen. The
+          // entry remains in the state and in the command logic; it should not
+          // decide the player's operational viewport.
+          const points = sectorCells.length
+            ? cells
+            : [sector?.frontOrigin, sector?.center, sector];
+          return points.map((cell) => {
+            const center = cell?.center && typeof cell.center === "object" ? cell.center : cell;
+            const lng = Number(center?.lng);
+            const lat = Number(center?.lat);
+            return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+          }).filter(Boolean);
+        });
+        if (tacticalCenters.length) {
+          const minLng = Math.min(...tacticalCenters.map((point) => point.lng));
+          const maxLng = Math.max(...tacticalCenters.map((point) => point.lng));
+          const minLat = Math.min(...tacticalCenters.map((point) => point.lat));
+          const maxLat = Math.max(...tacticalCenters.map((point) => point.lat));
+          const center = {
+            lng: (minLng + maxLng) / 2,
+            lat: (minLat + maxLat) / 2,
+          };
+          const leadCenters = controlSectors.map((sector) => {
+            const cells = Array.isArray(sector?.cells) ? sector.cells : [];
+            const lastCell = cells.at(-1);
+            const point = lastCell?.center && typeof lastCell.center === "object" ? lastCell.center : lastCell;
+            const lng = Number(point?.lng);
+            const lat = Number(point?.lat);
+            return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+          }).filter(Boolean);
+          // Keep the whole connected corridor in frame, but bias the viewport
+          // toward the newest contact. Centering on the arithmetic midpoint
+          // left the live lead cell at the bottom edge after each advance.
+          const leadCenter = leadCenters.length
+            ? {
+                lng: leadCenters.reduce((sum, point) => sum + point.lng, 0) / leadCenters.length,
+                lat: leadCenters.reduce((sum, point) => sum + point.lat, 0) / leadCenters.length,
+              }
+            : null;
+          const focusCenter = leadCenter
+            ? {
+                lng: center.lng + (leadCenter.lng - center.lng) * 0.24,
+                lat: center.lat + (leadCenter.lat - center.lat) * 0.24,
+              }
+            : center;
+          const longitudeSpan = maxLng - minLng;
+          const latitudeSpan = maxLat - minLat;
+          const spanFloor = controlSectors.length === 1 ? 0.18 : 0.42;
+          const span = Math.max(spanFloor, longitudeSpan, latitudeSpan);
+          const zoomCap = controlSectors.length === 1 ? 10.5 : 9.6;
+          const focusSignature = controlSectors.map((sector) => ({
+            id: sector.id,
+            frontOrigin: sector.frontOrigin,
+            center: sector.center,
+            cells: (Array.isArray(sector.cells) ? sector.cells : []).map((cell) => ({
+              id: cell.id,
+              center: cell.center,
+              depth: cell.depth,
+              status: cell.status,
+              control: cell.control,
+            })),
+          }));
+          const focusKey = `${activeGameId}:${country.toLowerCase()}:front:${JSON.stringify(focusSignature)}`;
+          const currentCenter = map.getCenter?.();
+          const currentZoom = Number(map.getZoom?.() ?? 0);
+          const focusStillVisible = currentZoom >= Math.max(7.4, zoomCap - 2)
+            && distanceKmBetweenPoints(currentCenter, center) <= Math.max(48, span * 111.32 * 2.5);
+          // A world/style reload can reset MapLibre's camera without changing
+          // the sector signature. Do not trust the old focus key in that case:
+          // the active front must remain on screen after a turn resolves.
+          if (focusedGameRef.current === focusKey && focusStillVisible) return true;
+          focusedGameRef.current = focusKey;
+          const viewSpan = span * (controlSectors.length === 1 ? 0.84 : 0.9);
+          map.flyTo({
+            center: [focusCenter.lng, focusCenter.lat],
+            // A tactical theatre needs the close operational scale used by the
+            // reference maps. A single active front gets a closer view; a
+            // multi-sector theatre keeps enough operational depth in frame.
+            // The full cell span includes the secured rear. Use a tighter
+            // operational window so the leading contact and formations stay
+            // readable after the front grows instead of shrinking into a
+            // theatre-wide overview.
+            zoom: Math.max(8.2, Math.min(zoomCap, zoomCap - Math.log2(viewSpan / spanFloor))),
+            duration: 850,
+            essential: true,
+          });
+          return { focused: true };
+        }
+        return loadRegionCatalog().then((catalog) => ({ catalog, country }));
+      })
+      .then((result) => {
+        if (!result) return false;
+        if (result.focused) return true;
+        const { catalog, country } = result;
+        const focusKey = `${activeGameId}:${country.toLowerCase()}`;
+        if (focusedGameRef.current === focusKey) return true;
+        const countryKey = country.toLowerCase();
+        const centers = (Array.isArray(catalog) ? catalog : [])
+          .filter((region) => String(region?.country ?? "").trim().toLowerCase() === countryKey)
+          .map((region) => geometryCenter(region.geometry))
+          .filter(Boolean);
+        if (!centers.length) return false;
+
+        const center = centers.reduce(
+          (sum, point) => ({ lng: sum.lng + point.lng, lat: sum.lat + point.lat }),
+          { lng: 0, lat: 0 },
+        );
+        focusedGameRef.current = focusKey;
+        map.flyTo({
+          center: [center.lng / centers.length, center.lat / centers.length],
+          zoom: Math.max(3.5, Math.min(4.15, map.getZoom?.() ?? 3.5)),
+          duration: 650,
+          essential: true,
+        });
+        return true;
+      })
+      .catch(() => false);
+  }, [activeGame?.country, activeGameId, controlSectors, mapRef]);
   const styleUsesGlobeCoords = customBg?.kind === "image" && isGlobe;
   const worldStyle = useMemo(
-    () => buildWorldStyle(worldBasemap || DEFAULT_BASEMAP_ID, customBg, bgDeclared, styleUsesGlobeCoords),
-    [customBg, bgDeclared, styleUsesGlobeCoords, worldBasemap],
+    () => buildWorldStyle(
+      worldBasemap || DEFAULT_BASEMAP_ID,
+      customBg,
+      bgDeclared,
+      styleUsesGlobeCoords,
+      controlSectors.length > 0,
+    ),
+    [bgDeclared, controlSectors.length, customBg, styleUsesGlobeCoords, worldBasemap],
   );
   // Globe terrain is unsupported by MapLibre and can leave its shader cache invalid
   // when projections change. Keep the setting enabled and restore it on flat maps.
   const terrain = useMemo(
     () =>
-      terrainEnabled && !isGlobe && !customBg && !bgDeclared
+      terrainEnabled && controlSectors.length === 0 && !isGlobe && !customBg && !bgDeclared
         ? {
             source: "terrain-source",
             exaggeration: 15,
           }
         : null,
-    [terrainEnabled, isGlobe, customBg, bgDeclared],
+    [terrainEnabled, controlSectors.length, isGlobe, customBg, bgDeclared],
   );
   // Render at reduced pixel density when zoomed far out: the whole-world view
   // draws every region, border and label at once, and full native resolution
@@ -225,9 +448,29 @@ function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
     applyDynamicPixelRatio(viewStateRef.current?.zoom ?? 0);
     if (hasReportedInitialIdleRef.current) return;
     hasReportedInitialIdleRef.current = true;
+    focusPlayerCountry();
     onInitialIdle?.();
     setLoading(false);
-  }, [applyDynamicPixelRatio, onInitialIdle]);
+  }, [applyDynamicPixelRatio, focusPlayerCountry, onInitialIdle]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer = null;
+    let attempts = 0;
+    const retryFocus = () => {
+      if (cancelled) return;
+      Promise.resolve(focusPlayerCountry()).then((focused) => {
+        if (cancelled || focused || attempts >= 20) return;
+        attempts += 1;
+        retryTimer = window.setTimeout(retryFocus, 350);
+      });
+    };
+    retryFocus();
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    };
+  }, [focusPlayerCountry]);
   const handleLoading = useCallback(() => {
     setLoading(true);
     clearTimeout(loadTimerRef.current);
@@ -330,6 +573,7 @@ function World({ mapRef, projection, terrainEnabled, onInitialIdle }) {
         <UnitPopup />
         <FeaturePopup />
       </Map>
+      <OperationalFrontRail />
       {isGlobe && (
         <canvas
           id="oh-globe-lighting"

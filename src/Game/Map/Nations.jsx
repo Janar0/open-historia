@@ -468,7 +468,9 @@ const WorldMap = ({ isGlobe = false }) => {
     labelFont,
     labelHaloColor,
     labelTextColor,
+    controlSectors,
   } = useWorldState();
+  const tacticalMapMode = worldKnown && controlSectors.length > 0;
   const mapDisplaySettings = {
     hideCountryLabels: useMapSetting(MAP_SETTING_KEYS.hideCountryLabels),
   };
@@ -1006,11 +1008,28 @@ const WorldMap = ({ isGlobe = false }) => {
   // additionally waits for geometry) means a custom world never flashes the
   // modern map — not before the world loads, and not while its geometry does.
   const showStockCountries = worldKnown && !customFlag;
-  const countriesFillPaint = showStockCountries ? fillStyle : { ...fillStyle, "fill-opacity": 0 };
+  const tacticalCountryFillStyle = useMemo(() => ({
+    ...fillStyle,
+    // Once a battle is present, the base political layer recedes and the
+    // operational layer becomes primary. This is the difference between a
+    // pastel country map and a readable front map at close zoom.
+    "fill-opacity": [
+      "interpolate", ["linear"], ["zoom"],
+      3, 0.62,
+      5, 0.38,
+      8, 0.2,
+      13, 0.12,
+    ],
+  }), [fillStyle]);
+  const countriesFillPaint = showStockCountries
+    ? (tacticalMapMode ? tacticalCountryFillStyle : fillStyle)
+    : { ...fillStyle, "fill-opacity": 0 };
   const countriesOutlinePaint = {
-    "line-color": "#000",
-    "line-width": 1,
-    "line-opacity": showStockCountries ? 1 : 0,
+    "line-color": tacticalMapMode ? "#1b2b40" : "#000",
+    "line-width": tacticalMapMode
+      ? ["interpolate", ["linear"], ["zoom"], 4, 0.45, 8, 0.85, 12, 1.2]
+      : 1,
+    "line-opacity": showStockCountries ? (tacticalMapMode ? 0.82 : 1) : 0,
   };
   // Region hairlines serve both map kinds, but nothing renders pre-worldKnown.
   // Tile hairlines only fade in alongside the tile FILLS (z5.5-6.5): below
@@ -1018,10 +1037,10 @@ const WorldMap = ({ isGlobe = false }) => {
   // simplified low-zoom tiles sit visibly off those fills — disconnected
   // borders. The far hairlines come from the seed geometry itself instead.
   const regionsOutlinePaint = {
-    "line-color": "#000",
-    "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.2, 8, 0.6, 12, 1.0],
+    "line-color": tacticalMapMode ? "#121d2b" : "#000",
+    "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.2, 8, 0.85, 12, 1.35],
     "line-opacity": worldKnown
-      ? ["interpolate", ["linear"], ["zoom"], 5.5, 0, 6.5, 0.6, 8, 0.7]
+      ? ["interpolate", ["linear"], ["zoom"], 5.5, 0, 6.5, 0.7, 8, tacticalMapMode ? 0.88 : 0.7]
       : 0,
   };
 
@@ -1045,8 +1064,8 @@ const WorldMap = ({ isGlobe = false }) => {
     "text-pitch-alignment": "map",
     "text-rotation-alignment": "map",
     "text-keep-upright": false,
-    visibility: mapDisplaySettings.hideCountryLabels ? "none" : "visible",
-  }), [isGlobe, labelFontStack, mapDisplaySettings.hideCountryLabels]);
+    visibility: tacticalMapMode || mapDisplaySettings.hideCountryLabels ? "none" : "visible",
+  }), [isGlobe, labelFontStack, mapDisplaySettings.hideCountryLabels, tacticalMapMode]);
 
   const curvedLabelLayerLayout = useMemo(() => ({
     "text-field": ["get", "glyph"],
@@ -1058,8 +1077,8 @@ const WorldMap = ({ isGlobe = false }) => {
     "text-pitch-alignment": "map",
     "text-rotation-alignment": "map",
     "text-keep-upright": false,
-    visibility: mapDisplaySettings.hideCountryLabels ? "none" : "visible",
-  }), [isGlobe, labelFontStack, mapDisplaySettings.hideCountryLabels]);
+    visibility: tacticalMapMode || mapDisplaySettings.hideCountryLabels ? "none" : "visible",
+  }), [isGlobe, labelFontStack, mapDisplaySettings.hideCountryLabels, tacticalMapMode]);
 
   const labelLayerPaint = useMemo(() => ({
     "text-color": labelTextColor || "#FFFFFF",
@@ -1071,6 +1090,32 @@ const WorldMap = ({ isGlobe = false }) => {
       8, 0,
     ],
   }), [labelHaloColor, labelTextColor]);
+
+  const tacticalCountryLabelLayout = useMemo(() => ({
+    "text-field": ["get", "name"],
+    "text-font": labelFontStack,
+    "text-size": ["interpolate", ["linear"], ["zoom"], 5, 18, 8, 28, 12, 40],
+    "text-rotate": ["get", "rotation"],
+    "text-anchor": "center",
+    "text-allow-overlap": true,
+    "text-ignore-placement": true,
+    "text-pitch-alignment": "map",
+    "text-rotation-alignment": "map",
+    "text-keep-upright": false,
+    visibility: tacticalMapMode ? "visible" : "none",
+  }), [labelFontStack, tacticalMapMode]);
+
+  const tacticalCurvedCountryLabelLayout = useMemo(() => ({
+    ...tacticalCountryLabelLayout,
+    "text-field": ["get", "glyph"],
+  }), [tacticalCountryLabelLayout]);
+
+  const tacticalCountryLabelPaint = useMemo(() => ({
+    "text-color": labelTextColor || "#dce8f5",
+    "text-halo-color": "rgba(8, 16, 30, 0.88)",
+    "text-halo-width": 2.2,
+    "text-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0.32, 8, 0.46, 12, 0.58],
+  }), [labelTextColor]);
 
   return (
     <>
@@ -1228,6 +1273,12 @@ const WorldMap = ({ isGlobe = false }) => {
           layout={curvedLabelLayerLayout}
           paint={labelLayerPaint}
         />
+        <Layer
+          id="tactical-country-curved-labels"
+          type="symbol"
+          layout={tacticalCurvedCountryLabelLayout}
+          paint={tacticalCountryLabelPaint}
+        />
       </Source>
 
       <Source id="country-point-label-source" type="geojson" data={activePointLabelData}>
@@ -1236,6 +1287,12 @@ const WorldMap = ({ isGlobe = false }) => {
           type="symbol"
           layout={pointLabelLayerLayout}
           paint={labelLayerPaint}
+        />
+        <Layer
+          id="tactical-country-labels"
+          type="symbol"
+          layout={tacticalCountryLabelLayout}
+          paint={tacticalCountryLabelPaint}
         />
       </Source>
     </>

@@ -16,6 +16,7 @@ release
 *.local
 
 # Never commit local AI credentials or browser test profiles.
+# `.openrouter.local` is the local sandbox credential/model profile.
 .env.local
 .openrouter.local
 

@@ -278,10 +278,16 @@ const Main = ({
   }, []);
 
   const openAdvisor = useCallback(() => {
+    setActiveBottomPanel(null);
+    setIsSettingsOpen(false);
+    setIsCheatsOpen(false);
+    setCheatsInitialTool(null);
     setIsAdvisorOpen(true);
   }, []);
 
   const openCheats = useCallback((tool = null) => {
+    setActiveBottomPanel(null);
+    setIsAdvisorOpen(false);
     setCheatsInitialTool(tool);
     setShouldLoadCheats(true);
     setIsCheatsOpen(true);
@@ -306,9 +312,26 @@ const Main = ({
 
   const rightShift = isAdvisorOpen ? `calc(${advisorWidth}px + 0.5rem)` : "0.5rem";
   const toggleBottomPanel = useCallback((panelName) => {
+    setIsSettingsOpen(false);
+    setIsAdvisorOpen(false);
+    setIsCheatsOpen(false);
+    setCheatsInitialTool(null);
     setActiveBottomPanel((currentPanel) => (
       currentPanel === panelName ? null : panelName
     ));
+  }, []);
+
+  const toggleSettings = useCallback(() => {
+    setIsSettingsOpen((currentOpen) => {
+      const nextOpen = !currentOpen;
+      if (nextOpen) {
+        setActiveBottomPanel(null);
+        setIsAdvisorOpen(false);
+        setIsCheatsOpen(false);
+        setCheatsInitialTool(null);
+      }
+      return nextOpen;
+    });
   }, []);
 
   return (
@@ -370,7 +393,7 @@ const Main = ({
       <SettingsButton
         topOffset={TOP_BAR_OFFSET}
         isOpen={isSettingsOpen}
-        onToggle={() => setIsSettingsOpen(!isSettingsOpen)}
+        onToggle={toggleSettings}
       />
       {isSettingsOpen && (
         <SettingsMenu

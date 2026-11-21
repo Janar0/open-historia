@@ -47,7 +47,9 @@ export const subscribeToWorldState = (handler, { includeOverride = true } = {}) 
 };
 
 export const setWorldStateOverride = (next) => {
-  overrideState = next && typeof next === "object" ? next : null;
+  const nextOverride = next && typeof next === "object" ? next : null;
+  if (overrideState === nextOverride) return;
+  overrideState = nextOverride;
   notifySubscribers();
 };
 

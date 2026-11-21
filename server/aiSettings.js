@@ -63,6 +63,21 @@ const publicProfile = (profile) => ({
   apiKeyConfigured: Boolean(profile.apiKey),
 });
 
+// A local operator profile may be supplied through the process environment
+// (the ignored .openrouter.local is the documented sandbox convention). Keep
+// this credential server-side: the browser receives only publicProfile(), and
+// the relay is the only code path that can forward the bearer token upstream.
+const readEnvironmentProfile = () => normalizeProfile({
+  apiKey: process.env.OH_AI_API_KEY || process.env.OPENROUTER_API_KEY || "",
+  endpoint: process.env.OH_AI_ENDPOINT || process.env.OPENROUTER_ENDPOINT || "",
+  model: process.env.OH_AI_MODEL || process.env.OPENROUTER_MODEL || "",
+});
+
+const getEnvironmentProfile = () => {
+  const profile = readEnvironmentProfile();
+  return isConfigured(profile) ? profile : emptyProfile();
+};
+
 export const createAISettingsStore = (dataDir = DATA_DIR) => {
   const resolvedDir = path.resolve(dataDir);
   const settingsPath = path.join(resolvedDir, FILE_NAME);
@@ -100,11 +115,16 @@ export const createAISettingsStore = (dataDir = DATA_DIR) => {
     const profile = state.mode === "global"
       ? state.global
       : state.users[requestedUserId] ?? emptyProfile();
+    const environmentProfile = getEnvironmentProfile();
+    const effectiveProfile = isConfigured(profile) ? profile : environmentProfile;
+    const source = isConfigured(profile)
+      ? (state.mode === "global" ? "global" : "user")
+      : (isConfigured(environmentProfile) ? "env" : "none");
     return {
-      ...clone(profile),
-      managed: isConfigured(profile),
-      mode: state.mode,
-      source: state.mode === "global" ? "global" : (state.users[requestedUserId] ? "user" : "none"),
+      ...clone(effectiveProfile),
+      managed: isConfigured(effectiveProfile),
+      mode: source === "env" ? "env" : state.mode,
+      source,
     };
   };
 

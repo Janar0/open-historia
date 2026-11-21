@@ -79,6 +79,10 @@ const SpinnerRing = ({ size = 14, tone = "rgba(255,255,255,0.88)" }) => {
 const saveActions = async (actions) => writeActionsState(actions);
 const loadActions = async () => readActionsState();
 
+const TERRITORY_ACTION_TEMPLATE =
+    "Launch a directed breakthrough into the exact region named on the map from our current front; " +
+    "build a connected bridgehead and secure it before transferring the whole administrative region.";
+
 const createManualAction = (input) =>
 normalizeActionEntry({
     kind: "action",
@@ -411,6 +415,11 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         }
     };
 
+    const useTerritoryTemplate = () => {
+        setInputValue(TERRITORY_ACTION_TEMPLATE);
+        inputRef.current?.focus();
+    };
+
     const suggestionButtonLabel = hasRequestedSuggestions
     ? (isSuggesting ? "Refreshing AI suggestions..." : "Refresh AI suggestions")
     : (isSuggesting ? "Loading AI suggestions..." : "Get AI suggestions");
@@ -497,6 +506,38 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         >
         Submit actions for {countryDisplayName} for {gameDate}. Your actions will affect how the game world responds.
         </p>
+
+        <div
+        style={{
+            background: "rgba(37,99,235,0.1)",
+            border: "1px solid rgba(96,165,250,0.28)",
+            borderRadius: "10px",
+            padding: "0.65rem 0.75rem",
+        }}
+        >
+        <div style={{ color: "rgba(219,234,254,0.95)", fontSize: "0.76rem", fontWeight: 700 }}>
+        Territorial capture
+        </div>
+        <div style={{ color: "rgba(191,219,254,0.7)", fontSize: "0.72rem", lineHeight: "1.45", marginTop: "0.2rem" }}>
+        Name the exact map region and describe a connected border breakthrough. A whole-region transfer is resolved only after the advance is secured.
+        </div>
+        <button
+        type="button"
+        onClick={useTerritoryTemplate}
+        style={{
+            background: "rgba(59,130,246,0.18)",
+            border: "1px solid rgba(96,165,250,0.34)",
+            borderRadius: "8px",
+            color: "rgba(219,234,254,0.95)",
+            cursor: "pointer",
+            fontSize: "0.72rem",
+            marginTop: "0.5rem",
+            padding: "0.35rem 0.55rem",
+        }}
+        >
+        Use capture template
+        </button>
+        </div>
 
         <button
         type="button"

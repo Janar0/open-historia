@@ -76,11 +76,15 @@ import {
   groundSpawnIsFriendly,
   hasTacticalAnchor,
   hostileGroundMoveIsContinuous,
+  tacticalOffsetPoint,
   tacticalCellsAreConnected,
   tacticalDistanceKm,
   tacticalNearestBoundaryPoint,
+  tacticalPoliticalSettlementAllowed,
   tacticalRegionCoverageGate,
+  tacticalMoveStaysWithFront,
 } from "./sectorContinuity.js";
+import { claimsTacticalGround, sanitizeUngroundedTacticalEvents } from "./tacticalNarration.js";
 
 const CHAT_HINT_PATTERNS = [
   /\bchat\b/i,
@@ -440,13 +444,16 @@ Use impacts.militaryIndustryOps with section "arsenal" for unlocked weapons and 
 
 const TACTICAL_SECTORS_REFERENCE = `[Tactical Sectors and Prolonged Battles]
 The map has a fine-grained tactical layer below administrative regions. Use impacts.sectorOps for partial control inside a region, never regionTransfers, when a force holds a city, suburb, road, border advance, or other local patch while the rest of the region remains with its existing owner. The parent shape is {"op":"upsert","sector":{"id":"stable-id","regionId":"exact region id or name","name":"local front","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"frontOrigin":{"lng":0,"lat":0},"frontBearing":0,"frontWidthKm":2,"advanceDepthKm":2,"radiusKm":0.5-80,"status":"assault|contested|encircled|held|withdrawn|destroyed","battleId":"stable-battle-id","startedAt":"date","updatedAt":"date","note":"","cells":[{"id":"stable-cell-id","name":"optional village or approach","parentCellId":"optional-parent-when-splitting","ownerCode":"FULL country name","contestedBy":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20,"status":"contested","note":""}],"cellOps":[{"op":"upsert","cell":{"id":"child-cell-id","parentCellId":"stable-cell-id","ownerCode":"FULL country name","control":0-100,"center":{"lng":0,"lat":0},"radiusKm":0.5-20}},{"op":"remove","id":"old-cell-id"}]}} and {"op":"remove","id":"sector-id"}.
-   Keep the same sector id, battleId, name, cell ids, and any engine-derived frontOrigin/frontBearing/frontWidthKm across jumps. ONE connected direction of advance gets ONE sector; extend it forward with touching cells instead of creating several same-named sector ids or spreading sideways along the border. Every new center must lie inside the named enemy region, remain near the corridor from frontOrigin along frontBearing, and touch the previous footprint. Never place the first cell at an inland objective: the engine establishes the real border entry first. Cell control records the local fighting state, while every admitted cell is already ground controlled by ownerCode on the map; advance by adding connected ground rather than painting a percentage of a circular marker. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole front changes; use cellOps when one approach changes, a few connected pieces are captured, or one cell is split. Updating only the parent sector preserves the existing cell hierarchy. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several sectors only for genuinely separate border entries or supply routes. Tactical names are internal and are not declared regions: do not announce a generic "bridgehead" as if it were a new polity or province; say that the occupied ground passed under ownerCode control. Create a named region only through territoryOps when the story formally establishes one. Never invent a regionTransfer for a cell.`;
+ Keep the same sector id, battleId, name, cell ids, and any engine-derived frontOrigin/frontBearing/frontWidthKm across jumps. ONE connected direction of advance gets ONE sector; extend it forward with touching cells instead of creating several same-named sector ids or spreading sideways along the border. Every new center must lie inside the named enemy region, remain near the corridor from frontOrigin along frontBearing, and touch the previous footprint. Never place the first cell at an inland objective: the engine establishes the real border entry first. Cell control records the local fighting state, while every admitted cell is already ground controlled by ownerCode on the map; advance by adding connected ground rather than painting a percentage of a circular marker. A cell may be split only once: depth 1 is the normal sector grid and depth 2 is the final micro-cell level; never create depth 3. Reference a leaf cell as sectorId:cellId. Use cells for a full snapshot when the whole front changes; use cellOps when one approach changes, a few connected pieces are captured, or one cell is split. Updating only the parent sector preserves the existing cell hierarchy. If an event says a cell, bridgehead, flank, front or sector was secured, held, widened, pushed or advanced, that SAME event must include sectorOps; unitOps or forceOps alone do not change ground control. If a force rotation sends the only friendly formation out of an active advancing sector, add a replacement unitOps spawn/move into that sector or keep the formation forward. A full administrative change still requires impacts.regionTransfers. For a prolonged, attritional battle lasting weeks, three months, or years, update the relevant cells every jump, move or reinforce units with unitOps, apply credible strength losses, and do not transfer the whole region until the operational position is actually decisive. Use several sectors only for genuinely separate border entries or supply routes. Tactical names are internal and are not declared regions: do not announce a generic "bridgehead" as if it were a new polity or province; say that the occupied ground passed under ownerCode control. Create a named region only through territoryOps when the story formally establishes one. Never invent a regionTransfer for a cell.`;
+
+const POLITICAL_TRANSFER_REFERENCE = `[Administrative Transfer Modes]
+Every regionTransfers entry must include fromCode equal to the region's current owner. Use transferMode "military" (or omit it) for a battlefield conquest: it must be backed by a connected held front with sufficient frontage and depth. Use transferMode "political" only when the same event structurally records a real sovereignty settlement — for example a signed peace treaty, formal capitulation, referendum result, or government collapse — and explain that mechanism in note. Words such as "cession", "referendum", or "surrender" in prose do not by themselves authorize a transfer and must not be used to bypass the military gate.`;
 
 const TERRITORY_FRAGMENT_REFERENCE = `[Cell-backed Territory Splits]
 The administrative map region is still the parent anchor. To cut out only part of it, first ensure the relevant sector has the required leaf cells, then emit impacts.territoryOps with a stable id and exact cellRefs in the form sectorId:cellId. Example: {"op":"create","fragment":{"id":"bakhmut-pocket-01","name":"Bakhmut Pocket","parentRegionId":"<exact map region>","ownerCode":"<FULL country name>","cellRefs":["battle-sector-01:cell-03","battle-sector-01:cell-06"],"kind":"subregion|autonomy|occupation|secession|new-state","status":"active","note":"..."}}. Use leaf cells only; a fragment cannot reference an abstract parent cell. This creates a named subregion/pocket without transferring the whole parent region. For a genuinely new country, pair the fragment with impacts.polityChanges containing a new polity code, name, and color, then set the fragment ownerCode to that new full polity name. For a province or autonomous area inside another country, keep ownerCode as the controlling country. Dissolve it with {"op":"remove","id":"..."}. Do not use territoryOps as a substitute for a complete regionTransfer.`;
 
 const PARTIAL_CAPTURE_OVERRIDE = `[Territory Transfer Boundary — Binding]
-"Captured territory" does NOT automatically mean a whole regionTransfer. If the event describes only a city, suburb, road, bridge, riverbank, salient, beachhead, district, approach, or an advancing front inside a larger named region, emit sectorOps and update connected leaf cells. Keep the administrative owner unchanged. Every new external sector must touch that controller's existing unit or controlled cell; all cell centers must remain inside the parent region. Build a continuous route from the border instead of jumping directly to an inland city. A newly created rebel polity may establish its first pocket only where its ground unit is spawned in that same event, after which its march must advance through connected sectors and unit movement. Emit regionTransfers only when the event explicitly establishes effective control of the entire administrative region and no substantial hostile pocket remains there; a violent transfer of one to three regions requires the new owner's sector there to be fully held. This rule overrides any broader reminder above that says every capture needs a regionTransfer.`;
+"Captured territory" does NOT automatically mean a whole regionTransfer. If the event describes only a city, suburb, road, bridge, riverbank, salient, beachhead, district, approach, or an advancing front inside a larger named region, emit sectorOps and update connected leaf cells. Keep the administrative owner unchanged. Every new external sector must touch that controller's existing unit or controlled cell; all cell centers must remain inside the parent region. Build a continuous route from the border instead of jumping directly to an inland city. A newly created rebel polity may establish its first pocket only where its ground unit is spawned in that same event, after which its march must advance through connected sectors and unit movement. Emit a military regionTransfer only when the event explicitly establishes effective control of the entire administrative region, the connected front has enough secured frontage and operational depth, and no substantial hostile pocket remains there; a violent transfer of one to three regions requires the new owner's sector there to be fully held. A political regionTransfer is a separate structured sovereignty settlement and requires transferMode "political" plus a non-empty mechanism note and matching settlement event language. This rule overrides any broader reminder above that says every capture needs a regionTransfer.`;
 
 const runJsonTask = async (taskKey, {
   fallback,
@@ -518,7 +525,7 @@ const runJsonTask = async (taskKey, {
   // Tactical sectors are injected at call time so existing frozen campaigns get
   // the partial-control and prolonged-battle rules too.
   if (["jumpForward", "autoJumpForward", "gameMaster"].includes(taskKey)) {
-    systemPrompt = `${systemPrompt}\n\n${TACTICAL_SECTORS_REFERENCE}\n\nCurrent tactical sectors and prolonged battles:\n${variables.controlSectorsSummary || "No tactical sectors are currently recorded."}`;
+    systemPrompt = `${systemPrompt}\n\n${TACTICAL_SECTORS_REFERENCE}\n\n${POLITICAL_TRANSFER_REFERENCE}\n\nCurrent tactical sectors and prolonged battles:\n${variables.controlSectorsSummary || "No tactical sectors are currently recorded."}`;
     systemPrompt = `${systemPrompt}\n\n${TERRITORY_FRAGMENT_REFERENCE}\n\nCurrent named territory fragments:\n${variables.territoryFragmentsSummary || "No named territory fragments are currently recorded."}`;
   }
 
@@ -1030,7 +1037,11 @@ const resolveRegionTransfers = async (containers, world) => {
     else byName.set(key, [region]);
   }
   const worldState = normalizeWorldState(world);
-  const owners = worldState.regionOwnershipOverrides;
+  // Resolve all transfers against a working ownership ledger, not only the
+  // pre-turn snapshot. This makes a multi-event chain deterministic: a second
+  // transfer may use the first event's new owner, while a stale source owner is
+  // rejected instead of being applied in sequence later.
+  const owners = { ...worldState.regionOwnershipOverrides };
   // Owner comparisons are case- and diacritic-insensitive, and the model may
   // name a polity by its era DISPLAY name or an alias ("Second Polish
   // Republic") while ownership is keyed by the owner token ("Poland") —
@@ -1049,7 +1060,8 @@ const resolveRegionTransfers = async (containers, world) => {
   }
   const canonicalOwnerKey = (token) => {
     const key = regionKey(token);
-    return ownerAlias.get(key) ?? key;
+    const canonicalKey = regionKey(toCountryName(token));
+    return ownerAlias.get(key) ?? ownerAlias.get(canonicalKey) ?? canonicalKey;
   };
   const ownerKeyOf = (regionId) => {
     // A legacy save can still hold a code here; canonicalise so it keys as the same
@@ -1068,6 +1080,13 @@ const resolveRegionTransfers = async (containers, world) => {
     const key = canonicalOwnerKey(ownerToken);
     if (!key) return [];
     return catalog.filter((region) => ownerKeyOf(region.id) === key);
+  };
+  const ownerLabelOf = (regionId) => {
+    const region = byId.get(regionId);
+    return toCountryName(normalizeString(owners[regionId]))
+      || normalizeString(region?.country)
+      || toCountryName(normalizeString(region?.countryCode))
+      || "unknown owner";
   };
   // Every owner key in this resolver is a full country NAME (ownerKeyOf canonicalises
   // codes on the way through), so a country can be matched directly.
@@ -1124,7 +1143,44 @@ const resolveRegionTransfers = async (containers, world) => {
   };
 
   const unresolved = [];
-  for (const { impacts, path } of containers) {
+  const acceptResolvedTransfer = (transfer, regionId, path, resolved) => {
+    const currentOwner = ownerLabelOf(regionId);
+    const currentKey = ownerKeyOf(regionId);
+    const fromToken = normalizeString(transfer?.fromCode);
+    const fromKey = canonicalOwnerKey(fromToken);
+    const toToken = normalizeString(transfer?.toCode);
+    const toKey = canonicalOwnerKey(toToken);
+    let reason = "";
+    if (!fromToken) {
+      reason = `fromCode is required and must name the region's current owner (${currentOwner})`;
+    } else if (!currentKey) {
+      reason = `the current owner of region "${regionId}" could not be determined`;
+    } else if (!toKey) {
+      reason = "toCode must name a new polity";
+    } else if (fromKey !== currentKey) {
+      reason = `fromCode "${fromToken}" does not match the region's current owner "${currentOwner}"`;
+    } else if (toKey === currentKey) {
+      reason = `the region is already owned by "${currentOwner}"; a transfer must change its owner`;
+    }
+    if (reason) {
+      unresolved.push({
+        candidates: [],
+        currentOwner,
+        fromCode: fromToken,
+        label: normalizeString(transfer?.regionName) || normalizeString(transfer?.regionId),
+        path,
+        reason,
+      });
+      return false;
+    }
+    transfer.regionId = regionId;
+    transfer.fromCode = toCountryName(fromToken);
+    transfer.toCode = toCountryName(toToken);
+    resolved.push(transfer);
+    owners[regionId] = transfer.toCode;
+    return true;
+  };
+  for (const { event, impacts, path } of containers) {
     const transfers = normalizeArray(impacts?.regionTransfers);
     if (transfers.length === 0) continue;
     const resolved = [];
@@ -1139,14 +1195,13 @@ const resolveRegionTransfers = async (containers, world) => {
               `"${normalizeString(transfer?.regionId)}" -> ${normalizeString(transfer?.toCode)}: ` +
               `${expanded.length} region(s).`,
           );
-          resolved.push(...expanded);
+          expanded.forEach((transfer) => acceptResolvedTransfer(transfer, transfer.regionId, path, resolved));
           continue;
         }
       }
       const regionId = resolve(transfer);
       if (regionId) {
-        transfer.regionId = regionId;
-        resolved.push(transfer);
+        acceptResolvedTransfer(transfer, regionId, path, resolved);
         continue;
       }
       // Not a region the map knows — but it may be a POLITY the model meant wholesale
@@ -1157,7 +1212,7 @@ const resolveRegionTransfers = async (containers, world) => {
           `[ai] ${path}.regionTransfers treated "${normalizeString(transfer?.regionId)}" as a whole ` +
             `country -> ${normalizeString(transfer?.toCode)}: ${expanded.length} region(s).`,
         );
-        resolved.push(...expanded);
+        expanded.forEach((transfer) => acceptResolvedTransfer(transfer, transfer.regionId, path, resolved));
         continue;
       }
       unresolved.push({
@@ -1470,7 +1525,7 @@ const resolveGroundUnitMoves = (containers, world, locationContext) => {
   let units = normalizeWorldState(world).units;
   let sectors = normalizeWorldState(world).controlSectors;
   const dropped = [];
-  for (const { impacts, path } of containers) {
+  for (const { event, impacts, path } of containers) {
     if (!impacts) continue;
     sectors = applySectorOps(sectors, impacts.sectorOps);
     if (!Array.isArray(impacts.unitOps)) continue;
@@ -1492,6 +1547,27 @@ const resolveGroundUnitMoves = (containers, world, locationContext) => {
       const owner = toCountryName(normalizeString(unit.ownerCode));
       const hostileDestination = locationContext.catalog.length > 0
         && (!location.ownerCode || location.ownerCode.toLowerCase() !== owner.toLowerCase());
+      const tacticalAdvance = claimsTacticalGround(
+        `${normalizeString(event?.title)} ${normalizeString(event?.description)}`,
+      );
+      const assignedSector = unit.sectorId
+        ? sectors.find((sector) => String(sector.id || "") === String(unit.sectorId))
+        : null;
+      if (tacticalAdvance && assignedSector && !tacticalMoveStaysWithFront(destination, assignedSector)) {
+        const remainingFriendly = units.some((candidate) => (
+          candidate.id !== unit.id
+          && candidate.strength > 0
+          && String(candidate.ownerCode || "").toLowerCase() === owner.toLowerCase()
+          && String(candidate.sectorId || "") === String(unit.sectorId)
+        ));
+        if (!remainingFriendly) {
+          dropped.push({
+            path: `${path}.unitOps[${index}]`,
+            reason: `tactical advance cannot pull the only ${owner} formation out of active sector ${unit.sectorId}; keep one unit attached to the connected front or add a replacement in that sector`,
+          });
+          continue;
+        }
+      }
       if (hostileDestination) {
         const frontEntries = sectors
           .filter((sector) => String(sector.ownerCode || "").toLowerCase() === owner.toLowerCase())
@@ -2007,6 +2083,10 @@ const buildTransferFeedback = (unresolved) => {
   const lines = [];
   for (const entry of unresolved.slice(0, 3)) {
     const target = entry.label || "(blank)";
+    if (entry.reason) {
+      lines.push(`${entry.path}.regionTransfers: ${entry.reason}.`);
+      continue;
+    }
     if (entry.candidates.length > 0) {
       const listed = entry.candidates.slice(0, 40)
         .map((region) => `${region.name} (${region.id})`)
@@ -2046,9 +2126,11 @@ const forceOpMatchesUnit = (unit, operation) => {
 // id from turning an intended full withdrawal into a silently partial one.
 const reconcileForceOps = (containers, world, { strict = false } = {}) => {
   let units = normalizeWorldState(world).units;
+  let sectors = normalizeWorldState(world).controlSectors;
   const dropped = [];
-  for (const { impacts, path } of containers) {
+  for (const { event, impacts, path } of containers) {
     if (!impacts) continue;
+    sectors = applySectorOps(sectors, impacts.sectorOps);
     // Folding applies individual unitOps before a scoped force order in the
     // same event. Mirror that order here so a freshly spawned formation can be
     // included, and a unit moved out of a source region is not falsely counted.
@@ -2070,6 +2152,41 @@ const reconcileForceOps = (containers, world, { strict = false } = {}) => {
       const matches = units.filter((unit) => forceOpMatchesUnit(unit, operation));
       if (matches.length === 0) {
         dropped.push({ path: operationPath, reason: "the scope matches no current formation; the order would have no visible effect" });
+        continue;
+      }
+
+      // Do not let a successful tactical advance leave its only friendly
+      // formation in the rear. If the model rotates that formation out of its
+      // active sector, it must also move/spawn a replacement in the same
+      // sector. On final salvage this conflicting force order is dropped so
+      // the explicit advance/unitOps remain visible and coherent.
+      const tacticalAdvance = claimsTacticalGround(
+        `${normalizeString(event?.title)} ${normalizeString(event?.description)}`,
+      );
+      const matchedIds = new Set(matches.map((unit) => unit.id));
+      const vacatedSectors = new Set(
+        matches
+          .filter((unit) => {
+            if (!unit.sectorId || !operation.destination) return false;
+            const sector = sectors.find((candidate) => String(candidate.id || "") === String(unit.sectorId));
+            return sector && !tacticalMoveStaysWithFront({ center: operation.destination, radiusKm: 2 }, sector);
+          })
+          .map((unit) => unit.sectorId),
+      );
+      const vacatesOnlyFriendlyFront = [...vacatedSectors].some((sectorId) => (
+        !units.some((unit) => !matchedIds.has(unit.id)
+          && unit.ownerCode.toLowerCase() === operation.ownerCode.toLowerCase()
+          && unit.sectorId === sectorId
+          && unit.strength > 0)
+        && !matches.some((unit) => unit.sectorId === sectorId
+          && operation.destination
+          && tacticalMoveStaysWithFront({ center: operation.destination, radiusKm: 2 }, sectors.find((sector) => String(sector.id || "") === String(sectorId))))
+      ));
+      if (tacticalAdvance && operation.destination && vacatesOnlyFriendlyFront) {
+        dropped.push({
+          path: operationPath,
+          reason: "this advance redeploys the only friendly formation from an active tactical sector; keep it forward or add a replacement unitOps spawn/move in that sector",
+        });
         continue;
       }
       kept.push(operation);
@@ -2142,19 +2259,13 @@ const validateChatOpener = (chatLike, path) => {
   return "";
 };
 
-// Event text that claims territory changed hands. Word-boundary anchored so
-// "preoccupied" or "occupational" never match; deliberately narrow (capture
-// verbs, not war verbs) so a defensive battle that moved no borders — a
-// legitimate zero-transfer turn — never trips the reluctance guard below.
-const CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|annex\w*|conquer\w*|occup(?:y|ies|ied|ation)|overr[au]n|liberat\w*|retak\w*|retaken|recaptur\w*|cedes?|ceded|ceding|cession|fell to|falls? to)\b/i;
-const VIOLENT_CAPTURE_LANGUAGE = /\b(captur\w*|seiz\w*|conquer\w*|occup(?:y|ies|ied|ation)|overr[au]n|retak\w*|retaken|recaptur\w*|fell to|falls? to)\b|(?:захват|оккуп|овлад|отбил|отбит|взял[аи]?|занял[аи]?|пал\s+под)/i;
-const CAPITULATION_LANGUAGE = /\b(capitulat|surrender|armistice|peace treaty|government collapse)\w*\b|(?:капитул|сдался|сдалась|перемир|мирный\s+договор|крах\s+правительств)/i;
+const CAPITULATION_LANGUAGE = /\b(capitulat|surrender|armistice|peace treaty|government collapse|cession|ceded|cede|referendum|plebiscite|transfer of sovereignty|handed over)\w*\b|(?:капитул|сдался|сдалась|перемир|мирный\s+договор|крах\s+правительств|уступ|передач\s+суверенитет)/i;
 
-// A violent one/few-region transfer must be the culmination of the tactical
-// layer, not a shortcut around it. Explicit capitulations model political
-// surrender rather than every district being fought through independently.
-// Peaceful cessions and scripted GM edits are intentionally outside this guard.
-const enforceViolentTransferContinuity = async (containers, world) => {
+// A military one/few-region transfer must be the culmination of the tactical
+// layer, not a shortcut around it. A political settlement can bypass the
+// battlefield gate only when the payload declares that mode and explains the
+// mechanism; settlement vocabulary in prose alone is never sufficient.
+const enforceRegionTransferContinuity = async (containers, world) => {
   const catalog = await loadRegionCatalog().catch(() => []);
   const regionGeometry = new Map(catalog.map((region) => [normalizeString(region.id), region.geometry]));
   let sectors = normalizeWorldState(world).controlSectors;
@@ -2165,12 +2276,17 @@ const enforceViolentTransferContinuity = async (containers, world) => {
     const transfers = normalizeArray(impacts.regionTransfers);
     if (!event || transfers.length === 0) continue;
     const narration = `${normalizeString(event.title)} ${normalizeString(event.description)}`;
-    if (!VIOLENT_CAPTURE_LANGUAGE.test(narration) || CAPITULATION_LANGUAGE.test(narration)) continue;
+    const settlementNarration = CAPITULATION_LANGUAGE.test(narration);
     const kept = [];
     for (let index = 0; index < transfers.length; index += 1) {
       const transfer = transfers[index];
       const regionId = normalizeString(transfer?.regionId);
       const newOwner = toCountryName(normalizeString(transfer?.toCode)).toLowerCase();
+      const politicalSettlement = tacticalPoliticalSettlementAllowed({ transfer, settlementNarration });
+      if (politicalSettlement) {
+        kept.push(transfer);
+        continue;
+      }
       const attackerSector = sectors.find((sector) => (
         normalizeString(sector.regionId) === regionId
         && String(sector.ownerCode || "").toLowerCase() === newOwner
@@ -2185,7 +2301,9 @@ const enforceViolentTransferContinuity = async (containers, world) => {
       if (!coverage.secured || activeOpposition) {
         dropped.push({
           path: `${path}.regionTransfers[${index}]`,
-          reason: `violent transfer of "${regionId}" is premature: ${coverage.cellCount}/${coverage.requiredCells} cells, ${Math.round(coverage.frontSpanKm)}/${Math.round(coverage.requiredSpanKm)} km operational spread${activeOpposition ? ", active opposing sector remains" : ""}`,
+          reason: settlementNarration && transfer?.transferMode !== "political"
+            ? `settlement language requires transferMode "political" plus a non-empty note; otherwise the region must pass the military continuity gate`
+            : `military transfer of "${regionId}" is premature: ${coverage.cellCount}/${coverage.requiredCells} cells, ${Math.round(coverage.frontSpanKm)}/${Math.round(coverage.requiredSpanKm)} km operational spread${coverage.directionalFront ? `, ${Math.round(coverage.securedFrontWidthKm)}/${Math.round(coverage.requiredFrontWidthKm)} km frontage and ${Math.round(coverage.securedAdvanceDepthKm)}/${Math.round(coverage.requiredAdvanceDepthKm)} km depth` : ""}${activeOpposition ? ", active opposing sector remains" : ""}`,
         });
         continue;
       }
@@ -2246,10 +2364,10 @@ export const validateGeneratedWorldChanges = async (candidate, world, {
       "Ground units may redeploy freely inside friendly territory. Inside hostile territory they must end beside their connected tactical front and advance no more than 120 km per event; long marches through friendly territory remain valid.",
     ].join("\n");
   }
-  const droppedViolentTransfers = await enforceViolentTransferContinuity(containers, world);
-  if (strict && droppedViolentTransfers.length > 0) {
+  const droppedRegionTransfers = await enforceRegionTransferContinuity(containers, world);
+  if (strict && droppedRegionTransfers.length > 0) {
     return [
-      ...droppedViolentTransfers.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
+      ...droppedRegionTransfers.slice(0, 5).map((entry) => `${entry.path}: dropped because ${entry.reason}.`),
       "Advance through connected sectorOps first. Transfer the administrative region only after a held 85%+ front has enough connected cells and operational spread for that region, with no active opposing sector.",
     ].join("\n");
   }
@@ -2257,29 +2375,23 @@ export const validateGeneratedWorldChanges = async (candidate, world, {
   if (strict && droppedTerritory.length > 0) {
     return buildTerritoryFeedback(droppedTerritory);
   }
-  // Reluctance guard (strict attempt only): events that NARRATE a capture while
-  // the whole payload ships ZERO regionTransfers are the recurring field report
-  // — "two turns of invasions and not a single province transferred". One
-  // corrective retry asks the model to reconcile narration with the map (or to
-  // strip the capture language if genuinely nothing changed hands). English
-  // verb heuristic only — a non-English game just never gets this extra nudge —
-  // and the final attempt always passes through salvage, so it can never cost a
-  // finished turn. Only for event-shaped payloads: a $.impacts container has no
-  // narration to check.
+  // Reluctance guard (strict attempt only): every event that narrates a tactical
+  // ground change must carry the matching sector/territory/transfer impact in
+  // that SAME event. Looking only at the whole payload let an unrelated earlier
+  // sectorOps entry mask a later newspaper headline with no map change. The
+  // final attempt still salvages a completed turn, but the model gets one
+  // corrective retry while its event context is still available.
   if (strict && Array.isArray(candidate?.events)) {
-    const totalTerritorialChanges = containers.reduce(
-      (sum, { impacts }) => sum
-        + normalizeArray(impacts?.regionTransfers).length
-        + normalizeArray(impacts?.sectorOps).length
-        + normalizeArray(impacts?.territoryOps).length,
-      0,
-    );
-    if (totalTerritorialChanges === 0) {
-      const captureEvent = candidate.events.find((event) =>
-        CAPTURE_LANGUAGE.test(`${normalizeString(event?.title)} ${normalizeString(event?.description)}`));
-      if (captureEvent) {
-        return `Your events describe territory changing hands (e.g. "${normalizeString(captureEvent.title) || "an event"}") but the payload contains no territorial impact. Keep narration and the map consistent: use sectorOps with connected cells for a city, road, border breakthrough, salient, or other partial advance; use regionTransfers only when the complete administrative region changed owner; use territoryOps for a formally declared named cell-backed split. If nothing genuinely changed hands, remove the capture language and resend.`;
-      }
+    const ungroundedEvent = candidate.events.find((event) => {
+      const impacts = event?.impacts;
+      const hasTerritorialImpact = normalizeArray(impacts?.regionTransfers).length > 0
+        || normalizeArray(impacts?.sectorOps).length > 0
+        || normalizeArray(impacts?.territoryOps).length > 0;
+      return !hasTerritorialImpact
+        && claimsTacticalGround(`${normalizeString(event?.title)} ${normalizeString(event?.description)}`);
+    });
+    if (ungroundedEvent) {
+      return `The event "${normalizeString(ungroundedEvent.title) || "an event"}" describes tactical ground changing but its own impacts contain no territorial operation. Keep narration and the map consistent: use sectorOps with connected cells for a city, road, border breakthrough, salient, flank or secured cell; use regionTransfers only when the complete administrative region changed owner; use territoryOps for a formally declared named cell-backed split. If no ground changed, remove the tactical control wording and resend.`;
     }
   }
   const unitIds = new Set(normalizeWorldState(world).units.map((unit) => normalizeString(unit.id)).filter(Boolean));
@@ -2426,6 +2538,8 @@ export const validateGeneratedWorldChanges = async (candidate, world, {
     candidate.diplomaticOutreach = keptOutreach;
   }
 
+  if (!strict) sanitizeUngroundedTacticalEvents(candidate);
+
   return "";
 };
 
@@ -2434,48 +2548,449 @@ const fallbackJumpSimulation = async ({ bundle, days, mode, targetDate }) => {
   const firstThreeActions = plannedActions.slice(0, 3);
   const events = [];
 
+  const flattenGeometryCoordinates = (geometry, output = []) => {
+    const coordinates = geometry?.type === "Feature" ? geometry.geometry?.coordinates : geometry?.coordinates;
+    if (!Array.isArray(coordinates)) return output;
+    if (coordinates.length >= 2 && coordinates.every((value) => Number.isFinite(Number(value)))) {
+      output.push({ lng: Number(coordinates[0]), lat: Number(coordinates[1]) });
+      return output;
+    }
+    coordinates.forEach((child) => flattenGeometryCoordinates({ coordinates: child }, output));
+    return output;
+  };
+
+  const geometryAnchor = (geometry) => {
+    const coordinates = flattenGeometryCoordinates(geometry);
+    if (!coordinates.length) return null;
+    const sample = coordinates.length > 1200
+      ? coordinates.filter((_, index) => index % Math.ceil(coordinates.length / 1200) === 0)
+      : coordinates;
+    return {
+      lng: sample.reduce((sum, coordinate) => sum + coordinate.lng, 0) / sample.length,
+      lat: sample.reduce((sum, coordinate) => sum + coordinate.lat, 0) / sample.length,
+    };
+  };
+
+  const normalizeMatchText = (value) => normalizeString(value)
+    .toLocaleLowerCase()
+    .replace(/[’']/g, "'");
+
+  const escapeMatchPattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const containsNamedRegion = (text, name) => {
+    const normalizedName = normalizeMatchText(name);
+    if (normalizedName.length < 4) return false;
+    return new RegExp(
+      `(?:^|[^\\p{L}\\p{N}])${escapeMatchPattern(normalizedName)}(?:$|[^\\p{L}\\p{N}])`,
+      "iu",
+    ).test(text);
+  };
+
+  const COUNTRY_HINTS = [
+    ["ukrain", "Ukraine"],
+    ["russian", "Russia"],
+    ["polish", "Poland"],
+    ["belarus", "Belarus"],
+    ["german", "Germany"],
+    ["french", "France"],
+    ["romanian", "Romania"],
+    ["georgian", "Georgia"],
+    ["kazakh", "Kazakhstan"],
+    ["chinese", "China"],
+  ];
+
+  const isTerritorialAction = (action) => {
+    const text = normalizeMatchText(`${action?.title || ""} ${action?.text || ""} ${action?.rawInput || ""}`);
+    return /capture|breakthrough|assault|attack|advance|offensive|invad|occup|bridgehead|front|seize|conquer|reinforc|reserves?|supply|rotate|probe|hold|secure|cell|захват|прорыв|атак|наступ|оккуп|усил|резерв|снабж|развед|удерж/i.test(text);
+  };
+
+  // Offline/local games must still show the consequence of an ordered offensive.
+  // The AI path can return richer events, but a text-only fallback made a planned
+  // capture look like a newspaper headline: no front, no units, no attrition. Build
+  // the smallest physically grounded bridgehead from the same region geometry and
+  // continuity primitives used to validate AI-authored sectors.
+  const buildFallbackTerritorialImpact = async (action, actionIndex) => {
+    if (!isTerritorialAction(action)) return null;
+    const world = normalizeWorldState(bundle.world);
+    const playerOwner = toCountryName(bundle.game.country);
+    if (!playerOwner) return null;
+
+    const catalog = await loadRegionCatalog().catch(() => []);
+    const regions = Array.isArray(catalog)
+      ? catalog.filter((region) => region?.id && region?.geometry)
+      : [];
+    if (regions.length === 0) return null;
+
+    const regionOwner = (region) => toCountryName(
+      world.regionOwnershipOverrides?.[region.id] || region.country,
+    );
+    const actionText = normalizeMatchText(`${action.title || ""} ${action.text || ""} ${action.rawInput || ""}`);
+    const meaningfulNameTokens = (value) => normalizeMatchText(value)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((token) => token.length >= 4)
+      .filter((token) => !new Set([
+        "border",
+        "sector",
+        "region",
+        "front",
+        "area",
+        "zone",
+        "province",
+        "district",
+        "borderland",
+      ]).has(token));
+
+    // A continuation order must stay attached to the live contact line. If
+    // the action says "continue the Kharkiv assault", choosing a new nearest
+    // foreign region would silently teleport the war to another front. Match
+    // the order against the existing sector label/region first, then let the
+    // normal nearest-boundary logic choose the source-side anchor.
+    const activeSectorCandidates = normalizeArray(world.controlSectors)
+      .filter((sector) => (
+        String(sector?.ownerCode || "").toLowerCase() === playerOwner.toLowerCase()
+        && ["assault", "contested", "encircled", "breakthrough", "stalled", "active"].includes(
+          String(sector?.status || "").toLowerCase(),
+        )
+      ))
+      .map((sector) => ({
+        sector,
+        targetRegion: regions.find((region) => region.id === sector.regionId),
+      }))
+      .filter((candidate) => candidate.targetRegion);
+    const continuationOrder = /\b(continue|reinforc|advance|offensive|assault|attack|front|supply|reserve|hold|secure|widen|rotate|probe)\b|продолж|усил|наступ|атак|фронт|снабж|резерв|удерж|расшир/i.test(actionText);
+    const rankedActiveSector = activeSectorCandidates
+      .map((candidate) => {
+        const label = `${candidate.sector.name || ""} ${candidate.sector.note || ""} ${candidate.targetRegion.name || ""} ${candidate.targetRegion.id || ""}`;
+        const matches = meaningfulNameTokens(label).filter((token) => actionText.includes(token));
+        return {
+          ...candidate,
+          score: matches.reduce((total, token) => total + token.length, 0),
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+    const continuedSector = rankedActiveSector[0]?.score > 0
+      ? rankedActiveSector[0]
+      : rankedActiveSector.length === 1 && continuationOrder
+        ? rankedActiveSector[0]
+        : null;
+    const explicitRegion = regions.find((region) => {
+      const name = normalizeMatchText(region.name);
+      return containsNamedRegion(actionText, name);
+    });
+    const hintedCountry = COUNTRY_HINTS.find(([hint]) => actionText.includes(hint))?.[1] || "";
+    const sourceRegions = regions.filter((region) => regionOwner(region).toLowerCase() === playerOwner.toLowerCase());
+    const targetRegions = regions.filter((region) => {
+      if (regionOwner(region).toLowerCase() === playerOwner.toLowerCase()) return false;
+      if (continuedSector) return region.id === continuedSector.targetRegion.id;
+      if (explicitRegion) return region.id === explicitRegion.id;
+      return hintedCountry
+        ? regionOwner(region).toLowerCase() === hintedCountry.toLowerCase()
+        : true;
+    });
+    if (sourceRegions.length === 0 || targetRegions.length === 0) return null;
+
+    let best = null;
+    for (const targetRegion of targetRegions) {
+      for (const sourceRegion of sourceRegions) {
+        const anchor = geometryAnchor(sourceRegion.geometry);
+        if (!anchor) continue;
+        const boundary = tacticalNearestBoundaryPoint(anchor, targetRegion.geometry);
+        if (!boundary) continue;
+        if (!best || boundary.distanceKm < best.distanceKm) {
+          best = { anchor, boundary, sourceRegion, targetRegion, distanceKm: boundary.distanceKm };
+        }
+      }
+    }
+    if (!best) return null;
+
+    const targetOwner = regionOwner(best.targetRegion) || hintedCountry || "defending forces";
+    const sectorId = `fallback-front-${best.targetRegion.id.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    const previousSector = world.controlSectors.find((sector) => (
+      sector.id === sectorId
+      || (sector.regionId === best.targetRegion.id
+        && String(sector.ownerCode || "").toLowerCase() === playerOwner.toLowerCase())
+    ));
+    let sector;
+    if (previousSector) {
+      const nextCell = deriveNextTacticalCell(previousSector, best.targetRegion.geometry, {
+        id: `${previousSector.id}-advance-${(previousSector.cells || []).length + 1}`,
+      });
+      const cells = nextCell ? [...(previousSector.cells || []), nextCell] : previousSector.cells;
+      const requestedCells = (cells || []).map((cell) => ({
+        ...cell,
+        control: Math.min(72, Math.max(Number(cell.control) || 0, (Number(cell.control) || 0) + 12)),
+        status: "contested",
+        contestedBy: targetOwner,
+      }));
+      sector = boundTacticalSectorEvolution(
+        previousSector,
+        {
+          ...previousSector,
+          control: Math.min(72, (Number(previousSector.control) || 24) + 12),
+          // The order explicitly asks to widen the frontage. Passing that
+          // intent to the continuity bound is what admits the next legal
+          // connected cell; without it the candidate cell was found but
+          // rejected as outside the old narrow corridor.
+          frontWidthKm: Math.max(2, Number(previousSector.frontWidthKm) || 2) + 4,
+          status: "contested",
+          contestedBy: targetOwner,
+          note: `Fallback offensive continues from ${best.sourceRegion.name} toward ${best.targetRegion.name}.`,
+          cells: requestedCells,
+        },
+        { maxControlDelta: 16, maxNewCells: 1, maxAdvanceKm: 20, maxFrontWidthGrowthKm: 6 },
+      );
+    } else {
+      sector = deriveTacticalBorderSector({
+        sector: {
+          id: sectorId,
+          name: `${best.targetRegion.name} border sector`,
+          ownerCode: playerOwner,
+          contestedBy: targetOwner,
+          control: 24,
+          radiusKm: 9,
+          status: "assault",
+          note: `Initial bridgehead from ${best.sourceRegion.name}; supply and resistance still limit the advance.`,
+        },
+        targetRegion: best.targetRegion,
+        anchor: best.anchor,
+      });
+    }
+    if (!sector?.cells?.length) return null;
+
+    const leadCell = sector.cells[sector.cells.length - 1];
+    const frontBearing = Number(sector.frontBearing) || 0;
+    const existingUnits = normalizeArray(world.units);
+    const attacker = existingUnits.find((unit) => unit.sectorId === sector.id && unit.ownerCode.toLowerCase() === playerOwner.toLowerCase());
+    const defender = existingUnits.find((unit) => unit.sectorId === sector.id && unit.ownerCode.toLowerCase() === targetOwner.toLowerCase());
+    const unitOps = [];
+    if (attacker) {
+      unitOps.push({
+        op: "strength",
+        unitId: attacker.id,
+        strength: Math.max(35, attacker.strength - 7),
+        note: "Assault losses while extending the bridgehead.",
+      });
+      if (leadCell?.center) {
+        unitOps.push({
+          op: "move",
+          unitId: attacker.id,
+          toLng: leadCell.center.lng,
+          toLat: leadCell.center.lat,
+          regionId: best.targetRegion.id,
+          sectorId: sector.id,
+          note: "Advance to the newest connected cell.",
+        });
+      }
+    } else {
+      unitOps.push({
+        op: "spawn",
+        unit: {
+          id: `${sector.id}-attacker`,
+          name: `${playerOwner} border assault group`,
+          type: "infantry",
+          ownerCode: playerOwner,
+          strength: 86,
+          lng: leadCell.center.lng,
+          lat: leadCell.center.lat,
+          regionId: best.targetRegion.id,
+          sectorId: sector.id,
+          status: "engaged",
+          note: "Committed to the connected bridgehead.",
+        },
+      });
+    }
+    if (defender) {
+      unitOps.push({
+        op: "strength",
+        unitId: defender.id,
+        strength: Math.max(28, defender.strength - 11),
+        note: "Defensive losses under pressure at the contact line.",
+      });
+      const defenderPoint = tacticalOffsetPoint(
+        leadCell.center,
+        frontBearing,
+        Math.min(3.2, Math.max(1.2, Number(leadCell.radiusKm) * 0.65)),
+      ) || leadCell.center;
+      unitOps.push({
+        op: "move",
+        unitId: defender.id,
+        toLng: defenderPoint.lng,
+        toLat: defenderPoint.lat,
+        regionId: best.targetRegion.id,
+        sectorId: sector.id,
+        status: "engaged",
+        note: "Defensive line shifts to the newest contact cell.",
+      });
+    } else {
+      const defenderPoint = tacticalOffsetPoint(
+        leadCell.center,
+        frontBearing,
+        Math.min(3.2, Math.max(1.2, Number(leadCell.radiusKm) * 0.65)),
+      ) || leadCell.center;
+      unitOps.push({
+        op: "spawn",
+        unit: {
+          id: `${sector.id}-defender`,
+          name: `${targetOwner} local defense`,
+          type: "infantry",
+          ownerCode: targetOwner,
+          strength: 72,
+          lng: defenderPoint.lng,
+          lat: defenderPoint.lat,
+          regionId: best.targetRegion.id,
+          sectorId: sector.id,
+          status: "engaged",
+          note: "Holding the remaining administrative region.",
+        },
+      });
+    }
+
+    // A local fallback battle should still have an order of battle. One
+    // attacker and one defender made the map look like a duel between two
+    // pins, even though the sector already has a three-cell frontage. Keep
+    // the additional formations as real unitOps so they participate in later
+    // attrition and remain visible to the prompt/state machinery.
+    const offsetFormation = (center, bearingDelta, distanceKm) => (
+      tacticalOffsetPoint(center, frontBearing + bearingDelta, distanceKm) || center
+    );
+    const ensureSupportFormation = ({ id, name, type, ownerCode, strength, center, bearingDelta, distanceKm = 2.4, status, note, loss }) => {
+      const existing = existingUnits.find((unit) => unit.id === id);
+      const point = offsetFormation(center, bearingDelta, distanceKm);
+      if (existing && Number(existing.strength) > 0) {
+        unitOps.push({
+          op: "strength",
+          unitId: existing.id,
+          strength: Math.max(18, Number(existing.strength) - loss),
+          note: `${name} takes losses while the contact remains active.`,
+        });
+        if (point) {
+          unitOps.push({
+            op: "move",
+            unitId: existing.id,
+            toLng: point.lng,
+            toLat: point.lat,
+            regionId: best.targetRegion.id,
+            sectorId: sector.id,
+            status,
+            note: `${name} repositions with the active front.`,
+          });
+        }
+        return;
+      }
+      if (!point) return;
+      unitOps.push({
+        op: "spawn",
+        unit: {
+          id,
+          name,
+          type,
+          ownerCode,
+          strength,
+          lng: point.lng,
+          lat: point.lat,
+          regionId: best.targetRegion.id,
+          sectorId: sector.id,
+          status,
+          note,
+        },
+      });
+    };
+    ensureSupportFormation({
+      id: `${sector.id}-attacker-support`,
+      name: `${playerOwner} fire support battery`,
+      type: "artillery",
+      ownerCode: playerOwner,
+      strength: 34,
+      center: leadCell.center,
+      bearingDelta: -90,
+      status: "moving",
+      note: "Fire support follows the connected advance without leaving the sector.",
+      loss: 4,
+    });
+    ensureSupportFormation({
+      id: `${sector.id}-defender-reserve`,
+      name: `${targetOwner} reserve battalion`,
+      type: "infantry",
+      ownerCode: targetOwner,
+      strength: 46,
+      center: leadCell.center,
+      bearingDelta: 90,
+      distanceKm: 4.2,
+      status: "engaged",
+      note: "Reserve committed behind the threatened contact line.",
+      loss: 5,
+    });
+
+    const firstContact = !previousSector;
+    return {
+      sector,
+      unitOps,
+      targetRegion: best.targetRegion,
+      sourceRegion: best.sourceRegion,
+      targetOwner,
+      firstContact,
+      actionIndex,
+    };
+  };
+
   // Ancient/FMG scenarios may use textual or BCE dates. Only perform calendar
   // arithmetic on strict Gregorian dates; otherwise preserve the scenario text.
   const advanceGameDate = (dayCount) =>
     addIsoDays(bundle.game.gameDate, dayCount) || normalizeString(bundle.game.gameDate);
 
   if (firstThreeActions.length > 0) {
-    firstThreeActions.forEach((action, index) => {
+    for (const [index, action] of firstThreeActions.entries()) {
       const eventDate = advanceGameDate(
         Math.max(1, Math.round(((index + 1) / (firstThreeActions.length + 1)) * Math.max(days, 1))),
       );
 
+      const territorialImpact = await buildFallbackTerritorialImpact(action, index);
+      const actionTitle = action.title.toLowerCase();
+      const eventDescription = territorialImpact
+        ? territorialImpact.firstContact
+          ? `${bundle.game.country} opens a narrow bridgehead from ${territorialImpact.sourceRegion.name} into ${territorialImpact.targetRegion.name}. Two connected cells are under assault; ${territorialImpact.targetOwner} still holds the administrative region, and both sides take losses while supply is pushed to the contact line.`
+          : `${bundle.game.country} reinforces the ${territorialImpact.targetRegion.name} border sector and extends the connected front one cell forward. The bridgehead remains contested; resistance and supply prevent an administrative transfer.`
+        : action.kind === "chat"
+          ? `${bundle.game.country} opens a deliberate diplomatic channel tied to ${actionTitle}, forcing counterparts to weigh terms instead of guessing intent.`
+          : `${bundle.game.country} begins implementing ${actionTitle}, producing immediate administrative and political consequences that other powers start to notice.`;
+      const eventImpacts = {
+        actionIds: [action.id],
+        createdChats:
+          action.kind === "chat" && action.invitees.length > 0 && action.chatStarter
+            ? [
+                {
+                  countries: action.invitees,
+                  openingMessage: action.chatStarter,
+                  speaker: bundle.game.country,
+                  title: action.title,
+                },
+              ]
+            : [],
+        markerOps: [],
+        polityChanges: [],
+        regionTransfers: [],
+        sectorOps: territorialImpact ? [{ op: "upsert", sector: territorialImpact.sector }] : [],
+        unitOps: territorialImpact?.unitOps || [],
+      };
+
       events.push({
         date: eventDate,
-        description:
-          action.kind === "chat"
-            ? `${bundle.game.country} opens a deliberate diplomatic channel tied to ${action.title.toLowerCase()}, forcing counterparts to weigh terms instead of guessing intent.`
-            : `${bundle.game.country} begins implementing ${action.title.toLowerCase()}, producing immediate administrative and political consequences that other powers start to notice.`,
-        impacts: {
-          createdChats:
-            action.kind === "chat" && action.invitees.length > 0 && action.chatStarter
-              ? [
-                  {
-                    countries: action.invitees,
-                    openingMessage: action.chatStarter,
-                    speaker: bundle.game.country,
-                    title: action.title,
-                  },
-                ]
-              : [],
-          polityChanges: [],
-          regionTransfers: [],
-        },
+        description: eventDescription,
+        impacts: eventImpacts,
         importance: index === firstThreeActions.length - 1 ? "major" : "minor",
         kind: action.kind === "chat" ? "diplomacy" : "player",
         notable: index === firstThreeActions.length - 1,
         playerRelated: true,
         title:
-          action.kind === "chat"
+          territorialImpact
+            ? territorialImpact.firstContact
+              ? `Battle for ${territorialImpact.targetRegion.name} — bridgehead established`
+              : `Battle for ${territorialImpact.targetRegion.name} — front advances`
+            : action.kind === "chat"
             ? `${bundle.game.country} opens a diplomatic channel`
-            : `${bundle.game.country} acts on ${action.title.toLowerCase()}`,
+            : `${bundle.game.country} acts on ${actionTitle}`,
       });
-    });
+    }
   } else {
     const midpoint = advanceGameDate(Math.max(1, Math.round(Math.max(days, 1) / 2)));
     events.push({
@@ -3306,7 +3821,7 @@ const formatDurationLabel = (days) => {
   return pluralize(whole, "day");
 };
 
-export const simulateTimelineJump = async ({ days, mode = "jump", signal } = {}) => {
+export const simulateTimelineJump = async ({ days, mode = "jump", signal, localOnly = false } = {}) => {
   beginSimulation();
   try {
   const bundle = await readGameStateBundle({ force: true });
@@ -3323,7 +3838,10 @@ export const simulateTimelineJump = async ({ days, mode = "jump", signal } = {})
   if (dateStep >= 1 && parseIsoDate(originDate) && targetDate === originDate) {
     throw new Error("The requested jump exceeds the supported date range.");
   }
-  const variables = await buildTemplateVariables(bundle, { targetDate });
+  // The local QA route deliberately skips prompt construction and callAI. It is
+  // used only by the dev sandbox button to exercise the same deterministic
+  // mechanics and persistence path without exporting the game state anywhere.
+  const variables = localOnly ? null : await buildTemplateVariables(bundle, { targetDate });
   const durationLabel = formatDurationLabel(safeDays);
   let [minEvents, maxEvents] = eventCountRangeForDays(safeDays);
   // Guarantee at least one event per queued action, so each planned action has a
@@ -3333,7 +3851,20 @@ export const simulateTimelineJump = async ({ days, mode = "jump", signal } = {})
     minEvents = Math.min(plannedActionCount, 37);
     maxEvents = Math.max(maxEvents, minEvents + 3);
   }
-  const { generation, payload } = await runJsonTask(mode === "auto" ? "autoJumpForward" : "jumpForward", {
+  if (localOnly && signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Local timeline simulation cancelled.", "AbortError");
+  }
+  const { generation, payload } = localOnly
+    ? {
+        generation: {
+          source: "fallback",
+          fallbackReason: "Local QA deterministic turn (external AI disabled)",
+        },
+        payload: await fallbackJumpSimulation({ bundle, days: dateStep || 1, mode, targetDate }),
+      }
+    : await runJsonTask(mode === "auto" ? "autoJumpForward" : "jumpForward", {
     fallback: () => fallbackJumpSimulation({ bundle, days: dateStep || 1, mode, targetDate }),
     signal,
     // The jump IS the game — by default generation waits as long as the model

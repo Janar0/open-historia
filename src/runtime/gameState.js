@@ -582,6 +582,9 @@ const normalizeRegionTransfer = (entry) => {
     regionId,
     regionName: normalizeOptionalString(entry.regionName || entry.name),
     toCode,
+    ...(entry.transferMode === "military" || entry.transferMode === "political"
+      ? { transferMode: entry.transferMode }
+      : {}),
   };
 };
 
@@ -996,14 +999,18 @@ const normalizeControlSectorEntry = (entry, index = 0, { generateCells = true } 
     ? Math.round(leaves.reduce((sum, cell) => sum + cell.control * Math.max(0.25, cell.radiusKm ** 2), 0) / weightTotal)
     : sector.control;
   const hasContestedLeaf = leaves.some((cell) => cell.contestedBy || ["assault", "contested", "encircled"].includes(cell.status));
+  const hasHeldLeaf = leaves.length > 0 && leaves.every((cell) => cell.status === "held" && !cell.contestedBy);
+  const explicitlyHeld = rawStatus === "held";
   return {
     ...sector,
     control: summarizedControl,
     status: ["withdrawn", "destroyed"].includes(sector.status)
       ? sector.status
-      : hasContestedLeaf || summarizedControl < 100
+      : hasContestedLeaf
         ? ["assault", "encircled"].includes(sector.status) ? sector.status : "contested"
-        : "held",
+        : explicitlyHeld || hasHeldLeaf || summarizedControl >= 100
+          ? "held"
+          : "contested",
     cells: normalizedCells,
   };
 };
@@ -1991,6 +1998,7 @@ const normalizeUnitOp = (entry) => {
       toLat,
       regionId: normalizeOptionalString(entry.regionId),
       sectorId: normalizeOptionalString(entry.sectorId || entry.frontId),
+      status: normalizeOptionalString(entry.status),
       note: normalizeOptionalString(entry.note),
     };
   }
@@ -2025,7 +2033,7 @@ export const applyUnitOps = (units, ops) => {
               lat: op.toLat,
               regionId: op.regionId || unit.regionId,
               sectorId: op.sectorId || unit.sectorId,
-              status: "moving",
+              status: op.status || "moving",
               updatedAt: new Date().toISOString(),
             }
           : unit,
@@ -2486,8 +2494,23 @@ export const applyEventImpactsToWorld = ({ colors = {}, events = [], world }) =>
 
   for (const event of normalizeEvents(events)) {
     for (const transfer of event.impacts.regionTransfers) {
-      nextWorld.regionOwnershipOverrides[transfer.regionId] = transfer.toCode;
-      completedRegionTransfers.add(transfer.regionId);
+      const regionId = normalizeOptionalString(transfer.regionId);
+      const currentOwner = toCountryName(normalizeOptionalString(nextWorld.regionOwnershipOverrides[regionId]));
+      const fromOwner = toCountryName(normalizeOptionalString(transfer.fromCode));
+      const nextOwner = toCountryName(normalizeOptionalString(transfer.toCode));
+      // AI turns are validated before folding, but history replay, rollback
+      // previews, and legacy records also reach this synchronous reducer. Once
+      // a region has an explicit owner, reject stale or ownerless transfers so
+      // an old event cannot teleport the border again during replay. Regions
+      // without an override still use the immutable catalog owner and are
+      // checked by the async AI validator before persistence.
+      if (!regionId || !nextOwner || (currentOwner && (
+        !fromOwner
+        || fromOwner.toLowerCase() !== currentOwner.toLowerCase()
+        || nextOwner.toLowerCase() === currentOwner.toLowerCase()
+      ))) continue;
+      nextWorld.regionOwnershipOverrides[regionId] = nextOwner;
+      completedRegionTransfers.add(regionId);
       if (transfer.regionName) completedRegionTransfers.add(transfer.regionName);
     }
 

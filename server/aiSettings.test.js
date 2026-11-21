@@ -59,3 +59,41 @@ test("AI settings reject non-http endpoints", () => {
     fs.rmSync(dataDir, { force: true, recursive: true });
   }
 });
+
+test("AI settings can use an environment profile without exposing its key", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "open-historia-ai-settings-"));
+  const previous = Object.fromEntries([
+    "OH_AI_API_KEY",
+    "OH_AI_ENDPOINT",
+    "OH_AI_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_ENDPOINT",
+    "OPENROUTER_MODEL",
+  ].map((key) => [key, process.env[key]]));
+  try {
+    delete process.env.OH_AI_API_KEY;
+    delete process.env.OH_AI_ENDPOINT;
+    delete process.env.OH_AI_MODEL;
+    process.env.OPENROUTER_API_KEY = "runtime-secret";
+    process.env.OPENROUTER_ENDPOINT = "https://openrouter.example/api/v1";
+    process.env.OPENROUTER_MODEL = "deepseek/test";
+
+    const store = createAISettingsStore(dataDir);
+    assert.deepEqual(store.getPublic("user-1"), {
+      apiKeyConfigured: true,
+      endpoint: "https://openrouter.example/api/v1",
+      managed: true,
+      mode: "env",
+      model: "deepseek/test",
+      source: "env",
+    });
+    assert.equal(store.getEffective("user-1").apiKey, "runtime-secret");
+    assert.equal("apiKey" in store.getPublic("user-1"), false);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(dataDir, { force: true, recursive: true });
+  }
+});

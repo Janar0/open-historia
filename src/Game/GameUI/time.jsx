@@ -11,6 +11,7 @@ import {
     loadRegionCatalog,
 } from "../../runtime/assets.js";
 import { loadRollbackSnapshots, maybeGeneratePregameHistory, rollBackToSnapshot, simulateAutoJump, simulateTimelineJump } from "../AI/gameplay.js";
+import { getLibraryState, loadGameDetails } from "../../runtime/library.js";
 import { isMainMenuOpen } from "./libraryBar";
 import {
     applyEventImpactsToWorld,
@@ -310,6 +311,20 @@ const extendBounds = (currentBounds, nextBounds) => {
     ];
 };
 
+// A tactical event carries the actual combat footprint, while a country or
+// region bound is often hundreds of kilometres wide. Build a small camera box
+// around the reported cells/front origin so a battle reveal opens on the
+// fighting itself rather than leaving the player at the strategic world zoom.
+const pointToBounds = (point, radiusKm = 8) => {
+    const lng = Number(point?.lng ?? point?.[0]);
+    const lat = Number(point?.lat ?? point?.[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+    const safeRadius = Math.max(2, Number(radiusKm) || 8);
+    const latDelta = safeRadius / 111.32;
+    const lngDelta = safeRadius / (111.32 * Math.max(0.08, Math.cos((lat * Math.PI) / 180)));
+    return [[lng - lngDelta, lat - latDelta], [lng + lngDelta, lat + latDelta]];
+};
+
 const geometryToBounds = (geometry, extent = 4096) => {
     let minLng = Number.POSITIVE_INFINITY;
     let minLat = Number.POSITIVE_INFINITY;
@@ -418,6 +433,33 @@ const loadCountryBounds = async () => {
 };
 
 const getEventFocusBounds = (event, { countryBounds, regionBounds }) => {
+    let tacticalBounds = null;
+    for (const operation of event?.impacts?.sectorOps ?? []) {
+        const sector = operation?.sector ?? operation;
+        const cells = Array.isArray(sector?.cells) ? sector.cells : [];
+        const points = [
+            sector?.frontOrigin,
+            sector?.center,
+            ...cells.map((cell) => cell?.center),
+        ].filter(Boolean);
+        const cellRadius = Math.max(...cells.map((cell) => Number(cell?.radiusKm) || 0), 0);
+        const radius = Math.max(
+            5,
+            Math.min(16, Number(sector?.radiusKm) || cellRadius || 8),
+        );
+        for (const point of points) {
+            tacticalBounds = extendBounds(tacticalBounds, pointToBounds(point, radius * 1.45));
+        }
+        if (!points.length) {
+            const regionId = String(sector?.regionId ?? "");
+            tacticalBounds = extendBounds(tacticalBounds, regionBounds.get(regionId) || null);
+        }
+    }
+
+    if (tacticalBounds) {
+        return { bounds: tacticalBounds, tactical: true };
+    }
+
     let resolvedBounds = null;
 
     for (const transfer of event?.impacts?.regionTransfers ?? []) {
@@ -438,7 +480,7 @@ const getEventFocusBounds = (event, { countryBounds, regionBounds }) => {
         resolvedBounds = extendBounds(resolvedBounds, countryBounds.get(code) || null);
     }
 
-    return resolvedBounds;
+    return resolvedBounds ? { bounds: resolvedBounds, tactical: false } : null;
 };
 
 // Every event moves the camera. When the impacts don't pin a location, fall
@@ -459,7 +501,7 @@ const deriveEventFocusBounds = (event, { countryBounds, regionBounds, polityLook
         }
     }
     if (bounds) {
-        return bounds;
+        return { bounds, tactical: false };
     }
 
     const haystack = `${event?.title ?? ""} ${event?.description ?? ""}`.toLowerCase();
@@ -475,27 +517,44 @@ const deriveEventFocusBounds = (event, { countryBounds, regionBounds, polityLook
         }
     }
 
-    return bounds;
+    return bounds ? { bounds, tactical: false } : null;
 };
 
 const getMapInstance = (mapRef) => mapRef?.current?.getMap?.() ?? mapRef?.current ?? null;
 
-const focusMapOnBounds = (mapRef, bounds) => {
+const focusMapOnBounds = (mapRef, focus) => {
     const map = getMapInstance(mapRef);
+    const bounds = Array.isArray(focus) ? focus : focus?.bounds;
+    const tactical = !Array.isArray(focus) && Boolean(focus?.tactical);
     if (!map || !bounds) {
         return;
     }
 
     let [[west, south], [east, north]] = bounds;
 
-    if (Math.abs(east - west) < 0.35) {
-        west -= 0.6;
-        east += 0.6;
-    }
+    if (tactical) {
+        const width = Math.abs(east - west);
+        const height = Math.abs(north - south);
+        if (width < 0.18) {
+            const extra = (0.18 - width) / 2;
+            west -= extra;
+            east += extra;
+        }
+        if (height < 0.14) {
+            const extra = (0.14 - height) / 2;
+            south -= extra;
+            north += extra;
+        }
+    } else {
+        if (Math.abs(east - west) < 0.35) {
+            west -= 0.6;
+            east += 0.6;
+        }
 
-    if (Math.abs(north - south) < 0.35) {
-        south -= 0.45;
-        north += 0.45;
+        if (Math.abs(north - south) < 0.35) {
+            south -= 0.45;
+            north += 0.45;
+        }
     }
 
     map.fitBounds(
@@ -506,8 +565,8 @@ const focusMapOnBounds = (mapRef, bounds) => {
         {
             duration: 1800,
             essential: true,
-            maxZoom: 6.8,
-            padding: 80,
+            maxZoom: tactical ? 10.2 : 6.8,
+            padding: tactical ? 42 : 80,
         },
     );
 };
@@ -894,18 +953,20 @@ const JumpNode = ({ isLoading, opt, onJump }) => {
 };
 
 const TimelineSkipPanel = ({
-    canUndo,
-    currentDate,
-    error,
-    isLoading,
-    isOpen,
-    onAutoJump,
-    onCancel,
-    onClose,
-    onJump,
-    onUndo,
-    topOffset,
-    undoCount,
+  canUndo,
+  currentDate,
+  error,
+  isLoading,
+  isOpen,
+  localQaEnabled,
+  onAutoJump,
+  onCancel,
+  onClose,
+  onJump,
+  onLocalJump,
+  onUndo,
+  topOffset,
+  undoCount,
 }) => {
     const [customValue, setCustomValue] = useState("");
     const [customUnit, setCustomUnit] = useState("days");
@@ -976,6 +1037,32 @@ const TimelineSkipPanel = ({
             </div>
             </button>
             <div style={{ background: "rgba(139,92,246,0.4)", height: "1.25rem", width: "2px" }} />
+            </>
+        )}
+        {localQaEnabled && (
+            <>
+            <button
+            type="button"
+            aria-label="Run local QA turn"
+            title="Advance one deterministic local fallback turn without calling an external AI provider"
+            disabled={isLoading}
+            onClick={() => { if (!isLoading) onLocalJump?.(); }}
+            style={{
+                background: "rgba(14,116,144,0.2)",
+                border: "1px solid rgba(34,211,238,0.55)",
+                borderRadius: "10px",
+                color: "#cffafe",
+                cursor: isLoading ? "default" : "pointer",
+                opacity: isLoading ? 0.7 : 1,
+                padding: "0.38rem 0.55rem",
+                textAlign: "center",
+                width: "12.5rem",
+            }}
+            >
+            <div style={{ fontSize: "0.82rem", fontWeight: 700 }}>Local QA turn</div>
+            <div style={{ color: "rgba(165,243,252,0.72)", fontSize: "0.68rem", marginTop: "0.15rem" }}>Deterministic fallback · no external AI</div>
+            </button>
+            <div style={{ background: "rgba(34,211,238,0.35)", height: "1.25rem", width: "2px" }} />
             </>
         )}
         <div
@@ -1304,7 +1391,7 @@ const DateWidget = ({
 }) => {
     // The map already owns one shared world.json poll. Joining it here avoids a
     // second full world download every five seconds just for timeline history.
-    const { worldState: liveWorldState } = useWorldState({ includeOverride: false });
+    const { worldState: liveWorldState, controlSectors } = useWorldState({ includeOverride: false });
     const [gameData, setGameData] = useState(null);
     const [events, setEvents] = useState([]);
     const [worldState, setWorldState] = useState(null);
@@ -1329,6 +1416,22 @@ const DateWidget = ({
     const openPanel = typeof onSetPanel === "function" ? activePanel : localOpenPanel;
     const isMobile = useIsMobile();
     const disableEventCamera = useMapSetting(MAP_SETTING_KEYS.disableEventCamera);
+    const localQaEnabled = Boolean(
+        typeof window !== "undefined" &&
+        ["127.0.0.1", "localhost"].includes(window.location.hostname),
+    );
+
+    // The timeline writes the authoritative game record directly. Refresh the
+    // lightweight library catalog too, otherwise the top-left game summary can
+    // keep yesterday's currentDate while this panel already shows the new turn.
+    const refreshActiveGameSummary = () => {
+        const activeGameId = getLibraryState().activeGameId;
+        if (!activeGameId) return;
+        void loadGameDetails(activeGameId).catch(() => {
+            // The timeline state is already committed; a catalog refresh is only
+            // a presentation sync and must not make a completed turn look failed.
+        });
+    };
 
     useEffect(() => {
         ensureTimelineStyles();
@@ -1468,7 +1571,7 @@ const DateWidget = ({
         setLocalOpenPanel((current) => (current === panelName ? null : panelName));
     }
 
-    const runJump = async (days, mode = "jump") => {
+    const runJump = async (days, mode = "jump", localOnly = false) => {
         if (!gameData || days == null || isLoading) {
             return;
         }
@@ -1481,12 +1584,15 @@ const DateWidget = ({
         const controller = new AbortController();
         jumpAbortRef.current = controller;
         try {
-            const result = mode === "auto"
+            const result = localOnly
+            ? await simulateTimelineJump({ days, localOnly: true, signal: controller.signal })
+            : mode === "auto"
             ? await simulateAutoJump({ days, signal: controller.signal })
             : await simulateTimelineJump({ days, signal: controller.signal });
             setGameData(result.game);
             setEvents(result.events);
             setWorldState(result.world);
+            refreshActiveGameSummary();
             setVisibleEventCount(1);
             if (result.generation?.source === "fallback") {
                 setFallbackWarning(`Turn generated by fallback: ${result.generation.fallbackReason || "structured AI output was unavailable"}`);
@@ -1536,6 +1642,7 @@ const DateWidget = ({
                 setGameData(result.bundle.game);
                 setEvents(result.bundle.events);
                 setWorldState(result.bundle.world);
+                refreshActiveGameSummary();
                 setVisibleEventCount(1);
                 setUndoCount(result.remaining);
                 setPanel("history");
@@ -1612,9 +1719,19 @@ const DateWidget = ({
             return;
         }
 
+        const hasTacticalImpact = (activeVisibleEvent?.impacts?.sectorOps ?? []).length > 0;
+        // A live tactical theatre owns its own lead-focused camera in World.
+        // Fitting event bounds here would include the historical front origin
+        // and the whole rear corridor, pulling the contact back to an
+        // unhelpful theatre overview after every turn. Generic events also do
+        // not need to disturb that operational view.
+        if (controlSectors.length > 0 || hasTacticalImpact) {
+            return;
+        }
+
         const bounds = deriveEventFocusBounds(activeVisibleEvent, { countryBounds, regionBounds, polityLookup });
         focusMapOnBounds(mapRef, bounds);
-    }, [activeVisibleEvent, countryBounds, disableEventCamera, mapRef, polityLookup, regionBounds]);
+    }, [activeVisibleEvent, controlSectors.length, countryBounds, disableEventCamera, mapRef, polityLookup, regionBounds]);
 
     const revealNextEvent = () => {
         setVisibleEventCount((current) => {
@@ -1720,10 +1837,12 @@ const DateWidget = ({
         error={error}
         isLoading={isLoading}
         isOpen={openPanel === "skip"}
+        localQaEnabled={localQaEnabled}
         onAutoJump={() => runJump(365, "auto")}
         onCancel={cancelJump}
         onClose={() => setPanel(null)}
         onJump={(days) => runJump(days, "jump")}
+        onLocalJump={() => runJump(1, "jump", true)}
         onUndo={runUndo}
         topOffset={topOffset}
         undoCount={undoCount}
