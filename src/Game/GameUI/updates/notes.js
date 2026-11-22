@@ -54,6 +54,24 @@ import { RELEASES } from "./notesReleases.js";
 // make UPDATES, newest first by date.
 const NEW_UPDATES = [
   {
+    // A shared server's AI profile replaced every OpenAI-compatible entry's endpoint, model and key
+    // (AI/serverSettings.js applyManagedProfile): now only those of entries at the profile's endpoint.
+    id: "2026-11-own-models-on-shared-server",
+    kind: "minor",
+    date: "2026-11-22",
+    banners: [
+      {
+        title: "Your own models answer again",
+        items: [
+          "On a shared server, a model you added from another provider now answers itself, with your own key, instead of being replaced by the server's model.",
+          "When the server's model fails, the game moves on to your models from other providers.",
+          "The offer to speed up turns names the model that really answered.",
+          "A model from another provider that relied on the server's key now needs a key of its own.",
+        ],
+      },
+    ],
+  },
+  {
     // "remove the reccomended thing from command code on the popup when you start a game and dont have a configured key"
     // (the owner, 2026-11-10): GameUI/apiSetupPrompt.jsx ChoiceCard has no recommended badge or highlight.
     id: "2026-11-setup-choices-alike",

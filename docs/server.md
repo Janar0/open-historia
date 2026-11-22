@@ -454,7 +454,8 @@ Accounts are identities and roles, not separate libraries: every signed-in playe
 An admin can give every player one OpenAI-compatible endpoint, model and key (**Account → AI for players**), or one per player. It is stored in `<OH_DATA_DIR>/ai-settings.json` (mode `0600`), or read from `OH_AI_ENDPOINT`, `OH_AI_MODEL` and `OH_AI_API_KEY` when nothing is saved.
 
 - The page learns the endpoint and model, never the key. On a player's first visit a Connection to that endpoint is added at the top of their Fallback list (`ensureManagedConnection`), so there is nothing to type.
-- A call to that endpoint always goes through `POST /api/ai/relay` with `relayCredentialProfile: "openai-compatible"`. The relay drops whatever `Authorization` the page sent and adds the stored key.
+- The profile governs only OpenAI-compatible entries whose endpoint is that endpoint (`applyManagedProfile`): they run on the admin's model, and any key on the device is ignored. An entry at any other address, another path on the same host included, keeps its own endpoint, model and key and is never given the server's.
+- A call from such an entry always goes through `POST /api/ai/relay` with `relayCredentialProfile: "openai-compatible"`. The relay drops whatever `Authorization` the page sent and adds the stored key.
 - The stored key goes to the endpoint the profile names and nowhere else: a different target is refused (403), and a profile with a key but no endpoint sends no key at all (400).
 - A caller who passed the shared key or is signed in may use the relay from another device, without `OH_ALLOW_REMOTE_RELAY`.
 

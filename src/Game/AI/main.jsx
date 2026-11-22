@@ -3,6 +3,7 @@ import {
     AGENT_PROVIDER,
     GEMINI_DEFAULT_CHAIN,
     OPENAI_DEFAULT_MODEL,
+    describeEntry,
     entryServesCall,
     fallbackStateStore,
     getConnections,
@@ -35,7 +36,7 @@ import { endpointIsLocal, isLocalHostname } from "./localEndpoint.js";
 import { createKoboldCppMemory, endpointOriginOf, isKoboldCppModelName, saysKoboldCpp } from "./koboldCpp.js";
 import { MIN_CACHEABLE_PREFIX_CHARS, renderTemplateCached, splitSystemPromptForCache } from "./promptLayout.js";
 import { looksLikeModelFilePath, resolveServedModelId } from "./modelIds.js";
-import { getManagedOpenAICompatibleSettings, managedRelayProfileFor } from "./serverSettings.js";
+import { applyManagedProfile, getManagedOpenAICompatibleSettings, managedRelayProfileFor } from "./serverSettings.js";
 import { RELAY_CUT_OFF_MESSAGE, isRelayRefusal, isRelayUnreachable, relayUnreachableReason, withRelayCutoffHint } from "./relayResponse.js";
 import { attachLookupRound, attachCallMetrics, attachRequestOutcome, finishAiRecord, isTelemetryEnabled, startAiRecord  } from "./telemetry.js";
 import { JSON_URLS, loadRegionCatalog, readJson } from "../../runtime/assets.js";
@@ -555,7 +556,12 @@ function noteStructuredModeLanding(key, startedAt, landedAt, configured) {
 export const getStructuredModeSuggestion = () => {
     for (const entry of getResolvedFallbackList()) {
         const mode = structuredModeObserver.shouldSuggest(entry.id, entry.structuredMode);
-        if (mode) return { key: entry.id, mode, label: entry.label };
+        if (mode) {
+            // Named by the model that answered, which on a shared server may be the admin's.
+            const called = applyManagedProfile(entry);
+            const label = called === entry ? entry.label : describeEntry(called.model, entry.connectionName);
+            return { key: entry.id, mode, label };
+        }
     }
     return null;
 };
@@ -647,7 +653,7 @@ async function providerFetch(url, options = {}) {
 
     // The endpoint a shared server's admin set for its players (serverSettings.js):
     // only the server holds its key, so the call can only go through the relay.
-    const relayCredentialProfile = import.meta.env.VITE_OH_WEB ? "" : managedRelayProfileFor(url);
+    const relayCredentialProfile = import.meta.env.VITE_OH_WEB ? "" : managedRelayProfileFor(url, options.headers);
     if (relayCredentialProfile) {
         return relayFetch(url, { ...options, relayCredentialProfile });
     }
@@ -1920,14 +1926,9 @@ async function callOpenAI(systemPrompt, history, opts = {}) {
 
 async function callOpenAICompatible(systemPrompt, history, opts = {}) {
     const { entrySettings: ownSettings, ...rest } = opts;
-    // A shared server's own AI profile, when its admin set one, takes the place
-    // of the endpoint and model written on this device; its key stays on the
-    // server and is added by the relay (serverSettings.js).
-    const managed = await getManagedOpenAICompatibleSettings();
-    const managedEndpoint = managed?.managed ? normalizeEndpoint(managed.endpoint) : "";
-    const entrySettings = managedEndpoint
-        ? { ...ownSettings, endpoint: managedEndpoint, ...(managed.model ? { model: managed.model } : {}) }
-        : ownSettings;
+    // An entry at a shared server's endpoint runs on the admin's model and on the
+    // key the relay adds; any other entry is the player's own (serverSettings.js).
+    const entrySettings = applyManagedProfile(ownSettings, await getManagedOpenAICompatibleSettings());
     const settings = entrySettings;
     const endpoint = normalizeEndpoint(settings.endpoint);
 
@@ -1937,7 +1938,7 @@ async function callOpenAICompatible(systemPrompt, history, opts = {}) {
 
     const headers = {
         "Content-Type": "application/json",
-        ...(!managedEndpoint && settings.apiKey.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
+        ...(settings.apiKey.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}),
     };
 
     const model = await resolveModel("openai-compatible", {

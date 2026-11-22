@@ -35,12 +35,27 @@ if (typeof window !== "undefined") {
 
 const withoutTrailingSlash = (value) => String(value ?? "").replace(/\/+$/, "");
 
-// The relay profile a request to `url` belongs to, from what was last fetched:
-// "openai-compatible" when `url` is under the managed endpoint, "" otherwise.
-export const managedRelayProfileFor = (url) => {
-    const endpoint = withoutTrailingSlash(cachedSettings?.managed ? cachedSettings.endpoint : "");
-    if (!endpoint) return "";
-    return String(url ?? "").startsWith(`${endpoint}/`) ? "openai-compatible" : "";
+const managedEndpointOf = (managed) => withoutTrailingSlash(String((managed?.managed && managed.endpoint) || "").trim());
+
+// An entry as it is really called. One at the server's endpoint is the admin's:
+// their model, and no key from this device. Every other entry is the player's
+// own and comes back untouched, so a list of several providers still falls back
+// from one to the next.
+export const applyManagedProfile = (entry, managed = cachedSettings) => {
+    const endpoint = managedEndpointOf(managed);
+    if (!endpoint || entry?.provider !== "openai-compatible") return entry;
+    if (withoutTrailingSlash(String(entry.endpoint ?? "").trim()) !== endpoint) return entry;
+    return { ...entry, endpoint, apiKey: "", model: managed.model || entry.model };
+};
+
+// The relay profile a request belongs to, from what was last fetched. The
+// server's key is only for the two calls such an entry makes, and only where the
+// page sends no key: another entry on the same host (a /v1 or /anthropic path, a
+// provider with the player's own key) must not be billed to the admin.
+export const managedRelayProfileFor = (url, headers = {}, managed = cachedSettings) => {
+    const endpoint = managedEndpointOf(managed);
+    if (!endpoint || headers?.Authorization) return "";
+    return [`${endpoint}/models`, `${endpoint}/chat/completions`].includes(String(url ?? "")) ? "openai-compatible" : "";
 };
 
 // A player who opens a shared server with an AI profile has a Connection to it
