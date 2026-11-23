@@ -331,9 +331,11 @@ const buildWorldStyle = (basemapId, customBg, backgroundDeclared, isGlobe, terra
       layers: [
         // Solid base beneath the image so no edge/pole ever shows a transparent hole.
         { id: "custom-bg-base", type: "background", paint: { "background-color": "#0b1a2b" } },
-        // "nearest" only when zoomed past the picture's own pixels (MapLibre
-        // still mipmaps it smoothly zoomed out), so a pixel map stays crisp.
-        { id: "custom-bg-layer", type: "raster", source: "custom-bg", paint: { "raster-fade-duration": 0, "raster-resampling": "nearest" } },
+        // "linear": zoomed past the picture's own pixels, a painted map (most of
+        // them: a scanned atlas, a fan map, a hand painting) blurs softly instead
+        // of breaking into coloured squares. "nearest" kept pixel art crisp, but
+        // turned every painted map into a mosaic a province wide.
+        { id: "custom-bg-layer", type: "raster", source: "custom-bg", paint: { "raster-fade-duration": 0, "raster-resampling": "linear" } },
       ],
       sky: { "atmosphere-blend": 0 },
     };
