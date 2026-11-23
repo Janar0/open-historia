@@ -64,8 +64,9 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
   const [lore, setLore] = useState("");
   const [landless, setLandless] = useState(true);
   // One person rather than a state (runtime/playerCharacter.js): a princess, an
-  // engineer, a captain, played as themselves. Not for a group, which is a
-  // movement by definition.
+  // engineer, a captain, played as themselves. Offered on the group tab too,
+  // where a scenario with groups puts the only form there is; a person made
+  // there starts as a landless faction, never as a group (libraryBar.jsx).
   const [person, setPerson] = useState(false);
   const [standing, setStanding] = useState("");
   const [answersTo, setAnswersTo] = useState("");
@@ -95,8 +96,9 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
       // Landless is the explicit toggle. Even with the "claim territory" mode open,
       // a faction that selected nothing starts landless — the toggle just makes that
       // a deliberate, visible choice rather than an accident.
-      regionIds: landless ? [] : [...regionIds],
-      ...(person && !group ? { character: { name: trimmedName, standing: standing.trim(), answersTo: answersTo.trim(), about: lore.trim() } } : {}),
+      // A person holds no land of their own: the land is their country's.
+      regionIds: landless || person ? [] : [...regionIds],
+      ...(person ? { character: { name: trimmedName, standing: standing.trim(), answersTo: answersTo.trim(), about: lore.trim() } } : {}),
     });
   };
 
@@ -110,7 +112,7 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
           autoFocus={!isTouchPrimary()}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={group ? GROUP_CREATOR_TEXTS.namePlaceholder : "e.g. Free Cascadia, the Provisional Government…"}
+          placeholder={person ? "e.g. Elianna Malukshure, Tom the shipwright…" : group ? GROUP_CREATOR_TEXTS.namePlaceholder : "e.g. Free Cascadia, the Provisional Government…"}
           style={field}
         />
       </div>
@@ -150,13 +152,13 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
         <textarea
           value={lore}
           onChange={(e) => setLore(e.target.value)}
-          placeholder={group ? GROUP_CREATOR_TEXTS.descriptionPlaceholder : "Who is this power? Its history, cause, and ambitions. This steers the story the AI tells."}
+          placeholder={person ? "Who is this person? Their past, what they know how to do, what they want. The AI reads this." : group ? GROUP_CREATOR_TEXTS.descriptionPlaceholder : "Who is this power? Its history, cause, and ambitions. This steers the story the AI tells."}
           rows={3}
           style={{ ...field, resize: "vertical", minHeight: "3.4rem" }}
         />
       </div>
 
-      {!group && (
+      {(
         <div>
           <label style={{ alignItems: "center", color: "rgba(255,255,255,0.85)", cursor: "pointer", display: "flex", fontSize: "0.8rem", gap: "0.45rem" }}>
             <input type="checkbox" checked={person} onChange={(e) => setPerson(e.target.checked)} />
@@ -180,7 +182,8 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
         </div>
       )}
 
-      <div>
+      {/* A person holds no land of their own, so they are not asked for any. */}
+      <div style={person ? { display: "none" } : undefined}>
         <div style={label}>{group ? GROUP_CREATOR_TEXTS.areaLabel : "Starting territory"}</div>
         <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.4rem" }}>
           <button type="button" className="oh-tap-row" onClick={() => setLandless(true)} style={pill(landless)}>{group ? GROUP_CREATOR_TEXTS.noArea : "Start landless"}</button>

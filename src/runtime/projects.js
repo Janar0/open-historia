@@ -299,7 +299,7 @@ export const sortProjects = (projects, key = "updated") => {
 const ownerIdentity = (value) => String(value ?? "")
   .normalize("NFD")
   .toLowerCase()
-  .replace(/[^a-z0-9]+/g, "");
+  .replace(/[^\p{L}\p{N}]+/gu, "");
 
 // Owner is compared by NAME, because that is the namespace every polity-keyed
 // field in world state uses. A blank ownerCode means the player: the model is not

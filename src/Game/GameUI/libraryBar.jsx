@@ -1,5 +1,6 @@
 /*! Open Historia — portions (map-editor embed, apply-to-scenario, country picker) © 2026 Nicholas Krol, AGPL-3.0-or-later (see LICENSE). */
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { refreshRuntimeState } from "../../runtime/runtimeStore.js";
 import { APP_HEIGHT, SAFE_BOTTOM, SAFE_LEFT, SAFE_RIGHT, SAFE_TOP, SCREEN_HEIGHT, useTouchPrimary } from "../../runtime/mobileUi.js";
 import { useBackToClose } from "../../runtime/backToClose.js";
 import { Presence } from "./presence.jsx";
@@ -2969,6 +2970,11 @@ const LibraryTopBar = ({ onOpenSettings }) => {
           await writeJson(JSON_URLS.flags, { ...flags, [name]: faction.flag }, { pretty: true });
         } catch { /* flag is cosmetic */ }
       }
+      // createGame activated the game, and the page read its world then, before
+      // the faction was merged in above: read it again, or what only the faction
+      // brought (a character played as one person, its lore) is missing until a
+      // reload.
+      await refreshRuntimeState(["world", "game"]).catch(() => {});
     } catch (nextError) {
       if (gameId) {
         // Activated already: the remounted UI opens the game and says why.
@@ -5055,7 +5061,8 @@ const LibraryTopBar = ({ onOpenSettings }) => {
                       customBackground={pickerBackground}
                       colors={pickerColors}
                       busy={isBusy}
-                      onCreate={(created) => pickGroup({ ...created, existing: false })}
+                      // One person (playerCharacter.js) is no group: a landless faction played as that person.
+                      onCreate={(created) => (created.character ? pickFaction(created) : pickGroup({ ...created, existing: false }))}
                       onCancel={() => { closeCountryPicker(); setPickerTab("country"); }}
                     />
                   </div>

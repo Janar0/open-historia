@@ -155,7 +155,7 @@ const normalizeText = (value) =>
     .normalize("NFD")
     .toLowerCase()
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
 const clampPriority = (value) => Math.max(0, Math.min(100, Math.round(value)));

@@ -95,7 +95,7 @@ export const ownerFoldKey = (value) =>
   String(value ?? "")
     .normalize("NFD")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 
 // ONE owner -> rgb resolver for every paint path. colors.json and the live
 // polity registry (world.polityOverrides) are two different namespaces: a

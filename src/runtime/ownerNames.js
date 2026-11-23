@@ -53,7 +53,9 @@ export const ownerIdentityKey = (value) =>
   String(value ?? "")
     .normalize("NFD")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+    // Letters of every script, not only a-z: a Cyrillic or Greek name used to fold to
+    // nothing, so every such polity was unknown, or all of them were one.
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 
 // Every real country's name is an identity of its own and can never be redirected
 // to some other polity — the guard that stops a scenario whose polity happens to

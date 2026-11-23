@@ -43,7 +43,9 @@ const foldIdentityText = (value) =>
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[’']/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
+    // Letters of every script, not only a-z: a Cyrillic or Greek name used to fold to
+    // nothing, so every such polity was unknown, or all of them were one.
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 

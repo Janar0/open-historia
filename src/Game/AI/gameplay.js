@@ -2926,8 +2926,9 @@ const buildJumpStaticRules = async (variables = {}) => {
     unitsOnTheMapBlock(game?.gameDate, eraSettingOf(world)),
     `[Military Feasibility]\n${MILITARY_FEASIBILITY}`,
     TAKING_GROUND_BLOCK,
-    // How the board is kept, once there is a board (projectsDirective.js).
-    normalizeArray(world.projects).length > 0
+    // How the board is kept, once there is a board, or while a folded skip keeps
+    // it and may open the first entry (projectsDirective.js).
+    normalizeArray(world.projects).length > 0 || (Boolean(variables?.foldedSkip) && variables?.foldedBoard !== false)
       ? `${JUMP_PROJECTS_RULES_HEADING}\n${buildJumpProjectsRules({ folded: Boolean(variables?.foldedSkip) && variables?.foldedBoard !== false })}`
       : "",
     isActiveFeatureEnabled("groups") ? `${GROUPS_RULE_HEADING}\n${GROUPS_RULE}` : "",

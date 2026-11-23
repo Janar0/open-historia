@@ -132,7 +132,21 @@ export const buildJumpProjectsRules = ({ folded = false } = {}) => (folded
 
 export const buildJumpProjectsDirective = (projectsSummary, { folded = false, doubted = "", rulesAbove = false } = {}) => {
   const board = String(projectsSummary ?? "").trim();
-  if (!board || board.startsWith(EMPTY_BOARD_PREFIX)) return "";
+  if (!board || board.startsWith(EMPTY_BOARD_PREFIX)) {
+    // An empty board used to be no board at all: a skip was given neither the
+    // board's rules nor its ops, so the first effort a player began (an
+    // inventor's workshop, a programme) was never recorded and its needs were
+    // never kept. A folded skip keeps the board itself, so it is told the board
+    // is there to be opened.
+    if (!folded) return "";
+    return [
+      JUMP_PROJECTS_DIRECTIVE_HEADER,
+      "The player's board of long-running efforts is empty. An event that starts a multi-round effort of the player's own "
+        + "(a workshop, an invention, a research or building programme, a sustained campaign) opens it with a create op, "
+        + "with its milestones and, for anything physical, its needs.",
+      rulesAbove ? `Kept as ${JUMP_PROJECTS_RULES_HEADING} above says.` : buildJumpProjectsRules({ folded }),
+    ].join("\n");
+  }
   const settle = folded ? String(doubted ?? "").trim() : "";
   return [
     JUMP_PROJECTS_DIRECTIVE_HEADER,
