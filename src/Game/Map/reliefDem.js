@@ -143,3 +143,22 @@ export const reliefDemTileLoader = async (params) => {
     : await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   return { data: await blob.arrayBuffer() };
 };
+
+// Whether the scenario's own painted picture, the one its relief belongs to, is
+// what the map is showing (World.jsx publishes it). A player may pick another of
+// the scenario's maps, or an Earth basemap, and the relief must not be laid over
+// that. Kept here, import-free, so World.jsx and ReliefLayers.jsx share it
+// without importing each other.
+let paintingShown = false;
+const paintingListeners = new Set();
+export const publishPaintingShown = (shown) => {
+  const next = Boolean(shown);
+  if (next === paintingShown) return;
+  paintingShown = next;
+  for (const listener of paintingListeners) listener();
+};
+export const subscribePaintingShown = (listener) => {
+  paintingListeners.add(listener);
+  return () => paintingListeners.delete(listener);
+};
+export const getPaintingShown = () => paintingShown;

@@ -1,5 +1,6 @@
 /*! Open Historia — portions (troop system integration + globe sun/stars) © 2026 Nicholas Krol, AGPL-3.0-or-later (see LICENSE). */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { publishPaintingShown } from "./reliefDem.js";
 import { APP_HEIGHT } from "../../runtime/mobileUi.js";
 import Map from "react-map-gl/maplibre";
 import { useCustomBackground, useOwnBasemap } from "./useCustomBackground.js";
@@ -677,6 +678,13 @@ function World({ mapRef, projection: requestedProjection, terrainEnabled, onInit
     publishShownRelief(shownRelief);
     return () => publishShownRelief(null);
   }, [shownRelief]);
+  // And whether the scenario's own painted picture is the map on screen, so its
+  // relief and rivers (ReliefLayers.jsx) are drawn over it and nothing else.
+  const paintingShown = Boolean(customBg?.kind === "image" && effectiveCustomBg === customBg);
+  useEffect(() => {
+    publishPaintingShown(paintingShown);
+    return () => publishPaintingShown(false);
+  }, [paintingShown]);
   const effectiveBgDeclared = otherMapShown ? Boolean(shownOwnBg) || bgDeclared : useScenarioBackground ? bgDeclared : false;
   const effectiveBasemap = resolveBasemapId({
     overrideId: builtinOverride,

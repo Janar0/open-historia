@@ -75,3 +75,19 @@ test("a packed heightmap reads back in metres", () => {
   assert.ok(Math.abs(metres[0] - 6000 * (32768 / 65535)) < 0.01);
   assert.ok(Math.abs(metres[1] - 6000) < 0.01);
 });
+
+test("the relief follows whether the scenario's own picture is on screen", async () => {
+  const { getPaintingShown, publishPaintingShown, subscribePaintingShown } = await import("./reliefDem.js");
+  assert.equal(getPaintingShown(), false, "nothing is drawn over a map nobody said is the picture");
+  let heard = 0;
+  const stop = subscribePaintingShown(() => { heard += 1; });
+  publishPaintingShown(true);
+  publishPaintingShown(true);
+  assert.equal(getPaintingShown(), true);
+  assert.equal(heard, 1, "told once, not on every repeat");
+  publishPaintingShown(false);
+  stop();
+  publishPaintingShown(true);
+  assert.equal(heard, 2, "a listener that left hears nothing more");
+  publishPaintingShown(false);
+});

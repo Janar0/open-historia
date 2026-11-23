@@ -16,7 +16,7 @@ import { MAP_SETTING_KEYS, useMapSettingValue } from "../../runtime/mapSettings.
 import { wantsScenarioTerrain } from "./scenarioTerrain.js";
 import { useWorldBackground } from "./useWorldState.js";
 import { useLayerOrder } from "./useLayerOrder.js";
-import { RELIEF_DEM_ENCODING, RELIEF_DEM_PROTOCOL, RELIEF_DEM_TILE_SIZE, decodeReliefPixels, reliefDemTileLoader, setReliefGrid } from "./reliefDem.js";
+import { RELIEF_DEM_ENCODING, RELIEF_DEM_PROTOCOL, RELIEF_DEM_TILE_SIZE, decodeReliefPixels, getPaintingShown, reliefDemTileLoader, setReliefGrid, subscribePaintingShown } from "./reliefDem.js";
 
 let protocolRegistered = false;
 const ensureProtocol = () => {
@@ -108,7 +108,9 @@ const ReliefLayers = () => {
     return () => { cancelled = true; };
   }, [key]);
 
-  const shown = Boolean(wanted && state.relief && state.key === key);
+  // Only over the scenario's own picture, as the map is showing it (World.jsx).
+  const paintingOnScreen = useSyncExternalStore(subscribePaintingShown, getPaintingShown, getPaintingShown);
+  const shown = Boolean(wanted && paintingOnScreen && state.relief && state.key === key);
   useEffect(() => {
     publish(shown ? { fillOpacity: PAINTED_RELIEF_FILL_OPACITY } : null);
     return () => publish(null);
