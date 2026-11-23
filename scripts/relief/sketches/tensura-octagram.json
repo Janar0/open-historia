@@ -1,0 +1,890 @@
+{
+  "name": "Tensura — the Octagram continent. Coordinates are pixels of the painted map at half size (1321 × 1018).",
+  "seed": 8,
+  "frame": {
+    "x0": 44,
+    "y0": 44,
+    "x1": 1278,
+    "y1": 976
+  },
+  "riverThreshold": 1100,
+  "sea": [
+    {
+      "name": "the dragon over Dwargon (kept on the picture)",
+      "polygon": [
+        [
+          790,
+          225
+        ],
+        [
+          915,
+          225
+        ],
+        [
+          915,
+          330
+        ],
+        [
+          860,
+          335
+        ],
+        [
+          800,
+          310
+        ]
+      ],
+      "erase": false
+    },
+    {
+      "name": "the compass rose",
+      "polygon": [
+        [
+          1105,
+          755
+        ],
+        [
+          1285,
+          755
+        ],
+        [
+          1285,
+          925
+        ],
+        [
+          1105,
+          925
+        ]
+      ],
+      "erase": true
+    },
+    {
+      "name": "top-left corner ornament",
+      "polygon": [
+        [
+          30,
+          30
+        ],
+        [
+          110,
+          30
+        ],
+        [
+          110,
+          110
+        ],
+        [
+          30,
+          110
+        ]
+      ],
+      "erase": true
+    },
+    {
+      "name": "top-right corner ornament",
+      "polygon": [
+        [
+          1212,
+          30
+        ],
+        [
+          1292,
+          30
+        ],
+        [
+          1292,
+          110
+        ],
+        [
+          1212,
+          110
+        ]
+      ],
+      "erase": true
+    },
+    {
+      "name": "bottom-left corner ornament",
+      "polygon": [
+        [
+          30,
+          910
+        ],
+        [
+          110,
+          910
+        ],
+        [
+          110,
+          990
+        ],
+        [
+          30,
+          990
+        ]
+      ],
+      "erase": true
+    },
+    {
+      "name": "bottom-right corner ornament",
+      "polygon": [
+        [
+          1212,
+          910
+        ],
+        [
+          1292,
+          910
+        ],
+        [
+          1292,
+          990
+        ],
+        [
+          1212,
+          990
+        ]
+      ],
+      "erase": true
+    }
+  ],
+  "ranges": [
+    {
+      "name": "Dwargon's spurs west",
+      "points": [
+        [
+          760,
+          370
+        ],
+        [
+          810,
+          380
+        ],
+        [
+          850,
+          400
+        ]
+      ],
+      "crest": 1600,
+      "width": 14
+    },
+    {
+      "name": "Dwargon's spurs east",
+      "points": [
+        [
+          860,
+          395
+        ],
+        [
+          905,
+          420
+        ],
+        [
+          945,
+          440
+        ]
+      ],
+      "crest": 1400,
+      "width": 13
+    },
+    {
+      "name": "Kanaat, along the Jura forest's west",
+      "points": [
+        [
+          700,
+          470
+        ],
+        [
+          740,
+          500
+        ],
+        [
+          770,
+          545
+        ],
+        [
+          785,
+          600
+        ]
+      ],
+      "crest": 1500,
+      "width": 11
+    },
+    {
+      "name": "Ice continent, central peaks",
+      "points": [
+        [
+          620,
+          95
+        ],
+        [
+          650,
+          130
+        ],
+        [
+          675,
+          175
+        ],
+        [
+          690,
+          215
+        ]
+      ],
+      "crest": 2600,
+      "width": 16
+    },
+    {
+      "name": "Ice continent, western ridges",
+      "points": [
+        [
+          470,
+          140
+        ],
+        [
+          520,
+          150
+        ],
+        [
+          560,
+          175
+        ],
+        [
+          600,
+          205
+        ]
+      ],
+      "crest": 1700,
+      "width": 12
+    },
+    {
+      "name": "Ingrassia's western hills",
+      "points": [
+        [
+          385,
+          380
+        ],
+        [
+          400,
+          430
+        ],
+        [
+          420,
+          480
+        ],
+        [
+          430,
+          520
+        ]
+      ],
+      "crest": 1100,
+      "width": 12
+    },
+    {
+      "name": "Western Nations, the ridge by the castle",
+      "points": [
+        [
+          440,
+          360
+        ],
+        [
+          455,
+          420
+        ],
+        [
+          462,
+          470
+        ]
+      ],
+      "crest": 900,
+      "width": 9
+    },
+    {
+      "name": "Hills between Farmenas and Blumund",
+      "points": [
+        [
+          650,
+          470
+        ],
+        [
+          690,
+          480
+        ],
+        [
+          715,
+          500
+        ]
+      ],
+      "crest": 800,
+      "width": 9
+    },
+    {
+      "name": "Southern ridges by Sarion",
+      "points": [
+        [
+          600,
+          545
+        ],
+        [
+          630,
+          560
+        ],
+        [
+          660,
+          575
+        ]
+      ],
+      "crest": 700,
+      "width": 8
+    },
+    {
+      "name": "Sarion's highlands",
+      "points": [
+        [
+          700,
+          615
+        ],
+        [
+          730,
+          640
+        ],
+        [
+          745,
+          700
+        ]
+      ],
+      "crest": 1100,
+      "width": 10
+    },
+    {
+      "name": "The southern peninsula's spine",
+      "points": [
+        [
+          850,
+          660
+        ],
+        [
+          880,
+          720
+        ],
+        [
+          900,
+          780
+        ],
+        [
+          880,
+          850
+        ]
+      ],
+      "crest": 1300,
+      "width": 11
+    },
+    {
+      "name": "Eastern Empire, the western range",
+      "points": [
+        [
+          1110,
+          470
+        ],
+        [
+          1160,
+          470
+        ],
+        [
+          1220,
+          480
+        ]
+      ],
+      "crest": 1600,
+      "width": 12
+    },
+    {
+      "name": "Eastern Empire, the northern hills",
+      "points": [
+        [
+          1150,
+          290
+        ],
+        [
+          1180,
+          330
+        ],
+        [
+          1200,
+          380
+        ]
+      ],
+      "crest": 900,
+      "width": 12
+    },
+    {
+      "name": "Western land, the far western hills",
+      "points": [
+        [
+          150,
+          470
+        ],
+        [
+          200,
+          500
+        ],
+        [
+          240,
+          540
+        ]
+      ],
+      "crest": 700,
+      "width": 12
+    },
+    {
+      "name": "Malukshure's coastal hills",
+      "points": [
+        [
+          548,
+          690
+        ],
+        [
+          575,
+          672
+        ],
+        [
+          610,
+          662
+        ],
+        [
+          640,
+          668
+        ]
+      ],
+      "crest": 450,
+      "width": 7
+    },
+    {
+      "name": "Southern island ridge",
+      "points": [
+        [
+          300,
+          830
+        ],
+        [
+          360,
+          820
+        ],
+        [
+          420,
+          830
+        ],
+        [
+          500,
+          845
+        ]
+      ],
+      "crest": 900,
+      "width": 11
+    }
+  ],
+  "peaks": [
+    {
+      "name": "Dwargon, the great massif",
+      "x": 855,
+      "y": 395,
+      "height": 5200,
+      "radius": 75
+    },
+    {
+      "name": "The eastern volcano",
+      "x": 1052,
+      "y": 330,
+      "height": 3400,
+      "radius": 30
+    },
+    {
+      "name": "The southern island's volcano",
+      "x": 383,
+      "y": 845,
+      "height": 2600,
+      "radius": 26
+    },
+    {
+      "name": "The southern island's second cone",
+      "x": 410,
+      "y": 825,
+      "height": 1900,
+      "radius": 18
+    },
+    {
+      "name": "Ice continent, the highest peak",
+      "x": 660,
+      "y": 150,
+      "height": 3600,
+      "radius": 30
+    }
+  ],
+  "basins": [
+    {
+      "name": "The Great Jura Forest",
+      "polygon": [
+        [
+          770,
+          470
+        ],
+        [
+          900,
+          450
+        ],
+        [
+          1000,
+          470
+        ],
+        [
+          1010,
+          560
+        ],
+        [
+          980,
+          640
+        ],
+        [
+          880,
+          650
+        ],
+        [
+          800,
+          620
+        ],
+        [
+          780,
+          540
+        ]
+      ],
+      "level": 160
+    },
+    {
+      "name": "The western plains (Western Nations, Ingrassia's south)",
+      "polygon": [
+        [
+          465,
+          515
+        ],
+        [
+          560,
+          520
+        ],
+        [
+          640,
+          560
+        ],
+        [
+          640,
+          640
+        ],
+        [
+          600,
+          660
+        ],
+        [
+          520,
+          650
+        ],
+        [
+          470,
+          600
+        ]
+      ],
+      "level": 110
+    },
+    {
+      "name": "The green north-east of the forest",
+      "polygon": [
+        [
+          950,
+          380
+        ],
+        [
+          1080,
+          390
+        ],
+        [
+          1110,
+          450
+        ],
+        [
+          1000,
+          470
+        ],
+        [
+          940,
+          440
+        ]
+      ],
+      "level": 220
+    },
+    {
+      "name": "The southern peninsula's tip",
+      "polygon": [
+        [
+          820,
+          800
+        ],
+        [
+          880,
+          800
+        ],
+        [
+          880,
+          910
+        ],
+        [
+          840,
+          910
+        ]
+      ],
+      "level": 60
+    }
+  ],
+  "lakes": [
+    {
+      "name": "The lake of the western plains",
+      "polygon": [
+        [
+          628,
+          582
+        ],
+        [
+          652,
+          576
+        ],
+        [
+          684,
+          580
+        ],
+        [
+          690,
+          594
+        ],
+        [
+          662,
+          602
+        ],
+        [
+          634,
+          598
+        ]
+      ],
+      "level": 95
+    },
+    {
+      "name": "Lake Siss",
+      "polygon": [
+        [
+          898,
+          548
+        ],
+        [
+          925,
+          540
+        ],
+        [
+          958,
+          545
+        ],
+        [
+          962,
+          560
+        ],
+        [
+          930,
+          566
+        ],
+        [
+          902,
+          562
+        ]
+      ],
+      "level": 140
+    },
+    {
+      "name": "The northern lake by the volcano",
+      "polygon": [
+        [
+          1086,
+          374
+        ],
+        [
+          1104,
+          370
+        ],
+        [
+          1122,
+          376
+        ],
+        [
+          1118,
+          384
+        ],
+        [
+          1096,
+          386
+        ]
+      ],
+      "level": 260
+    },
+    {
+      "name": "The eastern lake",
+      "polygon": [
+        [
+          1046,
+          626
+        ],
+        [
+          1072,
+          620
+        ],
+        [
+          1108,
+          626
+        ],
+        [
+          1110,
+          638
+        ],
+        [
+          1080,
+          642
+        ],
+        [
+          1050,
+          638
+        ]
+      ],
+      "level": 90
+    },
+    {
+      "name": "The southern island's lake",
+      "polygon": [
+        [
+          458,
+          836
+        ],
+        [
+          474,
+          832
+        ],
+        [
+          486,
+          838
+        ],
+        [
+          480,
+          846
+        ],
+        [
+          462,
+          846
+        ]
+      ],
+      "level": 300
+    }
+  ],
+  "rivers": [
+    {
+      "name": "The river from Lake Siss to the east",
+      "points": [
+        [
+          960,
+          556
+        ],
+        [
+          985,
+          560
+        ],
+        [
+          1000,
+          578
+        ],
+        [
+          985,
+          600
+        ],
+        [
+          975,
+          620
+        ],
+        [
+          990,
+          640
+        ],
+        [
+          1020,
+          652
+        ],
+        [
+          1050,
+          660
+        ],
+        [
+          1090,
+          668
+        ],
+        [
+          1135,
+          676
+        ],
+        [
+          1170,
+          690
+        ]
+      ],
+      "depth": 70,
+      "width": 3
+    },
+    {
+      "name": "From the plains lake to the southern sea",
+      "points": [
+        [
+          650,
+          600
+        ],
+        [
+          640,
+          620
+        ],
+        [
+          625,
+          640
+        ],
+        [
+          612,
+          660
+        ],
+        [
+          600,
+          675
+        ]
+      ],
+      "depth": 50,
+      "width": 3
+    },
+    {
+      "name": "The ice continent's cleft",
+      "points": [
+        [
+          688,
+          175
+        ],
+        [
+          692,
+          205
+        ],
+        [
+          696,
+          232
+        ],
+        [
+          700,
+          250
+        ]
+      ],
+      "depth": 90,
+      "width": 3
+    }
+  ],
+  "minLand": 400
+}

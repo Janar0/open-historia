@@ -28,6 +28,17 @@ test("the land mask finds the blob and leaves the sea and the frame", () => {
   assert.equal(mask[(height - 1) * width + width - 1], 0);
 });
 
+test("a sea speck inside the land is land, and a stain on the frame's edge is sea", () => {
+  const { rgba, width, height, frame } = picture();
+  const paint = (x, y, [r, g, b]) => rgba.set([r, g, b, 255], (y * width + x) * 4);
+  // A 4×4 parchment hole in the blob, and a 5×4 brown stain against the frame.
+  for (let y = 13; y < 17; y += 1) for (let x = 18; x < 22; x += 1) paint(x, y, [232, 217, 176]);
+  for (let y = 2; y < 6; y += 1) for (let x = 30; x < 35; x += 1) paint(x, y, [166, 124, 82]);
+  const mask = landMask(rgba, width, height, { frame, cleanRadius: 0 });
+  assert.equal(mask[15 * width + 20], 1, "the hole is filled");
+  assert.equal(mask[3 * width + 32], 0, "the stain touching the frame goes");
+});
+
 test("a peak rises where the sketch puts it, and the sea stays at zero", () => {
   const { rgba, width, height, frame } = picture();
   const mask = landMask(rgba, width, height, { frame });
@@ -35,6 +46,27 @@ test("a peak rises where the sketch puts it, and the sea stays at zero", () => {
   assert.ok(heights[15 * width + 20] >= 1800, `the peak is ${heights[15 * width + 20]} m`);
   assert.equal(heights[5 * width + 5], 0);
   for (let i = 0; i < heights.length; i += 1) if (mask[i]) assert.ok(heights[i] > 0, "land is above the sea");
+});
+
+test("a basin's edge is a slope, not a step", () => {
+  const width = 60;
+  const height = 40;
+  const mask = new Uint8Array(width * height).fill(1);
+  const flat = buildHeightmap(mask, width, height, {}, { seed: 5 });
+  const basin = { polygon: [[20, 10], [40, 10], [40, 30], [20, 30]], level: 0 };
+  const sunk = buildHeightmap(mask, width, height, { basins: [basin] }, { seed: 5 });
+  const drop = (x) => flat[20 * width + x] - sunk[20 * width + x];
+  assert.ok(drop(30) > drop(21), "deeper in the middle than at the edge");
+  assert.ok(Math.abs(sunk[20 * width + 20] - sunk[20 * width + 19]) < 40, "no cliff where the basin begins");
+});
+
+test("a lake lies in the land, never above it", () => {
+  const width = 40;
+  const height = 30;
+  const mask = new Uint8Array(width * height).fill(1);
+  const lake = { polygon: [[15, 10], [25, 10], [25, 20], [15, 20]], level: 5000 };
+  const heights = buildHeightmap(mask, width, height, { lakes: [lake] }, { seed: 2 });
+  assert.ok(heights[15 * width + 20] < 1000, `the lake is at ${heights[15 * width + 20]} m`);
 });
 
 test("the same inputs give the same heightmap", () => {

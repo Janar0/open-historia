@@ -73,7 +73,7 @@ const ridged = (noise, x, y, octaves = 5) => {
 // water); land is the other of two colour clusters. Thin dark marks drawn on the
 // sea (a grid, waves, lettering) are opened away; small specks of either are
 // closed. Nothing outside the frame is land.
-export const landMask = (rgba, width, height, { frame = { x0: 0, y0: 0, x1: width, y1: height }, cleanRadius = 2 } = {}) => {
+export const landMask = (rgba, width, height, { frame = { x0: 0, y0: 0, x1: width, y1: height }, cleanRadius = 2, minLand = 30 } = {}) => {
   const n = width * height;
   const inside = (x, y) => x >= frame.x0 && x < frame.x1 && y >= frame.y0 && y < frame.y1;
   const colour = (i) => [rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]];
@@ -127,6 +127,61 @@ export const landMask = (rgba, width, height, { frame = { x0: 0, y0: 0, x1: widt
     mask = erode(dilate(mask, width, height, cleanRadius), width, height, cleanRadius);
   }
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) if (!inside(x, y)) mask[y * width + x] = 0;
+  // A band along the frame is the paper's edge (stains, corner ornaments): sea.
+  // Land smaller than `minLand` cells is a speck: sea. Then sea the open sea
+  // cannot reach (a hole in the land, a painted lake the colours took for sea)
+  // is land: lakes are the sketch's to draw.
+  const band = Math.max(2, Math.round(Math.min(frame.x1 - frame.x0, frame.y1 - frame.y0) * 0.012));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (x < frame.x0 + band || y < frame.y0 + band || x >= frame.x1 - band || y >= frame.y1 - band) mask[y * width + x] = 0;
+    }
+  }
+  const touchesFrame = (x, y) => x <= frame.x0 || y <= frame.y0 || x >= frame.x1 - 1 || y >= frame.y1 - 1;
+  const seen = new Uint8Array(n);
+  const stack = [];
+  const component = (start, value) => {
+    const cells = [];
+    let edge = false;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length) {
+      const i = stack.pop();
+      cells.push(i);
+      const x = i % width;
+      const y = (i - x) / width;
+      if (touchesFrame(x, y)) edge = true;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const xx = x + dx;
+        const yy = y + dy;
+        if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
+        const j = yy * width + xx;
+        if (!seen[j] && mask[j] === value && inside(xx, yy)) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    return { cells, edge };
+  };
+  for (let i = 0; i < n; i += 1) {
+    if (seen[i] || !mask[i]) continue;
+    const { cells } = component(i, 1);
+    // Mostly within a few bands of the frame: a strip of stained paper edge.
+    const zone = Math.max(band, Math.round(Math.min(frame.x1 - frame.x0, frame.y1 - frame.y0) * 0.06));
+    let near = 0;
+    for (const c of cells) {
+      const x = c % width;
+      const y = (c - x) / width;
+      if (x < frame.x0 + zone || y < frame.y0 + zone || x >= frame.x1 - zone || y >= frame.y1 - zone) near += 1;
+    }
+    if (cells.length < minLand || near > cells.length * 0.5) for (const c of cells) mask[c] = 0;
+  }
+  seen.fill(0);
+  for (let i = 0; i < n; i += 1) {
+    const x = i % width;
+    const y = (i - x) / width;
+    if (seen[i] || mask[i] || !inside(x, y)) continue;
+    const { cells, edge } = component(i, 0);
+    if (!edge) for (const c of cells) mask[c] = 1;
+  }
   return mask;
 };
 
@@ -262,8 +317,19 @@ export const buildHeightmap = (mask, width, height, sketch = {}, { seed = 1, cel
       return Math.max(h, h * (1 - shape) + peak.height * shape * rough);
     });
   }
+  // A basin pulls the land toward its level, fully some way in from its edge and
+  // gradually across it, and keeps a third of the hills: a forest floor or a plain
+  // rolls a little, and a perfectly flat one sends every river down parallel lines.
   for (const basin of sketch.basins ?? []) {
-    add(boxOf(basin.polygon, 0), (x, y, h) => (insidePolygon(x, y, basin.polygon) ? basin.level + (h - basin.level) * 0.15 : h));
+    const feather = Math.max(1, basin.feather ?? 14);
+    const ring = [...basin.polygon, basin.polygon[0]];
+    add(boxOf(basin.polygon, 0), (x, y, h) => {
+      if (!insidePolygon(x, y, basin.polygon)) return h;
+      const t = Math.min(1, polylineDistance(x, y, ring) / feather);
+      const pull = t * t * (3 - 2 * t);
+      const level = basin.level + (h - basin.level) * 0.33;
+      return h + (level - h) * pull;
+    });
   }
   for (const river of sketch.rivers ?? []) {
     const depth = river.depth ?? 60;
@@ -274,7 +340,9 @@ export const buildHeightmap = (mask, width, height, sketch = {}, { seed = 1, cel
     });
   }
   for (const lake of sketch.lakes ?? []) {
-    add(boxOf(lake.polygon, 0), (x, y, h) => (insidePolygon(x, y, lake.polygon) ? lake.level : h));
+    // At its level, or lower where the land around it is: a lake set above its
+    // shore would stand on the map as a raised plate.
+    add(boxOf(lake.polygon, 0), (x, y, h) => (insidePolygon(x, y, lake.polygon) ? Math.max(1, Math.min(h - 8, lake.level)) : h));
   }
   for (let i = 0; i < out.length; i += 1) out[i] = mask[i] ? Math.max(1, out[i]) : 0;
   return out;
@@ -292,6 +360,7 @@ const D8 = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]
 export const routeRivers = (heights, mask, width, height, { threshold = 400, keep = [], minLength = 6 } = {}) => {
   const n = width * height;
   const filled = new Float32Array(heights);
+  const jitter = mulberry32(width * 7919 + height);
   const done = new Uint8Array(n);
   // A binary heap of [height, index].
   const heap = [];
@@ -340,7 +409,9 @@ export const routeRivers = (heights, mask, width, height, { threshold = 400, kee
       const j = yy * width + xx;
       if (done[j]) continue;
       done[j] = 1;
-      filled[j] = Math.max(filled[j], h + 0.001);
+      // A flat the fill makes is given a faint random tilt cell by cell, or
+      // water crosses it in ruler-straight parallel lines.
+      filled[j] = Math.max(filled[j], h + 0.01 + jitter() * 0.4);
       push(filled[j], j);
     }
   }
