@@ -108,6 +108,7 @@ export const JSON_URLS = {
   citiesGeojson: "",
   backgroundData: "",
   ownBasemapsData: "",
+  reliefData: "",
   world: "",
   intercepts: "",
 };
@@ -664,6 +665,7 @@ export const setRuntimeAssetEndpoints = ({ token = "" } = {}) => {
   JSON_URLS.citiesGeojson = withRuntimeToken("/api/runtime/json/citiesGeojson");
   JSON_URLS.backgroundData = withRuntimeToken("/api/runtime/json/backgroundData");
   JSON_URLS.ownBasemapsData = withRuntimeToken("/api/runtime/json/ownBasemapsData");
+  JSON_URLS.reliefData = withRuntimeToken("/api/runtime/json/reliefData");
   JSON_URLS.world = withRuntimeToken("/api/runtime/json/world");
   JSON_URLS.intercepts = withRuntimeToken("/api/runtime/json/intercepts");
 

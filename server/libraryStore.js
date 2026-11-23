@@ -487,6 +487,10 @@ const SCENARIO_GEOJSON_ASSET_FILES = {
   // backgroundData so a hub reference or a zip that lifts out the main basemap
   // leaves them as they are.
   ownBasemapsData: "own-basemaps.json",
+  // A painted map's relief (scripts/relief/build-relief.mjs): a heightmap and
+  // the rivers and lakes that follow it, drawn over the picture by
+  // src/Game/Map/ReliefLayers.jsx. Absent, the map is the picture alone.
+  reliefData: "relief.json",
 };
 
 const EMPTY_FEATURE_COLLECTION = { type: "FeatureCollection", features: [] };
