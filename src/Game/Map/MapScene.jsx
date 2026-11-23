@@ -15,6 +15,7 @@ import StrikeLayers from "./StrikeLayers.jsx";
 import FrostLayer from "./FrostLayer.jsx";
 import SeaBattleLayers from "./SeaBattleLayers.jsx";
 import SeasonLayers from "./SeasonLayers.jsx";
+import ReliefLayers from "./ReliefLayers.jsx";
 import IceLayers from "./IceLayers.jsx";
 import WarGeographyLayers from "./WarGeographyLayers.jsx";
 import FrontWeatherLayers from "./FrontWeatherLayers.jsx";
@@ -162,6 +163,8 @@ const MapScene = ({ isGlobe = false }) => {
       <SeasonLayers isGlobe={isGlobe} />
       <IceLayers />
       <WarGeographyLayers />
+      {/* A painted map's relief and rivers, when its scenario has them (ReliefLayers.jsx). */}
+      <ReliefLayers />
       <Cities />
       <MarkersLayer />
       <WarRoomLayers />

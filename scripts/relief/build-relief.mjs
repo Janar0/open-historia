@@ -34,7 +34,11 @@ const MAX_METRES = 6000;
 
 const sketch = JSON.parse(fs.readFileSync(args.sketch, "utf8"));
 const world = JSON.parse(fs.readFileSync(path.join(args.scenario, "world.json"), "utf8"));
-const background = JSON.parse(fs.readFileSync(path.join(args.scenario, "background.json"), "utf8"));
+// The picture as painted: background.original.json when a cleaned background
+// (--clean-background) has replaced background.json, so a rebuild still reads
+// the frame and the ornaments it has to find.
+const original = path.join(args.scenario, "background.original.json");
+const background = JSON.parse(fs.readFileSync(fs.existsSync(original) ? original : path.join(args.scenario, "background.json"), "utf8"));
 const bounds = world.background?.bounds;
 if (!background.dataUrl || !bounds) throw new Error("This scenario has no painted (image) background with bounds.");
 
@@ -98,18 +102,12 @@ const lakeFeatures = (sketch.lakes ?? []).map((lake) => ({
   geometry: { type: "Polygon", coordinates: [[...chaikin(chaikin([...lake.polygon, lake.polygon[0]])), lake.polygon[0]].map(toMap)] },
 }));
 
-const png16 = await sharp(Buffer.from(encodeHeight16(heights, MAX_METRES).buffer), { raw: { width, height, channels: 1, premultiplied: false } })
-  .toColourspace("grey16")
-  .png({ compressionLevel: 9 })
-  .toBuffer()
-  .catch(async () => {
-    // sharp builds without 16-bit greyscale input: pack the metres into two 8-bit
-    // channels instead (high byte red, low byte green), which ReliefLayers reads too.
-    const packed = encodeHeight16(heights, MAX_METRES);
-    const rgb = new Uint8Array(width * height * 3);
-    for (let i = 0; i < packed.length; i += 1) { rgb[i * 3] = packed[i] >> 8; rgb[i * 3 + 1] = packed[i] & 255; }
-    return sharp(Buffer.from(rgb.buffer), { raw: { width, height, channels: 3 } }).png({ compressionLevel: 9 }).toBuffer();
-  });
+// Packed into an 8-bit RGB PNG (high byte red, low byte green): a browser reads
+// a canvas eight bits a channel, so a 16-bit greyscale PNG would lose its detail.
+const packed = encodeHeight16(heights, MAX_METRES);
+const rgb = new Uint8Array(width * height * 3);
+for (let i = 0; i < packed.length; i += 1) { rgb[i * 3] = packed[i] >> 8; rgb[i * 3 + 1] = packed[i] & 255; }
+const png16 = await sharp(Buffer.from(rgb.buffer), { raw: { width, height, channels: 3 } }).png({ compressionLevel: 9 }).toBuffer();
 
 const relief = {
   version: 1,

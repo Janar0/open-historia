@@ -285,7 +285,9 @@ export const buildHeightmap = (mask, width, height, sketch = {}, { seed = 1, cel
       if (!mask[i]) continue;
       const inland = 1 - Math.exp(-coast[i] / 12);
       const base = 20 + 260 * inland;
-      const hills = (fbm(noise, x * hillScale, y * hillScale) * 0.5 + 0.5) * 220 * inland;
+      // Three octaves: the finest are the browser's to add at close zoom, and
+      // baked in here they show as grain over the whole continent.
+      const hills = (fbm(noise, x * hillScale, y * hillScale, 3) * 0.5 + 0.5) * 220 * inland;
       out[i] = base + hills;
     }
   }
@@ -342,7 +344,13 @@ export const buildHeightmap = (mask, width, height, sketch = {}, { seed = 1, cel
   for (const lake of sketch.lakes ?? []) {
     // At its level, or lower where the land around it is: a lake set above its
     // shore would stand on the map as a raised plate.
-    add(boxOf(lake.polygon, 0), (x, y, h) => (insidePolygon(x, y, lake.polygon) ? Math.max(1, Math.min(h - 8, lake.level)) : h));
+    // Its shore slopes in over a few cells, so no cliff rings it.
+    const ring = [...lake.polygon, lake.polygon[0]];
+    add(boxOf(lake.polygon, 0), (x, y, h) => {
+      if (!insidePolygon(x, y, lake.polygon)) return h;
+      const pull = Math.min(1, polylineDistance(x, y, ring) / 4);
+      return Math.max(1, h + (Math.min(h - 8, lake.level) - h) * pull);
+    });
   }
   for (let i = 0; i < out.length; i += 1) out[i] = mask[i] ? Math.max(1, out[i]) : 0;
   return out;

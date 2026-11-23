@@ -1,5 +1,6 @@
 /*! Open Historia — portions (custom-regions tier-2 rendering) © 2026 Nicholas Krol, AGPL-3.0-or-later (see LICENSE). */
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { usePaintedRelief } from "./ReliefLayers.jsx";
 import { markPolitiesReady } from "../../runtime/mapReadiness.js";
 import { Layer, Source, useMap } from "react-map-gl/maplibre";
 import { onRegionSelected, onOceanClicked, dismissRegionPopup } from "../Selection/Regions";
@@ -3133,7 +3134,9 @@ const WorldMap = ({ isGlobe = false }) => {
 
   // A scenario's own lighter fill ramp, only while its relief tiles are shown.
   const shownRelief = useSyncExternalStore(subscribeShownRelief, getShownRelief, getShownRelief);
-  const reliefFillStops = shownRelief?.fillOpacity || null;
+  // Or a painted map's relief (ReliefLayers.jsx), which has its own.
+  const paintedRelief = usePaintedRelief();
+  const reliefFillStops = shownRelief?.fillOpacity || paintedRelief?.fillOpacity || null;
   const politicalFillOpacity = useMemo(
     () => (reliefFillStops ? buildScenarioReliefFillOpacity(reliefFillStops) : POLITICAL_FILL_OPACITY),
     [reliefFillStops],

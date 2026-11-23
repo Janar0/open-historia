@@ -68,6 +68,10 @@ export const MAP_LAYER_ORDER = [
   // The season over the whole map (SeasonLayers.jsx): a faint tint over every
   // fill and every battlefield's paint, under the borders and every name.
   "seasons-tint",
+  // A painted map's relief and rivers (ReliefLayers.jsx): lit hills over every
+  // fill and the season, rivers over them, all under the borders and names.
+  "relief-hillshade",
+  "relief-rivers",
   // Water frozen hard enough to cross, as ice with a light edge (IceLayers.jsx):
   // over the season, laid on the scenario's own regions and, for a region the
   // map repaired, on the repair.
