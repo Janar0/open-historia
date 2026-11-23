@@ -54,6 +54,24 @@ import { RELEASES } from "./notesReleases.js";
 // make UPDATES, newest first by date.
 const NEW_UPDATES = [
   {
+    // Relief and rivers over a painted scenario map (Map/ReliefLayers.jsx, scripts/relief/),
+    // and a painted map no longer breaks into squares when zoomed in (Map/World.jsx).
+    id: "2026-11-relief-and-rivers",
+    kind: "minor",
+    date: "2026-11-23",
+    banners: [
+      {
+        title: "Mountains and rivers on painted maps",
+        items: [
+          "A painted map with relief now shows its mountains, hills and valleys lit as real ground, sharp at any zoom.",
+          "Rivers run from the mountains to the sea and widen as they go.",
+          "Zoomed in close, a painted map blurs softly instead of breaking into coloured squares.",
+          "Turn the relief off in the main menu, under Settings → Map → Show detailed maps.",
+        ],
+      },
+    ],
+  },
+  {
     // Playing one person rather than a government (runtime/playerCharacter.js), and
     // what a project needs holding it back (runtime/projectNeeds.js). Dressed as an
     // inventor's study (themes/Workshop.jsx).
