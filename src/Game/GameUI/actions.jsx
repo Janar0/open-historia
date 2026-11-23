@@ -26,6 +26,7 @@ import { uiString } from "../../runtime/translator.js";
 import { useFailureReportButton } from "../../runtime/saveDebugLog.js";
 import { queuedActionIds, selectSavedSuggestions, suggestionsFellBack } from "./actionSuggestions.js";
 import { ProjectsBoard, ProjectsTabIcon } from "./projects.jsx";
+import { PlayerCharacterCard } from "./PlayerCharacterCard.jsx";
 import {
     PANEL_HEIGHT_VAR,
     actionsLayoutReducer,
@@ -1173,6 +1174,9 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor, mapRef, requestedTab = n
         {tab === "actions" && (
         <>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.875rem", padding: "0.875rem 1.25rem", flex: 1, minHeight: 0, ...(scrollAsOne ? { overflowY: "auto", scrollbarWidth: "none" } : { overflow: "hidden" }) }}>
+
+        {/* Who the player plays, when it is one person (PlayerCharacterCard.jsx). */}
+        <PlayerCharacterCard country={game.country} isOpen={isOpen} />
 
         <StandingGoal country={game.country} round={game.round} gameDate={game.gameDate} isOpen={isOpen} open={layout.goalOpen} onToggle={() => dispatchLayout({ type: "goal" })} />
 

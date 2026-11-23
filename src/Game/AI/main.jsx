@@ -144,6 +144,7 @@ import { describeWorldLedgersForAdvisor, polityEntry } from "./advisorLedgers.js
 import { loadStatSheetDefinition } from "../../runtime/statsSheet.js";
 import { renderReminders } from "../../runtime/gmChanges.js";
 import { describeGoalForAdvisor, playerGoalOf } from "../../runtime/playerGoal.js";
+import { describeCharacterForAdvisor, describeCharacterForLeader, playerCharacterOf } from "../../runtime/playerCharacter.js";
 import { describeReportsForPrompt, normalizeReports } from "../../runtime/reports.js";
 import { describeDocumentsForAdvisor } from "../../runtime/reportDelivery.js";
 import { viewAsSeen } from "../../runtime/gameState.js";
@@ -3514,6 +3515,7 @@ To act, end your reply with a fenced \`\`\`projects block containing a JSON arra
 - Change one: {"op":"update","id":"<exact id from the list below>","name":"<its exact name>","progress":58,"status":"stalled","lastUpdate":"One sentence on what just changed."} — send only the fields that actually change.
 - Record a checkpoint: {"op":"milestone","id":"<exact id>","name":"<its exact name>","milestone":{"title":"Sea trials","date":"YYYY-MM-DD","status":"pending"}} — status is pending, done, or missed.
 - End one: {"op":"complete"|"cancel"|"fail","id":"<exact id>","name":"<its exact name>","note":"How it ended."} — complete if it succeeded, cancel if it was called off, fail if it was defeated. All three keep it on the board, where the player can see it under Closed. Do NOT use "op":"remove" for any of these: remove erases the entry entirely and is only for something that should never have been opened.
+- What it needs: add "needs":[{"name":"Rubber","status":"missing","source":"the forest provinces of X"}] to a create or an update when an effort requires something its owner does not have in hand (status missing, partial, secured, or dropped to take one off). The engine holds an entry with a missing need at 70% and one with a partial need at 90%, and will not let it complete until every need is secured; record a need as secured only when what secured it has actually happened.
 Both "id" and "name" must be copied EXACTLY from [Current Projects & Operations] below — never invented or guessed, or the change lands on nothing and is silently dropped. Omit the \`\`\`projects block entirely when nothing should change; most replies need none.
 
 Tags are open vocabulary, lowercase and short (military, political, naval, economic, research, intelligence, infrastructure, nuclear, space). Reuse the same spellings across projects so the player's filters keep working.
@@ -3803,6 +3805,9 @@ async function buildAdvisorSystemPrompt({ recipient = null } = {}) {
         // The player's standing goal (runtime/playerGoal.js): the direction the
         // advice serves. The advisor's alone of the conversations — a leader is
         // never told a government's aims.
+        // Whom the advice is for, when the player plays one person rather than a
+        // government (runtime/playerCharacter.js). Before the goal, which it frames.
+        describeCharacterForAdvisor(playerCharacterOf(worldData, gameData?.country), gameData?.country),
         describeGoalForAdvisor(playerGoalOf(worldData, gameData?.country)),
         describeWorldLedgersForAdvisor(worldData, chatData, gameData?.country || ""),
         // The Game Master's standing reminders (runtime/gmChanges.js): what is
@@ -3966,6 +3971,10 @@ export async function buildDiplomaticSystemPrompt(countries, playerCountry, spea
         return describePlayerGroupForPrompt(worldData, playerName, { regionName: (id) => names.get(id) || id });
     })();
 
+    // A leader answering a player who plays one person (runtime/playerCharacter.js)
+    // writes to that person, not to a government.
+    const playerCharacterText = describeCharacterForLeader(playerCharacterOf(worldData, playerCountry || gameData?.country || ""));
+
     // The Game Master's standing reminders bind a leader too: a leader told the
     // bridge is down does not offer to meet on it.
     const reminders = renderReminders(worldData?.simulationReminders, { formatDate: formatDateReadable });
@@ -4012,7 +4021,7 @@ export async function buildDiplomaticSystemPrompt(countries, playerCountry, spea
 
     // How softly or firmly a leader bargains at the chosen difficulty is in its
     // template (${DIFFICULTY_DESCRIPTION_CHATS}, the diplomacy directive), once.
-    return `${rendered}${politicalSection}${espionage}${standing ? `\n\n${standing}` : ""}${territory ? `\n\n${territory}` : ""}${wars ? `\n\n${wars}` : ""}${peaceTalk ? `\n\n${peaceTalk}` : ""}${playerGroupText ? `\n\n${playerGroupText}` : ""}${subordinations ? `\n\n${subordinations}` : ""}${papers ? `\n\n${papers}` : ""}${reminders ? `\n\n${reminders}` : ""}`;
+    return `${rendered}${politicalSection}${espionage}${standing ? `\n\n${standing}` : ""}${territory ? `\n\n${territory}` : ""}${wars ? `\n\n${wars}` : ""}${peaceTalk ? `\n\n${peaceTalk}` : ""}${playerGroupText ? `\n\n${playerGroupText}` : ""}${playerCharacterText ? `\n\n${playerCharacterText}` : ""}${subordinations ? `\n\n${subordinations}` : ""}${papers ? `\n\n${papers}` : ""}${reminders ? `\n\n${reminders}` : ""}`;
 }
 
 // Each recipient has an independent in-memory history, durable memory and

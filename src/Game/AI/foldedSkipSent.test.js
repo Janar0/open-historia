@@ -104,7 +104,9 @@ test("the riders cost what was measured for them: the agents' reports, the board
   const cost = (riders) => chars(foldJumpTool(lean, riders)) - chars(lean);
   // 2,204, 1,682 and 892 characters before the review of 2026-11-09.
   assert.ok(cost({ board: false, agentReports: true }) < 1200, `the agents' reports add ${cost({ board: false, agentReports: true })}`);
-  assert.ok(cost({ board: true }) < 1400, `the board adds ${cost({ board: true })}`);
+  // Raised from 1,400 on purpose (2026-11-23): a project's needs (runtime/projectNeeds.js),
+  // the inputs that hold an invention back, ride on the board's own ops (~120 characters).
+  assert.ok(cost({ board: true }) < 1550, `the board adds ${cost({ board: true })}`);
   assert.ok(cost({ board: false, history: true }) < 850, `the history fold adds ${cost({ board: false, history: true })}`);
   // And a shared game's host's own: the players' advice, whose notes are its block's.
   const advice = chars(withSeatAdvice(leanFor({ host: false }))) - chars(leanFor({ host: false }));

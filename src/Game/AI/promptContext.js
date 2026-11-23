@@ -1,4 +1,5 @@
 import dayjs from "dayjs";
+import { describeNeedsForPrompt } from "../../runtime/projectNeeds.js";
 import { JSON_URLS, getNationTags, loadRegionCatalog, loadScenarioRegionCatalog, prepareWorkerFetchableUrl, readJson } from "../../runtime/assets.js";
 import { resolveAllCountryTags, resolveCountryTags } from "../../runtime/countryTags.js";
 import { buildOwnerAliasMap, canonicalOwnerName, toCountryName } from "../../runtime/ownerNames.js";
@@ -1591,6 +1592,8 @@ export const buildProjectsSummaryText = (world, game, { compact = false, closedL
       timeline,
       next,
       project.lastUpdate ? `Last reported: ${project.lastUpdate}` : "",
+      // What it needs and does not have, and whether that holds it (runtime/projectNeeds.js).
+      describeNeedsForPrompt(project),
       roundsSince > 0 ? `Last updated ${roundsSince} round${roundsSince === 1 ? "" : "s"} ago.` : "",
       warnings.length ? `[${warnings.join("; ")}]` : "",
     ].filter(Boolean).join(" ");

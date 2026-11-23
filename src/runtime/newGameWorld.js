@@ -112,6 +112,14 @@ export const worldWithFaction = (world, faction) => {
   }
   // ownerCodes lists who is playable — include the faction even when landless.
   next.ownerCodes = [...new Set([...(next.ownerCodes ?? []), name])].sort();
+  // A faction that is one person (runtime/playerCharacter.js): played as that
+  // person from the first turn. The game's player polity is the faction's name.
+  if (faction?.character && typeof faction.character === "object") {
+    next.playerCharacters = {
+      ...(next.playerCharacters ?? {}),
+      [name]: { ...faction.character, name: String(faction.character.name || name) },
+    };
+  }
   // A faction that claimed drawn/overridden territory needs the custom-region
   // renderer on so its regions paint; a landless faction leaves the flag as-is.
   if (regionIds.length) next.customRegions = true;

@@ -39,6 +39,7 @@
 // runtime/projects.js, NOT read off what the model last wrote. That is what keeps
 // the board honest between AI turns.
 import React, { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ProjectNeeds } from "./ProjectNeeds.jsx";
 import { APP_HEIGHT, useCanHover, useTouchPrimary } from "../../runtime/mobileUi.js";
 
 import { getNationFlags } from "../../runtime/assets.js";
@@ -525,6 +526,9 @@ const ProjectCard = memo(({ project, gameDate, round, eventTitles, expanded, bus
         </div>
         <Bar value={project.progress} color={progressColor(project, flags)} />
       </div>
+
+      {/* What it needs and does not have (ProjectNeeds.jsx). */}
+      <ProjectNeeds project={project} />
 
       {flags.nextMilestone && (
         <div style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.7rem", marginTop: "0.45rem" }}>

@@ -17,6 +17,11 @@
 // every game carries its own frozen copy of the task prompts; a directive
 // added here is the only way it reaches campaigns that already exist.
 
+// What an effort needs and does not have (runtime/projectNeeds.js), said with
+// the board's rules wherever they are said. A plain-data module, so this one
+// still runs under bare node.
+import { PROJECT_NEEDS_RULE } from "../../runtime/projectNeeds.js";
+
 export const JUMP_PROJECTS_DIRECTIVE_HEADER = "[Projects & Operations]";
 
 // buildProjectsSummaryText's wording for an empty board; nothing to narrate.
@@ -66,7 +71,8 @@ const FOLDED_BOARD_OPS = [
     + "\"status\":\"done | missed | slipped\"}} when a checkpoint was reached, missed or pushed back;",
   "• {\"op\":\"complete | cancel | fail\",\"projectId\":\"\",\"name\":\"\",\"note\":\"<how it ended>\"} when it is over: it stays on the board, under Closed;",
   "• {\"op\":\"create\",\"name\":\"<a new name>\",\"kind\":\"project | operation\",\"summary\":\"<what it is and what it is for>\","
-    + "\"status\":\"active\",\"targetDate\":\"YYYY-MM-DD\",\"milestones\":[{\"title\":\"\",\"date\":\"YYYY-MM-DD\"}],\"tags\":[\"\"]} "
+    + "\"status\":\"active\",\"targetDate\":\"YYYY-MM-DD\",\"milestones\":[{\"title\":\"\",\"date\":\"YYYY-MM-DD\"}],\"tags\":[\"\"],"
+    + "\"needs\":[{\"name\":\"<what it lacks>\",\"status\":\"missing | partial | secured\",\"source\":\"<where in this world it comes from>\"}]} "
     + "when an event starts a new multi-round effort, with ownerCode (a country's full name) only for a foreign power's programme the player's services have learned of.",
   "Copy ids and names exactly as the board writes them: an op naming something that is not there is dropped. A date you set is never earlier than this period's own dates, "
     + "and a running entry with no checkpoints gets two or three dated milestones on its way to its target date; a standing effort with no end gets none.",
@@ -100,6 +106,7 @@ export const buildJumpProjectsRules = ({ folded = false } = {}) => (folded
       + "never because the player wished them stopped, and are reported from outside, never narrated from inside.",
     FOLDED_BOARD_PROPORTION,
     BOARD_ENTRY_NOT_STORYLINE,
+    PROJECT_NEEDS_RULE,
   ]
   // Not folded: a skip asked the old way, after a provider refused the folded
   // one, or one whose function had no room for the board's ops
@@ -118,6 +125,9 @@ export const buildJumpProjectsRules = ({ folded = false } = {}) => (folded
       + "belong to another power: report what the player's services observed of them, never narrate them from "
       + "inside. Name each effort exactly as the board names it. "
       + BOARD_ENTRY_NOT_STORYLINE,
+    // Nothing records the board from this jump, but an entry HELD by a need
+    // does not move past it in the story either.
+    "An entry the board marks HELD does not get past what holds it: its events can bring the need nearer, never the finished thing.",
   ]).join("\n");
 
 export const buildJumpProjectsDirective = (projectsSummary, { folded = false, doubted = "", rulesAbove = false } = {}) => {

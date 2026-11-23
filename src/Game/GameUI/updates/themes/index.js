@@ -26,8 +26,10 @@ import { SEASONS_CHROME } from "./seasonsChrome.js";
 import { SWARMS_CHROME } from "./swarmsChrome.js";
 import { THEMES_CHROME } from "./themesChrome.js";
 import { WARS_AND_FRONTS_2_CHROME } from "./warsAndFronts2Chrome.js";
+import { WORKSHOP_CHROME } from "./workshopChrome.js";
 
 export const THEMES = Object.freeze({
+  workshop: { Page: lazy(() => import("./Workshop.jsx")), chrome: WORKSHOP_CHROME },
   aiOverhaul: { Page: lazy(() => import("./AiOverhaul.jsx")), chrome: AI_OVERHAUL_CHROME },
   themes: { Page: lazy(() => import("./Themes.jsx")), chrome: THEMES_CHROME },
   rostra: { Page: lazy(() => import("./Rostra.jsx")), chrome: ROSTRA_CHROME },

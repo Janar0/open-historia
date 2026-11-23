@@ -686,6 +686,22 @@ const projectSchema = {
       minimum: 0,
       maximum: 100,
     },
+    // What it requires that its owner lacks (runtime/projectNeeds.js): the
+    // engine holds an entry with an open need below its cap and never lets it
+    // complete. Said in a line; the rule is in the prompt ([What Projects Need]).
+    needs: {
+      type: "array",
+      description: "Inputs it lacks, as [What Projects Need] says.",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          status: { type: "string", enum: ["missing", "partial", "secured", "dropped"] },
+          source: { type: "string" },
+        },
+        required: ["name", "status"],
+      },
+    },
     tags: stringArraySchema(
       "Short lowercase categories the player can filter by - military, political, "
       + "naval, economic, research, intelligence, infrastructure, nuclear, space. "
@@ -831,6 +847,7 @@ const projectOpSchema = {
     status: projectSchema.properties.status,
     priority: projectSchema.properties.priority,
     progress: projectSchema.properties.progress,
+    needs: projectSchema.properties.needs,
     tags: projectSchema.properties.tags,
     secrecy: projectSchema.properties.secrecy,
     startedAt: projectSchema.properties.startedAt,

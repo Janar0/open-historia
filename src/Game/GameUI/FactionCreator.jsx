@@ -63,6 +63,12 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
   const [flag, setFlag] = useState(null); // string (URL / data URL) or null
   const [lore, setLore] = useState("");
   const [landless, setLandless] = useState(true);
+  // One person rather than a state (runtime/playerCharacter.js): a princess, an
+  // engineer, a captain, played as themselves. Not for a group, which is a
+  // movement by definition.
+  const [person, setPerson] = useState(false);
+  const [standing, setStanding] = useState("");
+  const [answersTo, setAnswersTo] = useState("");
   const [regionIds, setRegionIds] = useState(() => new Set());
   const [flagOpen, setFlagOpen] = useState(false);
   // On a phone, Back closes the flag picker and leaves the form as it was.
@@ -90,6 +96,7 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
       // a faction that selected nothing starts landless — the toggle just makes that
       // a deliberate, visible choice rather than an accident.
       regionIds: landless ? [] : [...regionIds],
+      ...(person && !group ? { character: { name: trimmedName, standing: standing.trim(), answersTo: answersTo.trim(), about: lore.trim() } } : {}),
     });
   };
 
@@ -148,6 +155,30 @@ const FactionCreator = ({ regionsGeojson, ownerOverrides = null, customBackgroun
           style={{ ...field, resize: "vertical", minHeight: "3.4rem" }}
         />
       </div>
+
+      {!group && (
+        <div>
+          <label style={{ alignItems: "center", color: "rgba(255,255,255,0.85)", cursor: "pointer", display: "flex", fontSize: "0.8rem", gap: "0.45rem" }}>
+            <input type="checkbox" checked={person} onChange={(e) => setPerson(e.target.checked)} />
+            This is one person, not a state
+          </label>
+          {person && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", marginTop: "0.45rem" }}>
+              <div style={{ color: "rgba(255,255,255,0.55)", fontSize: "0.74rem", lineHeight: 1.45 }}>
+                You play them as themselves: your orders are what they do in person, state business goes to whoever rules, and leaders write to them as to a person. Write who they are and what they can do in the lore above.
+              </div>
+              <div>
+                <div style={label}>Who they are</div>
+                <input value={standing} onChange={(e) => setStanding(e.target.value)} placeholder="e.g. the regent's younger daughter, sixteen" style={field} />
+              </div>
+              <div>
+                <div style={label}>Answers to</div>
+                <input value={answersTo} onChange={(e) => setAnswersTo(e.target.value)} placeholder="The country or power above them" style={field} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <div style={label}>{group ? GROUP_CREATOR_TEXTS.areaLabel : "Starting territory"}</div>

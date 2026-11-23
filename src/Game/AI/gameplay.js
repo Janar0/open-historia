@@ -21,6 +21,8 @@ import {
 import { collectFoundedPolities, foundingPolityChange } from "../../runtime/polityFounding.js";
 import { describeBasisAction, sameRegionChange, screenTerritoryBasis } from "../../runtime/territoryBasis.js";
 import { PLAYER_GROUP_JUMP_RULE, describeGroupsForPrompt, describePlayerGroupForPrompt, normalizeGroupOp, withoutGroupOpsLines } from "../../runtime/groups.js";
+import { describeCharacterForSimulation, playerCharacterOf } from "../../runtime/playerCharacter.js";
+import { PROJECT_NEEDS_RULE } from "../../runtime/projectNeeds.js";
 import { effectiveCityPopulation } from "../../runtime/cityPopulation.js";
 import { humanCountriesOf } from "../../runtime/humanPolities.js";
 import { uiString } from "../../runtime/translator.js";
@@ -1600,6 +1602,13 @@ const buildTemplateVariables = async (bundle, options = {}) => {
   variables.playerGroupContext = groupsOn
     ? await buildPlayerGroupContext(bundle.world, bundle.game?.country, { regionCatalog: options?.mapSource?.regionCatalog })
     : "";
+  // The player plays one person rather than a government (runtime/playerCharacter.js):
+  // who they are, for the time skip and every task about the player's side.
+  // Empty while they play their polity as its government.
+  variables.playerCharacterContext = describeCharacterForSimulation(
+    playerCharacterOf(bundle.world, bundle.game?.country),
+    bundle.game?.country,
+  );
   await pause?.();
   if (wants("canonicalStorylineContext")) {
     variables.canonicalStorylineContext = buildGameMasterStorylineContext(bundle.world);
@@ -3015,6 +3024,8 @@ const buildJumpLiveState = async ({ variables = {}, lookups = null, reminders = 
   if (isActiveFeatureEnabled("groups")) blocks.push(buildJumpGroupsBlock(variables.groupsContext, { rulesAbove }));
   // The player leads a group rather than a country (runtime/groups.js).
   if (normalizeString(variables.playerGroupContext)) blocks.push(`${variables.playerGroupContext}\n${PLAYER_GROUP_JUMP_RULE}`);
+  // The player plays one person, not a government (runtime/playerCharacter.js).
+  if (normalizeString(variables.playerCharacterContext)) blocks.push(variables.playerCharacterContext);
 
   // What is in motion: storylines, pressures, economies and the diplomatic
   // slice (nativeWorldDirector.js), built per segment.
@@ -3230,6 +3241,12 @@ const PLAYER_GROUP_TASKS = new Set([
   "interactiveSummary", "idleDiplomacy", "gameMaster", "warRoom",
 ]);
 
+// The tasks told who the player's character is: those about the player's side,
+// and the board and the repairs that write about it.
+const PLAYER_CHARACTER_TASKS = new Set([
+  ...PLAYER_GROUP_TASKS, "projects", "worldMotionRepair", "worldBreadthRepair",
+]);
+
 // The statistics a task's prompt and its output function are built with: the
 // scenario's own sheet or indices where it has them. Read by
 // buildTaskSystemPrompt, and by a time skip that weighs its function before
@@ -3359,6 +3376,12 @@ const buildTaskSystemPrompt = async (taskKey, { variables, lookups = null, remin
     systemPrompt = `${systemPrompt}\n\n${variables.playerGroupContext}`;
   }
 
+  // The player plays one person rather than a government (runtime/playerCharacter.js):
+  // the same tasks, and the board and the repairs that write about their side.
+  if (!jumpTask && PLAYER_CHARACTER_TASKS.has(taskKey) && normalizeString(variables.playerCharacterContext)) {
+    systemPrompt = `${systemPrompt}\n\n${variables.playerCharacterContext}`;
+  }
+
   // The board pass gets the espionage picture (a time skip has it in its live
   // records): the one source that can put another power's programme on the board.
   if (isActiveFeatureEnabled("espionage") && taskKey === "projects") {
@@ -3437,6 +3460,12 @@ ${HIGH_PRIORITY_ASSESSMENT_RULE} A project marked low priority may be left drift
   // template already carries the new rule.
   if (taskKey === "projects" && !templateAlreadySays(systemPrompt, HIGH_PRIORITY_ASSESSMENT_MARKER)) {
     systemPrompt = `${systemPrompt}\n\n${buildBoardPassDirective()}`;
+  }
+  // What an effort needs and does not have (runtime/projectNeeds.js), for the
+  // tasks that keep the board outside a time skip; the skip has it among the
+  // board's rules (projectsDirective.js).
+  if (taskKey === "projects" || taskKey === "gameMaster") {
+    systemPrompt = `${systemPrompt}\n\n${PROJECT_NEEDS_RULE}`;
   }
   // The between-rounds pulse may now move the world's forces a little, so it needs
   // the same discipline the jump gets — injected here so it reaches existing games

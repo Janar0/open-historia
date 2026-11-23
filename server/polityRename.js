@@ -273,6 +273,15 @@ export const renamePolityInWorld = (world, fromName, toName) => {
   for (const field of ["countryStats", "countryTags", "internationalReputation", "intelligence", "playerGoals"]) {
     put(field, mapKeys(world?.[field], fromKey, to));
   }
+  // The player's character (runtime/playerCharacter.js): keyed by the polity
+  // played, and naming the polity they answer to.
+  if (world?.playerCharacters && typeof world.playerCharacters === "object") {
+    const characters = mapKeys(world.playerCharacters, fromKey, to);
+    put("playerCharacters", Object.fromEntries(Object.entries(characters ?? {}).map(([key, character]) => [
+      key,
+      character && typeof character === "object" && character.answersTo ? { ...character, answersTo: one(character.answersTo) } : character,
+    ])));
+  }
   put("politicalActors", rekeyPoliticalActors(world?.politicalActors, fromKey, to));
   const groups = renameGroupKey(world?.groups, fromKey, to);
   if (groups !== world?.groups) {

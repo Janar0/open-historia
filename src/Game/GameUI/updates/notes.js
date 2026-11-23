@@ -54,6 +54,75 @@ import { RELEASES } from "./notesReleases.js";
 // make UPDATES, newest first by date.
 const NEW_UPDATES = [
   {
+    // Playing one person rather than a government (runtime/playerCharacter.js), and
+    // what a project needs holding it back (runtime/projectNeeds.js). Dressed as an
+    // inventor's study (themes/Workshop.jsx).
+    id: "2026-11-person-and-workshop",
+    kind: "major",
+    date: "2026-11-23",
+    banners: [
+      {
+        theme: "workshop",
+        scene: "portrait",
+        title: "Play as One Person",
+        subtitle: "Not the crown. The one beside it.",
+        lead: "You no longer have to be the government. Be a princess at a regent's court, a guild engineer or a ship's captain, and the world will treat you as exactly that.",
+        sections: [
+          {
+            heading: "Who you are",
+            icon: "people",
+            items: [
+              "In the Actions panel, press Play as one person and write your name, who you are, whom you answer to and what you can do.",
+              "Starting a new faction, tick This is one person, not a state to begin as that person from the first turn.",
+            ],
+          },
+          {
+            heading: "How the world answers",
+            icon: "flag",
+            items: [
+              "Your orders are what you do yourself: ask, persuade, write, buy, build. They reach as far as your rank, purse and friends.",
+              "Foreign governments take state business to whoever rules. They write to you only for reasons of their own, and as to a person.",
+              "Your advisor counsels you, not a cabinet, and leaders answer you as someone of your rank.",
+            ],
+          },
+          {
+            heading: "Rising",
+            icon: "chess",
+            items: [
+              "Take the throne, and switch to playing the country itself whenever you are ready.",
+            ],
+          },
+        ],
+      },
+      {
+        theme: "workshop",
+        scene: "blueprint",
+        title: "Inventions Need Materials",
+        subtitle: "A cart is nothing without its tyres",
+        lead: "Projects now list what they need and do not have. Without it they wait, however clever the plan, until you find a way to get it.",
+        sections: [
+          {
+            heading: "Needs",
+            icon: "gear",
+            items: [
+              "Each project on the board shows what it needs: missing in red, not enough in amber, secured in green, with where it comes from.",
+              "A project missing something stops at 70%, one short of something at 90%, and neither can be finished.",
+            ],
+          },
+          {
+            heading: "Getting it",
+            icon: "map",
+            items: [
+              "Materials come from real places in your world: buy them, trade for them, mine them, send an expedition, or have someone invent a substitute.",
+              "A need is secured only when something in the story secures it, never by waiting.",
+            ],
+          },
+        ],
+        button: "To the workshop",
+      },
+    ],
+  },
+  {
     // A shared server's AI profile replaced every OpenAI-compatible entry's endpoint, model and key
     // (AI/serverSettings.js applyManagedProfile): now only those of entries at the profile's endpoint.
     id: "2026-11-own-models-on-shared-server",

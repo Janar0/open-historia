@@ -35,6 +35,8 @@ import { normalizeFiledEvents } from "./filedEvents.js";
 import { applyReportOps, normalizeReportOp, normalizeReports } from "./reports.js";
 import { normalizeGmChanges, normalizeReminders } from "./gmChanges.js";
 import { normalizePlayerGoals } from "./playerGoal.js";
+import { normalizePlayerCharacters } from "./playerCharacter.js";
+import { holdUnmetCompletion, mergeProjectNeeds, needsAllowCompletion, normalizeProjectNeeds, progressWithinNeeds } from "./projectNeeds.js";
 import { normalizeInteractiveOffer } from "./interactiveOffer.js";
 import { normalizeSpyOp, spyTasking } from "./spycraft.js";
 import { eventsFromLegacyChat, normalizeChatEvents, projectChatThread, withUnloggedMessages } from "./chatThreads.js";
@@ -140,6 +142,10 @@ export const WORLD_DEFAULTS = {
   // polity name -> { text, round, date }. Told to the advisor, the time skip and
   // the suggestions, never to a foreign leader. See playerGoal.js.
   playerGoals: {},
+  // Whom the player plays when they play one person rather than a government:
+  // polity name -> { name, standing, answersTo, about }. Told to the time skip,
+  // the advisor and the leaders they write to. See playerCharacter.js.
+  playerCharacters: {},
   // Persisted per-country stat sheets (code -> the full sheet), seeded on first view
   // and thereafter changed ONLY by the AI (polityChanges.stats), so a country's stats
   // stop regenerating/drifting every date change.
@@ -2103,6 +2109,10 @@ export const normalizeProjectEntry = (entry, index = 0) => {
   // allowed to leave the date off instead of inventing one.
   const ongoing = entry.ongoing === true || entry.ongoing === "true";
   const updatedRound = Number(entry.updatedRound);
+  // What it needs and does not have (projectNeeds.js): an open need holds the
+  // progress below its cap whatever the model wrote.
+  const needs = normalizeProjectNeeds(entry.needs ?? entry.inputs ?? entry.requires ?? entry.requirements);
+  const status = resolveProjectStatus(entry.status);
 
   return {
     id: normalizeOptionalString(entry.id) || generateId(`project-${index}`),
@@ -2114,12 +2124,13 @@ export const normalizeProjectEntry = (entry, index = 0) => {
     // player's own name on every entry is how that field ends up wrong.
     ownerCode: toCountryName(normalizeOptionalString(entry.ownerCode || entry.owner || entry.code)),
     summary: normalizeTextLike(entry.summary || entry.description),
-    status: resolveProjectStatus(entry.status),
+    status,
     // The player's dial, not the model's — see PROJECT_PRIORITIES. Defaults to
     // "normal", which is also what every project in a save written before this
     // field existed reads as, so no migration is needed.
     priority: resolveProjectPriority(entry.priority),
-    progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, Math.round(progress))) : 0,
+    progress: progressWithinNeeds(Number.isFinite(progress) ? progress : 0, needs, status),
+    needs,
     tags: normalizeTagList(entry.tags),
     secrecy: PROJECT_SECRECY_SET.has(secrecy) ? secrecy : "public",
     startedAt: canonicalizeDateString(entry.startedAt || entry.startDate || entry.began),
@@ -2236,6 +2247,10 @@ const PROJECT_FIELD_ALIASES = {
   verification: ["verification"],
   focus: ["focus"],
   note: ["note"],
+  // Laid over the board's list rather than replacing it (projectNeeds.js
+  // mergeProjectNeeds), so not in PROJECT_PATCHABLE_FIELDS: applyProjectOps
+  // merges it by hand.
+  needs: ["needs", "inputs", "requires", "requirements"],
 };
 
 // A plain ARRAY, not a Set: normalized ops are persisted inside events.json and
@@ -2600,26 +2615,26 @@ export const applyProjectOps = (projects, ops, ctx = {}) => {
         const merged = { ...existing };
         for (const field of op.provided ?? []) {
           if (field === "name") continue; // matched BY the name; never rewrite it here
-          merged[field] = op.project[field];
+          merged[field] = field === "needs" ? mergeProjectNeeds(existing.needs, op.project.needs) : op.project[field];
         }
         // A restatement may say the project is complete, which finishes it
         // exactly as a close op would — see completesWithEffects.
         next = next.map((project, index) => (index === existingIndex
-          ? settleCompletion(existing, touch({
+          ? settleCompletion(existing, holdUnmetCompletion(existing, normalizeProjectEntry(touch({
             ...merged,
             id: existing.id,
             createdAt: existing.createdAt,
             // A restatement rarely repeats the history, so keep what we had.
             eventIds: existing.eventIds,
-          }))
+          }), existingIndex) ?? existing))
           : project));
         continue;
       }
-      next = [...next, settleCompletion(null, touch({
+      next = [...next, settleCompletion(null, holdUnmetCompletion(null, touch({
         ...op.project,
         startedAt: op.project.startedAt || date,
         createdAt: stamp,
-      }))];
+      })))];
       continue;
     }
 
@@ -2648,6 +2663,9 @@ export const applyProjectOps = (projects, ops, ctx = {}) => {
       if (renamed) merged.name = renamed;
       if (Array.isArray(patch.tags)) merged.tags = patch.tags;
       if (Array.isArray(patch.milestones)) merged.milestones = patch.milestones;
+      // What it needs, laid over what the board has (projectNeeds.js).
+      const needsAlias = patchedAlias(patch, "needs");
+      if (needsAlias) merged.needs = mergeProjectNeeds(current.needs, patch[needsAlias]);
       const normalized = normalizeProjectEntry(
         { ...merged, id: current.id, createdAt: current.createdAt },
         index,
@@ -2655,7 +2673,7 @@ export const applyProjectOps = (projects, ops, ctx = {}) => {
       if (!normalized) continue;
       // A model completes a project with a plain status patch at least as often
       // as with an explicit close op, so the latch has to be settled here too.
-      next = next.map((project, i) => (i === index ? settleCompletion(current, touch(normalized)) : project));
+      next = next.map((project, i) => (i === index ? settleCompletion(current, holdUnmetCompletion(current, touch(normalized))) : project));
       continue;
     }
 
@@ -2730,6 +2748,14 @@ export const applyProjectOps = (projects, ops, ctx = {}) => {
     }
 
     if (op.op === "close") {
+      // Completed with a need still open (projectNeeds.js): it is stuck at the
+      // cap instead, and how the model meant it to end is kept as the update.
+      if (op.status === "complete" && !needsAllowCompletion(current.needs)) {
+        next = next.map((project, i) => (i === index
+          ? touch({ ...project, status: "stalled", lastUpdate: op.note || project.lastUpdate })
+          : project));
+        continue;
+      }
       const succeeded = op.status === "complete";
       // A held completion drops the close whole: marking the milestones done on
       // a project that stays open would be a claim the board cannot keep.
@@ -4541,6 +4567,7 @@ export const normalizeWorldState = (world) => {
     gmChanges: normalizeGmChanges(nextWorld.gmChanges),
     simulationReminders: normalizeReminders(nextWorld.simulationReminders),
     playerGoals: normalizePlayerGoals(nextWorld.playerGoals),
+    playerCharacters: normalizePlayerCharacters(nextWorld.playerCharacters),
     labelFont: normalizeOptionalString(nextWorld.labelFont),
     labelHaloColor: normalizeOptionalString(nextWorld.labelHaloColor),
     labelTextColor: normalizeOptionalString(nextWorld.labelTextColor),
@@ -5374,7 +5401,9 @@ export const readGameStateBundle = async ({ force = false } = {}) => {
 // What of the finished world belongs to no turn: the Game Master's standing
 // facts and log, the seal, what each leader has been shown, the player's goal.
 // The world as seen keeps today's.
-const STATE_OUTSIDE_THE_TURN = ["simulationReminders", "gmChanges", "spySeal", "chatKnowledgeCursors", "playerGoals"];
+// Who the player plays (playerCharacter.js) is no turn's either: undoing a
+// skip does not undo who they are.
+const STATE_OUTSIDE_THE_TURN = ["simulationReminders", "gmChanges", "spySeal", "chatKnowledgeCursors", "playerGoals", "playerCharacters"];
 
 // The campaign as the player has been shown it (runtime/unseenEvents.js). While
 // a skip is being revealed the save already holds all of it, and whatever
